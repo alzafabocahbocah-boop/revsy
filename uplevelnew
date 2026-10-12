@@ -1,4 +1,4 @@
--- uplevelnew v8.192 — deduplicate VFX per buah by name (fix spam Shine_Particle 2/3/4x)
+-- uplevelnew v8.193 — weatherLog simpan history; fix COPY ALL fallback ke writefile
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.192"
+local VERSION = "v8.193"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -1744,9 +1744,20 @@ end)
 -- ===================== DEBUG LOG (general) =====================
 sectionHeader(logScroll,"\u{2022} DEBUG LOG",4)
 local function _cp(txt)
-    local fn=setclipboard or toclipboard or (syn and syn.clipboard and syn.clipboard.set)
+    local fn=setclipboard or toclipboard
+        or (syn and syn.clipboard and syn.clipboard.set)
         or (Clipboard and Clipboard.set)
-    if fn then fn(txt) end
+        or (cloneref and cloneref(game:GetService("CoreGui")) and nil)  -- just check
+    if fn then
+        local ok,err=pcall(fn,txt)
+        if ok then return true end
+    end
+    -- fallback: writefile ke output.txt supaya bisa dibaca
+    pcall(function()
+        local wf=writefile or (syn and syn.io and syn.io.writefile)
+        if wf then wf("dbg_output.txt", txt) end
+    end)
+    return false
 end
 local function mkDbgBox(layoutOrder, borderCol, placeholder)
     local bg=mk("Frame",{Size=UDim2.new(1,0,0,240),BackgroundColor3=C.card,BorderSizePixel=0,
@@ -1773,9 +1784,10 @@ local function mkDbgBox(layoutOrder, borderCol, placeholder)
         cpBtn.Text="COPIED!"; task.delay(1.5,function() cpBtn.Text="COPY" end)
     end)
     cpAllBtn.MouseButton1Click:Connect(function()
-        local ok=pcall(_cp,table.concat(allLogs,"\n"))
-        cpAllBtn.Text=ok and "COPIED ALL!" or "GAGAL"
-        task.delay(1.5,function() cpAllBtn.Text="COPY ALL ("..#allLogs..")" end)
+        local txt=table.concat(allLogs,"\n")
+        local ok=_cp(txt)
+        cpAllBtn.Text=ok and "COPIED ALL!" or "→ dbg_output.txt"
+        task.delay(2,function() cpAllBtn.Text="COPY ALL ("..#allLogs..")" end)
     end)
     return logFn
 end
@@ -1791,8 +1803,11 @@ end
 -- ===================== DEBUG WEATHER (observasi partikel cuaca) =====================
 sectionHeader(logScroll,"\u{2022} DEBUG WEATHER",6)
 local _weatherFn = mkDbgBox(7, Color3.fromRGB(30,180,120), "— menunggu weather scan —")
+local weatherLogs={}; local weatherAllLogs={}
 weatherLog = function(s)
     local line=tostring(s)
+    table.insert(weatherAllLogs,line)
+    table.insert(weatherLogs,1,line); if #weatherLogs>60 then weatherLogs[#weatherLogs]=nil end
     _weatherFn(s)
 end
 
