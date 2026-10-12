@@ -1,4 +1,4 @@
--- uplevelnew v8.159 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.160 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.159"
+local VERSION = "v8.160"
 
 -- ===================== KONFIGURASI =====================
 -- v8.153: SESI1_DEF dinamis — di-rebuild tiap masuk sesi 1
@@ -2998,6 +2998,8 @@ local function runSesiUtama(sesiNum, def, label, col)
         _lastMutasiCount = #data.shovel
         totalNightmareCollected = nm
         updateUI(nm, nm, sesiNum)
+        -- v8.160: debug setiap iterasi
+        dbgLog("[DBG] loop sesi"..sesiNum..": nm="..nm.." shovel="..#data.shovel.." busy="..(tostring(_collectBusy)).." target="..CFG.nightmareTarget)
         -- cek target
         if nm >= CFG.nightmareTarget then
             addLog("Target! nm="..nm.." >= "..CFG.nightmareTarget.." — Pindah sesi 2.")
@@ -3006,19 +3008,16 @@ local function runSesiUtama(sesiNum, def, label, col)
             break
         end
         -- cek cadangan 2 (nightmare = 0)
-        if nm == 0 then
-            dbgLog("[DBG] nm=0: activeSesiDef="..(tostring(_activeSesiDef ~= nil)).." isCad2="..(tostring(_activeSesiDef == SESI_CADANGAN2_DEF)))
-        end
         if nm == 0 and _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN2_DEF then
+            dbgLog("[DBG] nm=0 -> processFruits (cad2)")
             -- delegate ke processFruits untuk handle cadangan 2
             processFruits()
         elseif #data.shovel > 0 and not _collectBusy then
             -- ada mutasi, collect di background supaya scan tetap jalan
-            dbgLog("[DBG] Sesi1: shovel="..#data.shovel.." _collectBusy=false -> spawn collect")
+            dbgLog("[DBG] spawn collect: "..#data.shovel.." buah")
             _collectBusy = true
             task.spawn(function()
                 local fruits = data.shovel
-                dbgLog("[DBG] collect spawn: "..#fruits.." buah, targetReached="..(tostring(_targetReached)))
                 while #fruits > 0 and not stopRequested and not _targetReached do
                     local collected = doCollect(fruits)
                     totalShovel = totalShovel + collected
@@ -3029,13 +3028,15 @@ local function runSesiUtama(sesiNum, def, label, col)
                     end
                     local nxt = scanFruits()
                     fruits = nxt.shovel
-                    dbgLog("[DBG] collect loop: sisa shovel="..#fruits.." targetReached="..(tostring(_targetReached)))
+                    dbgLog("[DBG] collect loop: sisa="..#fruits)
                 end
                 dbgLog("[DBG] collect selesai: stopReq="..(tostring(stopRequested)).." targetReached="..(tostring(_targetReached)))
                 _collectBusy = false
             end)
         elseif #data.shovel > 0 and _collectBusy then
-            dbgLog("[DBG] Sesi1: shovel="..#data.shovel.." tapi _collectBusy=true -> skip")
+            dbgLog("[DBG] shovel="..#data.shovel.." skip (busy)")
+        elseif #data.shovel == 0 then
+            dbgLog("[DBG] shovel=0, nm="..nm.." -> tidak ada yang di-collect")
         end
         task.wait(0.1)
     end
