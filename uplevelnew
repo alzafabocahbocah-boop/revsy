@@ -1,4 +1,4 @@
--- uplevelnew v8.171 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.172 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.171"
+local VERSION = "v8.172"
 
 -- forward declaration: dbgLog & addLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -681,24 +681,53 @@ local function buildSesi1Def()
     local c = _kgContainer
     dbgLog("[DBG] garden scan: c="..(c and "ok" or "nil"))
     local okG, errG = pcall(function()
-        local pp = workspace:FindFirstChild("PetsPhysical")
-        dbgLog("[DBG] garden scan: pp="..(pp and tostring(#pp:GetChildren()) or "nil"))
-        if pp then
-            for _, obj in ipairs(pp:GetChildren()) do
-                local rawUUID = obj.Name
-                local uuid = fmtUUID(rawUUID)
-                local entry = c and c[uuid]
-                -- log UUID + apakah ada di container (terlepas dari seenUUID)
-                dbgLog("[DBG] gobj: raw="..tostring(rawUUID):sub(1,12).." fmt="..uuid:sub(1,12).." seen="..(seenUUID[uuid] and "y" or "n").." entry="..(type(entry)=="table" and "ok" or "nil"))
-                if not seenUUID[uuid] then
-                    if type(entry) == "table" then
-                        local rawTipe = tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "")
-                        local tipe = stripMutation(rawTipe)
-                        local age = tonumber((entry.PetData or {}).Level) or 0
-                        dbgLog("[DBG] garden pet: "..tipe.." age="..age.." uuid="..uuid:sub(1,8))
-                        if tipe == "T-Rex" and age >= 500 then
-                            trexTua = trexTua + 1
-                            seenUUID[uuid] = true
+        -- debug: list semua direct children workspace yang mungkin nyimpen placed pets
+        local wsNames = {}
+        for _, ch in ipairs(workspace:GetChildren()) do
+            local n = ch.Name
+            if n:find("[Pp]et") or n:find("[Pp]laced") or n:find("[Ff]arm") or n:find("[Gg]arden") or n:find("[Aa]nimal") then
+                table.insert(wsNames, n.."("..ch.ClassName.."#"..#ch:GetChildren()..")")
+            end
+        end
+        dbgLog("[DBG] ws pet-related: "..table.concat(wsNames, ", "))
+
+        -- coba beberapa kandidat folder
+        local candidates = {"PetsPhysical","PlacedPets","Pets","GardenPets","FarmPets"}
+        for _, folderName in ipairs(candidates) do
+            local pp = workspace:FindFirstChild(folderName)
+            if pp then
+                dbgLog("[DBG] found "..folderName..": "..#pp:GetChildren().." children")
+                -- cek isi child pertama buat tau strukturnya
+                local first = pp:GetChildren()[1]
+                if first then
+                    dbgLog("[DBG] "..folderName.."[1]: Name="..first.Name.." Class="..first.ClassName)
+                    -- cek attributes
+                    local attrs = {}
+                    pcall(function()
+                        for k,v in pairs(first:GetAttributes()) do
+                            table.insert(attrs, k.."="..tostring(v):sub(1,12))
+                            if #attrs >= 5 then break end
+                        end
+                    end)
+                    if #attrs > 0 then dbgLog("[DBG] "..folderName.."[1] attrs: "..table.concat(attrs,", ")) end
+                end
+                if folderName == "PetsPhysical" then
+                    -- skip PetsPhysical karena isinya PetMover bukan UUID
+                else
+                    for _, obj in ipairs(pp:GetChildren()) do
+                        local rawUUID = obj.Name
+                        local uuid = fmtUUID(rawUUID)
+                        local entry = c and c[uuid]
+                        dbgLog("[DBG] "..folderName.." obj: raw="..tostring(rawUUID):sub(1,12).." entry="..(type(entry)=="table" and "ok" or "nil"))
+                        if not seenUUID[uuid] and type(entry) == "table" then
+                            local rawTipe = tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "")
+                            local tipe = stripMutation(rawTipe)
+                            local age = tonumber((entry.PetData or {}).Level) or 0
+                            dbgLog("[DBG] garden pet: "..tipe.." age="..age.." uuid="..uuid:sub(1,8))
+                            if tipe == "T-Rex" and age >= 500 then
+                                trexTua = trexTua + 1
+                                seenUUID[uuid] = true
+                            end
                         end
                     end
                 end
