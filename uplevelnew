@@ -1,4 +1,4 @@
--- uplevelnew v8.170 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.171 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,11 +147,12 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.170"
+local VERSION = "v8.171"
 
--- forward declaration: dbgLog didefinisikan lebih bawah (setelah GUI)
+-- forward declaration: dbgLog & addLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
 local dbgLog
+local addLog
 
 -- ===================== KONFIGURASI =====================
 -- v8.153: SESI1_DEF dinamis — di-rebuild tiap masuk sesi 1
@@ -686,8 +687,10 @@ local function buildSesi1Def()
             for _, obj in ipairs(pp:GetChildren()) do
                 local rawUUID = obj.Name
                 local uuid = fmtUUID(rawUUID)
+                local entry = c and c[uuid]
+                -- log UUID + apakah ada di container (terlepas dari seenUUID)
+                dbgLog("[DBG] gobj: raw="..tostring(rawUUID):sub(1,12).." fmt="..uuid:sub(1,12).." seen="..(seenUUID[uuid] and "y" or "n").." entry="..(type(entry)=="table" and "ok" or "nil"))
                 if not seenUUID[uuid] then
-                    local entry = c and c[uuid]
                     if type(entry) == "table" then
                         local rawTipe = tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "")
                         local tipe = stripMutation(rawTipe)
@@ -1762,7 +1765,8 @@ if _G._UPL_SESI_DEF == nil then _G._UPL_SESI_DEF = false end  -- false = sesi 1 
 local _activeSesiNum = _G._UPL_SESI_NUM
 local _activeSesiDef = (_G._UPL_SESI_DEF == false) and SESI1_DEF or _G._UPL_SESI_DEF
 
-local function addLog(s)
+-- addLog di-forward declare di atas (line ~152), di sini di-assign fungsi aslinya
+addLog = function(s)
     -- print hanya kalau WARN/ERROR/HEAL (jangan spam console)
     local str=tostring(s)
     if str:find("WARN") or str:find("TIDAK") or str:find("NIL") or str:find("HEAL") or str:find("ERROR") then
