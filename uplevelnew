@@ -1,4 +1,4 @@
--- uplevelnew v8.174 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.175 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,12 +147,13 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.174"
+local VERSION = "v8.175"
 
--- forward declaration: dbgLog & addLog didefinisikan lebih bawah (setelah GUI)
+-- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
 local dbgLog
 local addLog
+local mutLog
 
 -- ===================== KONFIGURASI =====================
 -- v8.153: SESI1_DEF dinamis — di-rebuild tiap masuk sesi 1
@@ -1782,6 +1783,42 @@ dbgCpyAllBtn.MouseButton1Click:Connect(function()
     task.delay(1.5,function() dbgCpyAllBtn.Text="COPY ALL ("..#dbgAllLogs.." baris)" end)
 end)
 
+-- ===================== DEBUG MUTASI LOG =====================
+sectionHeader(logScroll,"\u{2022} DEBUG MUTASI",4)
+local mutBg=mk("Frame",{Size=UDim2.new(1,0,0,230),BackgroundColor3=C.card,BorderSizePixel=0,
+    LayoutOrder=6,Parent=logScroll}); corner(mutBg,10); stroke(mutBg,Color3.fromRGB(140,60,220),1)
+local mutBox=mk("TextLabel",{Size=UDim2.new(1,-16,1,-66),Position=UDim2.new(0,8,0,8),
+    BackgroundTransparency=1,Text="— menunggu scan buah —",TextColor3=C.textMute,
+    Font=Enum.Font.Code,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,
+    TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Parent=mutBg})
+local mutCpyBtn=mk("TextButton",{Size=UDim2.new(1,-16,0,24),Position=UDim2.new(0,8,1,-30),
+    BackgroundColor3=Color3.fromRGB(140,60,220),Text="COPY DEBUG",Font=FONT_B,TextSize=12,
+    TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=mutBg}); corner(mutCpyBtn,6)
+local mutCpyAllBtn=mk("TextButton",{Size=UDim2.new(1,-16,0,24),Position=UDim2.new(0,8,1,-56),
+    BackgroundColor3=Color3.fromRGB(100,40,180),Text="COPY ALL",Font=FONT_B,TextSize=12,
+    TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=mutBg}); corner(mutCpyAllBtn,6)
+local mutLogs={}; local mutAllLogs={}
+mutLog = function(s)
+    local line=tostring(s)
+    table.insert(mutAllLogs,line)
+    table.insert(mutLogs,1,line); if #mutLogs>80 then mutLogs[#mutLogs]=nil end
+    pcall(function() mutBox.Text=table.concat(mutLogs,"\n") end)
+end
+mutCpyBtn.MouseButton1Click:Connect(function()
+    pcall(_cp, mutBox.Text)
+    mutCpyBtn.Text="COPIED!"; task.delay(1.5,function() mutCpyBtn.Text="COPY DEBUG" end)
+end)
+mutCpyAllBtn.MouseButton1Click:Connect(function()
+    local txt=table.concat(mutAllLogs,"\n")
+    local ok=pcall(function()
+        local fn=setclipboard or toclipboard or (syn and syn.clipboard and syn.clipboard.set)
+            or (Clipboard and Clipboard.set)
+        if fn then fn(txt) end
+    end)
+    mutCpyAllBtn.Text=ok and "COPIED ALL!" or "GAGAL COPY"
+    task.delay(1.5,function() mutCpyAllBtn.Text="COPY ALL ("..#mutAllLogs.." baris)" end)
+end)
+
 -- ===================== STATE =====================
 local logs={}; local running=false; local stopRequested=false
 local totalNightmareCollected=0; local totalShovel=0; local totalFav=0; local _lastMutasiCount=0
@@ -2813,8 +2850,8 @@ local function fruitHasMutation(fruit)
             table.insert(all, k.."="..tostring(v))
         end
         table.sort(all)
-        dbgLog("["..fn.."] attrs: "..table.concat(all,", "))
-        dbgLog("["..fn.."] mut? "..(found or "NO"))
+        mutLog("["..fn.."] attrs: "..table.concat(all,", "))
+        mutLog("["..fn.."] mut? "..(found or "NO"))
     end
     return found ~= nil
 end
