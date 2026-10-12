@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.198"
+local VERSION = "v8.199"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3025,6 +3025,11 @@ local function doCollect(fruits)
     local summary = "doCollect: "..collected.."/"..#fruits.." fired"
     addLog(summary)
     dbgLog(summary)
+    -- langsung sell setelah collect, tidak perlu tunggu threshold
+    if collected > 0 then
+        task.wait(0.2)
+        sellInventory()
+    end
     return collected
 end
 
@@ -3097,14 +3102,7 @@ local function processFruits()
                 while #fruits > 0 and not stopRequested do
                     local collected = doCollect(fruits)
                     totalShovel = totalShovel + collected
-                    _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
-                    addLog("Cad2 collect: "..collected.."/"..#fruits.." | tas: ".._fruitCollectedSinceLastSell.."/"..SELL_THRESHOLD)
-                    if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
-                        task.wait(0.1)
-                        addLog("Cad2 sell!")
-                        sellInventory()
-                        _fruitCollectedSinceLastSell = 0
-                    end
+                    addLog("Cad2 collect: "..collected.."/"..#fruits)
                     task.wait(1)  -- tunggu server proses
                     local nxt = scanFruits()
                     _lastMutasiCount = #nxt.shovel
@@ -3157,14 +3155,7 @@ local function processFruits()
         while #fruits > 0 and not stopRequested do
             local collected = doCollect(fruits)
             totalShovel = totalShovel + collected
-            _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
-            addLog("Collect: "..collected.."/"..#fruits.." | tas: ".._fruitCollectedSinceLastSell.."/"..SELL_THRESHOLD)
-            if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
-                task.wait(0.1)
-                addLog("Sell! (tas ".._fruitCollectedSinceLastSell.." >= "..SELL_THRESHOLD..")")
-                sellInventory()
-                _fruitCollectedSinceLastSell = 0
-            end
+            addLog("Collect: "..collected.."/"..#fruits)
             task.wait(1)  -- tunggu server proses
             local next = scanFruits()
             _lastMutasiCount = #next.shovel
@@ -3222,11 +3213,7 @@ local function runSesiUtama(sesiNum, def, label, col)
                 while #fruits > 0 and not stopRequested and not _targetReached do
                     local collected = doCollect(fruits)
                     totalShovel = totalShovel + collected
-                    _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
-                    addLog("Collect: "..collected.."/"..#fruits.." | tas: ".._fruitCollectedSinceLastSell.."/"..SELL_THRESHOLD)
-                    if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
-                        task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
-                    end
+                    addLog("Collect: "..collected.."/"..#fruits)
                     task.wait(1)  -- tunggu server proses collect sebelum scan ulang
                     local nxt = scanFruits()
                     fruits = nxt.shovel
@@ -3251,10 +3238,7 @@ local function runSesiUtama(sesiNum, def, label, col)
             while #fruits > 0 and not stopRequested do
                 local collected = doCollect(fruits)
                 totalShovel = totalShovel + collected
-                _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
-                if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
-                    task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
-                end
+                addLog("Sesi1 sisa collect: "..collected.."/"..#fruits)
                 task.wait(1)  -- tunggu server proses
                 local nxt = scanFruits(); fruits = nxt.shovel
             end
@@ -3314,10 +3298,7 @@ local function runSesi2()
                     while #fruits2 > 0 and not stopRequested do
                         local collected = doCollect(fruits2)
                         totalShovel = totalShovel + collected
-                        _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
-                        if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
-                            task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
-                        end
+                        task.wait(1)
                         local nx=scanFruits(); fruits2=nx.shovel
                     end
                 end
@@ -3340,10 +3321,7 @@ local function runSesi2()
             while #fruits > 0 and not stopRequested do
                 local collected = doCollect(fruits)
                 totalShovel = totalShovel + collected
-                _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
-                if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
-                    task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
-                end
+                task.wait(1)
                 local nx=scanFruits(); fruits=nx.shovel
             end
             addLog("Mutasi habis — lanjut sesi 2")
