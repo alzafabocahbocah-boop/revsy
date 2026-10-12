@@ -1,4 +1,4 @@
--- uplevelnew v8.187 — debug mutasi: pisah log vfx known vs NEW (untuk riset partikel baru)
+-- uplevelnew v8.189 — rename DEBUG WEATHER -> DEBUG LOG (general); weather log tetap pakai dbgLog
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -149,12 +149,11 @@ end
 
 local VERSION = "v8.185"
 
--- forward declaration: dbgLog & addLog & mutLog & weatherLog didefinisikan lebih bawah (setelah GUI)
+-- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
 local dbgLog
 local addLog
 local mutLog
-local weatherLog
 
 -- ===================== KONFIGURASI =====================
 -- v8.153: SESI1_DEF dinamis — di-rebuild tiap masuk sesi 1
@@ -1741,7 +1740,8 @@ cpyBtn.MouseButton1Click:Connect(function()
     cpyBtn.Text="COPIED!"; task.delay(1.5,function() cpyBtn.Text="COPY LOG" end)
 end)
 
--- ===================== DEBUG LOG (general) + DEBUG WEATHER + DEBUG MUTASI =====================
+-- ===================== DEBUG LOG (general) =====================
+sectionHeader(logScroll,"\u{2022} DEBUG LOG",4)
 local function _cp(txt)
     local fn=setclipboard or toclipboard or (syn and syn.clipboard and syn.clipboard.set)
         or (Clipboard and Clipboard.set)
@@ -1778,27 +1778,13 @@ local function mkDbgBox(layoutOrder, borderCol, placeholder)
     end)
     return logFn
 end
-
--- DEBUG LOG (general: collect, sesi, swap, T-Rex scan, dll)
-sectionHeader(logScroll,"\u{2022} DEBUG LOG",4)
 local dbgLogs={}; local dbgAllLogs={}
-local _dbgFn = mkDbgBox(5, Color3.fromRGB(60,140,220), "— menunggu log —")
+local _dbgFn = mkDbgBox(5, Color3.fromRGB(60,140,220), "— menunggu weather scan —")
 dbgLog = function(s)
     local line=tostring(s)
     table.insert(dbgAllLogs,line)
     table.insert(dbgLogs,1,line); if #dbgLogs>60 then dbgLogs[#dbgLogs]=nil end
     _dbgFn(s)
-end
-
--- DEBUG WEATHER (khusus: destroy cuaca/fog/bloom/atmosphere)
-sectionHeader(logScroll,"\u{2022} DEBUG WEATHER",5)
-local _weatherFn = mkDbgBox(5, Color3.fromRGB(30,180,120), "— menunggu weather scan —")
-local weatherLogs={}; local weatherAllLogs={}
-weatherLog = function(s)
-    local line=tostring(s)
-    table.insert(weatherAllLogs,line)
-    table.insert(weatherLogs,1,line); if #weatherLogs>60 then weatherLogs[#weatherLogs]=nil end
-    _weatherFn(s)
 end
 
 -- ===================== DEBUG MUTASI LOG =====================
@@ -2864,17 +2850,7 @@ local function fruitHasMutation(fruit)
             mutLog("["..fn.."] mut? "..(found or "NO"))
         end
         if #children > 0 then
-            -- pisah: known mutation VFX vs unknown (untuk riset partikel baru)
-            local KNOWN_VFX = {Shockwave=true, Flash=true, Sparkle=true}
-            local known={}; local unknown={}
-            for _,c in ipairs(children) do
-                local isKnown = false
-                for k in pairs(KNOWN_VFX) do if c:find(k) then isKnown=true; break end end
-                if isKnown then table.insert(known,c) else table.insert(unknown,c) end
-            end
-            if #known>0 then mutLog("["..fn.."] vfx known: "..table.concat(known,", ")) end
-            if #unknown>0 then mutLog("["..fn.."] vfx NEW: "..table.concat(unknown,", ")) end
-            if #known==0 and #unknown==0 then mutLog("["..fn.."] vfx: none") end
+            mutLog("["..fn.."] vfx: "..table.concat(children,", "))
         else
             mutLog("["..fn.."] vfx: none")
         end
@@ -4981,48 +4957,31 @@ do
                 end
             end
             if #found > 0 then
-                weatherLog("hapus ws: "..table.concat(found,", "))
+                dbgLog("[WEATHER] hapus: "..table.concat(found,", "))
+            else
+                dbgLog("[WEATHER] scan: tidak ada weather object")
             end
-            -- log objek workspace yang TIDAK dikenal (potensi cuaca baru)
-            local unknown = {}
-            for _, obj in ipairs(workspace:GetChildren()) do
-                local known = false
-                for _, name in ipairs(WEATHER_WS_NAMES) do
-                    if obj.Name == name then known = true; break end
-                end
-                if not known and (obj:IsA("ParticleEmitter") or obj:IsA("Smoke") or obj:IsA("Fire")
-                or obj:IsA("Trail") or obj:IsA("Sparkles")) then
-                    table.insert(unknown, obj.Name.."("..obj.ClassName..")")
-                end
-            end
-            if #unknown > 0 then weatherLog("unknown ws: "..table.concat(unknown,", ")) end
             local fx = {}
             for _, obj in ipairs(workspace:GetChildren()) do
                 if obj:IsA("ColorCorrectionEffect") or obj:IsA("BlurEffect")
                 or obj:IsA("BloomEffect") or obj:IsA("SunRaysEffect")
                 or obj:IsA("ParticleEmitter") then
-                    table.insert(fx, obj.Name.."("..obj.ClassName..")")
+                    table.insert(fx, obj.ClassName)
                     obj:Destroy()
                 end
             end
-            if #fx > 0 then weatherLog("fx ws: "..table.concat(fx,", ")) end
+            if #fx > 0 then dbgLog("[WEATHER] fx hapus: "..table.concat(fx,", ")) end
         end)
     end
 
     local function applyColorFX()
         pcall(function()
-            local removed = {}
             for _, v in ipairs(Lighting:GetChildren()) do
-                if v:IsA("Folder") then
-                    table.insert(removed, v.Name.."(Folder)"); v:Destroy()
+                if v:IsA("Folder") then v:Destroy()
                 elseif v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect")
                 or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect")
-                or v:IsA("BloomEffect") then
-                    table.insert(removed, v.Name.."("..v.ClassName..")")
-                    v:Destroy()
-                end
+                or v:IsA("BloomEffect") then v:Destroy() end
             end
-            if #removed > 0 then weatherLog("lighting fx: "..table.concat(removed,", ")) end
         end)
     end
 
@@ -5030,13 +4989,9 @@ do
         pcall(function() Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0 end)
         pcall(function() Lighting.FogEnd = 100000; Lighting.FogStart = 99999 end)
         pcall(function()
-            local removed = {}
             for _, v in ipairs(Lighting:GetDescendants()) do
-                if v:IsA("BloomEffect") or v:IsA("Sky") or v:IsA("Atmosphere") then
-                    table.insert(removed, v.Name.."("..v.ClassName..")"); v:Destroy()
-                end
+                if v:IsA("BloomEffect") or v:IsA("Sky") or v:IsA("Atmosphere") then v:Destroy() end
             end
-            if #removed > 0 then weatherLog("lighting: "..table.concat(removed,", ")) end
         end)
         pcall(function() local t = workspace:FindFirstChildOfClass("Terrain"); if t then t.Decoration = false end end)
     end
