@@ -1,4 +1,4 @@
--- uplevelnew v8.191 — filter Shine_Particle dari mutasi scan (VFX normal bawaan Blueberry, bukan mutasi)
+-- uplevelnew v8.192 — deduplicate VFX per buah by name (fix spam Shine_Particle 2/3/4x)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.191"
+local VERSION = "v8.192"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2833,17 +2833,19 @@ local function fruitHasMutation(fruit)
     local fn = fruit.Name
     local _uid = tostring(fruit:GetAttribute("Id") or fruit:GetAttribute("id") or fruit:GetFullName())
     -- scan children dulu supaya bisa compare
-    -- VFX normal bawaan buah (bukan mutasi) — difilter supaya tidak spam log
-    local NORMAL_VFX = {["Shine_Particle"]=true}
-    local children = {}
+    -- deduplicate by name: Shine_Particle muncul 2/3/4x tapi kita catat 1x saja
+    local childSeen = {}; local children = {}
     for _,ch in ipairs(fruit:GetDescendants()) do
         local cls = ch.ClassName
-        if (cls=="ParticleEmitter" or cls=="PointLight" or cls=="SpotLight"
+        if cls=="ParticleEmitter" or cls=="PointLight" or cls=="SpotLight"
         or cls=="SurfaceLight" or cls=="SelectionBox" or cls=="BillboardGui"
         or cls=="SurfaceGui" or cls=="SpecialMesh" or cls=="Fire" or cls=="Smoke"
-        or cls=="Sparkles" or cls:find("Effect"))
-        and not NORMAL_VFX[ch.Name] then
-            table.insert(children, ch.Name.."("..cls..")")
+        or cls=="Sparkles" or cls:find("Effect") then
+            local key = ch.Name.."("..cls..")"
+            if not childSeen[key] then
+                childSeen[key] = true
+                table.insert(children, key)
+            end
         end
     end
     table.sort(children)
