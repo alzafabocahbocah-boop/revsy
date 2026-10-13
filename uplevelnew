@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.208"
+local VERSION = "v8.210"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -636,7 +636,7 @@ local function listPetsAll()
 end
 
 -- v8.153: buildSesi1Def — hitung T-Rex age>=500 di inventory, pilih lineup sesi 1
--- >= 8 T-Rex age>=500 -> 8 T-Rex | kurang -> 7 Mimic Octopus + 1 T-Rex
+-- >= 8 T-Rex age>=500 -> 8 T-Rex | kurang -> N T-Rex + (8-N) Mimic Octopus
 local function buildSesi1Def()
     local trexTua = 0
     dbgLog("[DBG] bSD step1: listPetsAll")
@@ -740,12 +740,19 @@ local function buildSesi1Def()
     if not okG then dbgLog("[DBG] garden scan ERROR: "..tostring(errG)) end
     dbgLog("[DBG] buildSesi1Def: trexTua="..trexTua.." (inc garden)")
     -- threshold 7: 1 T-Rex bisa di garden (tidak ke-detect container), asumsi ada 8 total
-    if trexTua >= 7 then
+    -- v8.210: N T-Rex masuk semua ke lineup, Mimic ngisi sisanya (8-N)
+    local nTrex = math.min(trexTua, 8)
+    if nTrex >= 7 then
+        -- 7 atau 8 T-Rex -> full 8 T-Rex (1 mungkin di garden, tidak ke-detect)
         SESI1_DEF = { {nama="T-Rex", jml=8} }
         addLog("Sesi 1 def: 8 T-Rex (age>=500 terdeteksi "..trexTua..", threshold 7)")
+    elseif nTrex == 0 then
+        SESI1_DEF = { {nama="Mimic Octopus", jml=8} }
+        addLog("Sesi 1 def: 8 Mimic (T-Rex age>=500 belum ada)")
     else
-        SESI1_DEF = { {nama="Mimic Octopus", jml=7}, {nama="T-Rex", jml=1} }
-        addLog("Sesi 1 def: 7 Mimic+1 T-Rex (T-Rex age>=500 cuma "..trexTua..")")
+        local nMimic = 8 - nTrex
+        SESI1_DEF = { {nama="T-Rex", jml=nTrex}, {nama="Mimic Octopus", jml=nMimic} }
+        addLog("Sesi 1 def: "..nTrex.." T-Rex + "..nMimic.." Mimic (T-Rex age>=500 = "..trexTua..")")
     end
 end
 
