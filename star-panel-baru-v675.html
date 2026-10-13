@@ -3842,16 +3842,21 @@ function hitungLevelLive(){
   // -> tanpa dedup, tiap card device nampilin akun yg overlap (isinya SAMA). Tentuin device ASLI tiap
   // akun (online dulu, lalu ts upkgstat terbaru) -> tiap akun cuma muncul di 1 device.
   const realDevOf = {};
-  { const best = {};
+  { const best = {}; const devCount = {};
     tims.forEach(t => { (t.clients||[]).forEach(c => {
       const nm = c.akun; if(!nm) return;
-      // v516: pake DENYUT (per-DEVICE, kecil=fresh) buat nentuin device asli akun. upkgstat.ts SALAH
-      // (per-akun, sama di semua device -> tiebreak gak guna -> akun ke-assign sembarang -> kecampur).
-      const dn = (c.denyut==null) ? 999999 : Number(c.denyut);
+      // v678: tiebreaker pake ts WORKER (siapa yg terakhir lapor akun ini = device asli).
+      // denyut tidak dipakai lagi krn denyut tergantung script Roblox inject, bukan worker.
+      const workerTs = Number(t.ts) || 0;
       const prev = best[nm];
-      if(!prev || dn < prev.dn) best[nm] = { dev:t.id, dn };   // device dgn denyut TERFRESH = tempat akun jalan
+      if(!devCount[nm]) devCount[nm] = new Set();
+      devCount[nm].add(t.id);
+      if(!prev || workerTs > prev.ts) best[nm] = { dev:t.id, ts:workerTs };
     }); });
-    Object.keys(best).forEach(nm => realDevOf[nm] = best[nm].dev);
+    // hanya dedup kalo akun beneran di >1 device
+    Object.keys(best).forEach(nm => {
+      if((devCount[nm]||new Set()).size > 1) realDevOf[nm] = best[nm].dev;
+    });
   }
   const byTim = {};
   // v513: deploy pake -N (sc "UPLEVEL T1/T2") -> grup by tim (sengaja multi-device jadi 1 tim).

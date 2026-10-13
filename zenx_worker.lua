@@ -9910,7 +9910,10 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
     local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
     for _, n in ipairs(nums) do
         local nn = string.format("%02d", n)
-        local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        local url = rel:match('"(https://[^"]*Arceus%.Juragan%.' .. n .. '[^"]*%.apk)"')
+        if not url then
+            url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        end
         if not url then
             url = rel:match('"(https://[^"]*LITE%.' .. nn .. '[^"]*%.apk)"')
         end
@@ -9944,12 +9947,15 @@ if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then
     local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
     for n = 1, cnt do
         local nn = string.format("%02d", n)
-        local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        local url = rel:match('"(https://[^"]*Arceus%.Juragan%.' .. n .. '[^"]*%.apk)"')
+        if not url then
+            url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        end
         if not url then
             url = rel:match('"(https://[^"]*LITE%.' .. nn .. '[^"]*%.apk)"')
         end
         if not url then
-            print("[" .. nn .. "] URL gak ketemu di rilis JSON (skip). Cek manual: nama asset yg ada 'LITE." .. nn .. "' di rilis worker_64.")
+            print("[" .. nn .. "] URL gak ketemu di rilis JSON (skip). Cek manual: nama asset yg ada 'Juragan." .. n .. "' atau 'LITE." .. nn .. "' di rilis worker_64.")
         else
             print("[" .. nn .. "] update: download...")
             os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
@@ -9983,7 +9989,10 @@ if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then
     local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
     for _, it in ipairs(items) do
         local nn = string.format("%02d", it.num)
-        local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        local url = rel:match('"(https://[^"]*Arceus%.Juragan%.' .. it.num .. '[^"]*%.apk)"')
+        if not url then
+            url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        end
         if not url then
             url = rel:match('"(https://[^"]*LITE%.' .. nn .. '[^"]*%.apk)"')
         end
