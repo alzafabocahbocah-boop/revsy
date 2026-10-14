@@ -1,4 +1,4 @@
--- uplevelnew v8.227 — Copy All include STAT log, stat label tetap terpisah dari ANIM area
+-- uplevelnew v8.228 — deepFind jadi primary handler, dipanggil setiap AP event sz>0
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.227"
+local VERSION = "v8.228"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2541,33 +2541,63 @@ do
             end
         end)
 
-        -- DBG: deep find CustomAnimationState di semua path (depth 12)
+        -- deep find + handle CustomAnimationState (depth 12)
         local function deepFind(t, depth, path)
             depth = depth or 0
             path = path or "r"
             if depth > 12 or type(t) ~= "table" then return end
             for k, v in pairs(t) do
                 local ks = tostring(k):sub(1,20)
-                -- cek key mengandung Anim/Custom
-                if ks:find("Anim",1,true) or ks:find("Custom",1,true) then
-                    tsLog("KEY!" .. path .. "." .. ks .. "=" .. tostring(v):sub(1,25))
-                end
                 if type(v) == "table" then
                     local v1 = tostring(v[1] or "")
                     if v1:find("CustomAnimationState",1,true) then
-                        tsLog("T1! " .. path .. "." .. ks .. " v1='" .. v1:sub(1,40) .. "' v2=" .. tostring(v[2] or ""):sub(1,15))
+                        local animStr = tostring(v[2] or "")
+                        -- ekstrak uuid dari path: .../{uuid}/CustomAnimationState
+                        local uuid = v1:match("{([^}]+)}")  or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                        local raw = uuid:gsub("[{}]","")
+                        _dbgAnimFound = _dbgAnimFound + 1
+                        tsLog("ANIM:" .. animStr .. " uuid=" .. raw:sub(1,8) .. " path=" .. v1:sub(#v1-30, #v1))
+                        -- cek tipe pet
+                        local tipe = getPetTipeFromUUID(raw)
+                            or getPetTipeFromUUID("{" .. raw .. "}")
+                        if not tipe then
+                            local fmtU = "{" .. raw .. "}"
+                            for _, parent in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
+                                if parent then
+                                    for _, t2 in ipairs(parent:GetChildren()) do
+                                        if t2:IsA("Tool") then
+                                            local tu = "{" .. tostring(t2:GetAttribute("PET_UUID") or ""):gsub("[{}]","") .. "}"
+                                            if tu == fmtU then tipe = tostring(t2:GetAttribute("f") or t2.Name); break end
+                                        end
+                                    end
+                                end
+                                if tipe then break end
+                            end
+                        end
+                        local tl = tipe and tostring(tipe):lower() or "NIL"
+                        if animStr == "Eat" and (tl:find("t%-rex",1,true) or tl:find("trex",1,true)) then
+                            if not running or stopRequested or _isCollecting or _isTransisi then
+                                tsLog("SKIP guard " .. raw:sub(1,8))
+                            else
+                                tsLog("SWAP! " .. raw:sub(1,8) .. " tipe=" .. tl:sub(1,10))
+                                task.spawn(function()
+                                    unequipPet(raw)
+                                    task.wait(0.03)
+                                    equipPet(raw)
+                                    _swapLastSwap[raw] = tick()
+                                end)
+                            end
+                        end
                     else
                         deepFind(v, depth+1, path .. "." .. ks)
                     end
-                elseif type(v) == "string" and v:find("CustomAnimationState",1,true) then
-                    tsLog("STR! " .. path .. "." .. ks .. "='" .. v:sub(1,40) .. "'")
                 end
             end
         end
 
         local function scanTrex(t, depth)
             depth = depth or 0
-            if depth > 8 or type(t) ~= "table" then return end
+            if depth > 12 or type(t) ~= "table" then return end
             for _, v in pairs(t) do
                 if type(v) == "table" then
                     local path = tostring(v[1] or "")
@@ -2645,11 +2675,7 @@ do
                     local sz = 0; for _ in pairs(data) do sz=sz+1 end
                     -- log setiap kali data tidak kosong
                     if sz > 0 then
-                        tsLog("AP#" .. _evActivePets .. " sz=" .. sz)
-                        if _dbgAnimFound == 0 then
-                            deepFind(data, 0, "AP")
-                        end
-                        scanTrex(data)
+                        deepFind(data, 0, "AP")
                     end
                 end
             end
