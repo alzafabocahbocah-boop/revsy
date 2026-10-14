@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.536-cf"
+local VERSION = "9.537-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1965,59 +1965,63 @@ local function baca_username(pkg)
 end
 
 local function tulis_autoexec(cfg, urlPanel)
-    if cfg.executor == "arceus" then
-        -- selalu detect ulang tiap kali (jangan cache, biar gak nyangkut path lama)
-        local found = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Autoexec 2>/dev/null | head -1'")
-                      :match("([^\r\n]+)")
-        if found and found ~= "" then
-            cfg.autoexec_dir = found
-            info("arceus autoexec folder: " .. found)
-        else
-            cfg.autoexec_dir = "/sdcard/Arceus X/Autoexec"
-            warn("RobloxClone gak ketemu, fallback ke " .. cfg.autoexec_dir)
-        end
-        -- lanjut nulis autoexec normal (jangan return early)
-    end
     local url_script = (urlPanel and urlPanel ~= "") and urlPanel or cfg.script_url
     if not url_script or url_script == "" then
         warn("script_url kosong, autoexec dilewat")
         return false
     end
-    local AUTOEXEC_DIR = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
-    -- Arceus X: 1 baris doang kayak pasang.sh (gak perlu pcall cleanup Delta)
-    -- executor lain (Delta dll): pakai pcall cleanup + zenx_loader.txt
-    local fname, loader
-    if cfg.executor == "arceus" then
-        fname  = "zenx.lua.txt"  -- primer (beberapa versi Arceus baca .txt)
-        loader = 'loadstring(game:HttpGet("' .. url_script .. '"))()'
-    else
-        fname  = "zenx_loader.txt"
-        loader = "pcall(function() if delfile then pcall(delfile,\"ZenxMarket_cache.lua\") pcall(delfile,\"ZenxMarket_cache_time.txt\") end end)\n" ..
-                 "loadstring(game:HttpGet(\"" .. url_script .. "\"))()\n"
-    end
-    local path = AUTOEXEC_DIR .. "/" .. fname
-    local bersih = ""
-    if cfg.autoexec_bersih ~= false and cfg.executor ~= "arceus" then
-        -- arceus: skip bersih (pipe+while di dalam su -c single-quote ribet)
-        -- Delta dll: pakai tmp file bersihkan via cp biasa
-        bersih = 'find "' .. AUTOEXEC_DIR .. '" -maxdepth 1 -type f ! -name "' .. fname .. '" ! -name "zenx_extra.lua" -exec sh -c \'echo "HAPUS:$1"; rm -f "$1"\' _ {} \\;; '
-    end
 
-    local cek
+    -- ===== ARCEUS: tulis ke SEMUA RobloxClone* =====
     if cfg.executor == "arceus" then
-        -- tulis via tmp file (paling aman, hindari quoting hell di su -c)
+        local loader = 'loadstring(game:HttpGet("' .. url_script .. '"))()'
         local tmp = os.getenv("HOME") .. "/.zenx_arceus.tmp"
         local ft = io.open(tmp, "w")
         if not ft then warn("gagal bikin file tmp arceus"); return false end
         ft:write(loader); ft:close()
-        local path_lua = AUTOEXEC_DIR .. "/zenx.lua"
-        -- cp tmp ke zenx.lua.txt + zenx.lua
-        cek = sh('su -c \'mkdir -p "' .. AUTOEXEC_DIR .. '"' ..
-                 '; cp "' .. tmp .. '" "' .. path .. '"' ..
-                 '; cp "' .. tmp .. '" "' .. path_lua .. '"' ..
-                 '; chmod 664 "' .. path .. '" "' .. path_lua .. '"' ..
-                 '; cat "' .. path .. '"' .. "'")
-    else
+
+        -- ambil semua folder RobloxClone*/Arceus X/Autoexec
+        local lsOut = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Autoexec 2>/dev/null'")
+        local folders = {}
+        for line in lsOut:gmatch("[^\r\n]+") do
+            if line ~= "" then folders[#folders+1] = line end
+        end
+        if #folders == 0 then
+            folders[1] = "/sdcard/Arceus X/Autoexec"
+            warn("RobloxClone gak ketemu, fallback ke " .. folders[1])
+        end
+
+        local ok_count = 0
+        for _, dir in ipairs(folders) do
+            local p_txt = dir .. "/zenx.lua.txt"
+            local p_lua = dir .. "/zenx.lua"
+            local res = sh('su -c \'mkdir -p "' .. dir .. '"' ..
+                           '; cp "' .. tmp .. '" "' .. p_txt .. '"' ..
+                           '; cp "' .. tmp .. '" "' .. p_lua .. '"' ..
+                           '; chmod 664 "' .. p_txt .. '" "' .. p_lua .. '"' ..
+                           '; cat "' .. p_txt .. '"' .. "'")
+            if res:find("loadstring", 1, true) then
+                ok("arceus autoexec -> " .. dir)
+                ok_count = ok_count + 1
+            else
+                warn("GAGAL nulis ke " .. dir .. " : " .. tostring(res):sub(1,80))
+            end
+        end
+        return ok_count > 0
+    end
+
+    -- ===== EXECUTOR LAIN (Delta dll) =====
+    local AUTOEXEC_DIR = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
+    local fname  = "zenx_loader.txt"
+    local loader = "pcall(function() if delfile then pcall(delfile,\"ZenxMarket_cache.lua\") pcall(delfile,\"ZenxMarket_cache_time.txt\") end end)\n" ..
+                   "loadstring(game:HttpGet(\"" .. url_script .. "\"))()\n"
+    local path = AUTOEXEC_DIR .. "/" .. fname
+    local bersih = ""
+    if cfg.autoexec_bersih ~= false then
+        bersih = 'find "' .. AUTOEXEC_DIR .. '" -maxdepth 1 -type f ! -name "' .. fname .. '" ! -name "zenx_extra.lua" -exec sh -c \'echo "HAPUS:$1"; rm -f "$1"\' _ {} \\;; '
+    end
+
+    local cek
+    do
         -- executor lain: tulis via tmp file (loader bisa multiline)
         local tmp = os.getenv("HOME") .. "/.zenx_loader.tmp"
         local f = io.open(tmp, "w")
