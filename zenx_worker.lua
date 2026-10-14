@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.538-cf"
+local VERSION = "9.539-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -430,7 +430,7 @@ function denyut_dirs(cfg)
         if d and d ~= "" and not seen[d] then seen[d] = true; dirs[#dirs + 1] = d end
     end
     -- tambah semua RobloxClone*/Arceus X/Workspace
-    local cloneOut = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Workspace 2>/dev/null'") or ""
+    local cloneOut = sh("su -c 'ls -d /sdcard/RobloxClone*/Arceus\\ X/Workspace 2>/dev/null'") or ""
     for line in cloneOut:gmatch("[^\n]+") do
         line = line:match("^%s*(.-)%s*$")
         if line ~= "" and not seen[line] then seen[line] = true; dirs[#dirs + 1] = line end
