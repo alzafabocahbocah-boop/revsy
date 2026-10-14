@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.531-cf"
+local VERSION = "9.532-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1971,7 +1971,7 @@ local function tulis_autoexec(cfg, urlPanel)
             -- (Arceus Juragan/Lite taruh autoexec di dalam clone, bukan di /sdcard/Arceus X/)
             -- cari via ls: list semua subfolder /sdcard/RobloxClone*/Arceus X/Autoexec
             local found = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Autoexec 2>/dev/null | head -1'")
-                          :match("([^\r\n]+")
+                          :match("([^\r\n]+)")
             if found and found ~= "" then
                 cfg.autoexec_dir = found
                 info("arceus autoexec folder: " .. found)
@@ -2003,13 +2003,11 @@ local function tulis_autoexec(cfg, urlPanel)
     local path = AUTOEXEC_DIR .. "/" .. fname
     local bersih = ""
     if cfg.autoexec_bersih ~= false then
-        -- pakai glob dengan quotes biar path spasi aman
+        -- pakai find biar aman di dalam su -c '...' (hindari [ ] bracket yg bikin syntax error)
         -- zenx_extra.lua (script key golaspay) JANGAN dihapus -- dibuat pasang.sh, bukan worker
-        bersih = 'for f in "' .. AUTOEXEC_DIR .. '"/*; do ' ..
-                 '[ -f "$f" ] || continue; ' ..
-                 'case "$f" in */' .. fname .. '|*/zenx_extra.lua) ;; ' ..
-                 '*) echo "HAPUS:$f"; rm -f "$f";; esac; ' ..
-                 "done; "
+        -- cari semua file di folder autoexec, hapus yg bukan loader kita atau zenx_extra.lua
+        bersih = 'find "' .. AUTOEXEC_DIR .. '" -maxdepth 1 -type f ! -name "' .. fname .. '" ! -name "zenx_extra.lua" | ' ..
+                 'while read f; do echo "HAPUS:$f"; rm -f "$f"; done; '
     end
 
     local cek
@@ -2045,7 +2043,7 @@ local function tulis_autoexec(cfg, urlPanel)
     if cek:find("loadstring", 1, true) then
         ok("autoexec ditulis: " .. path)
         info("  isi: loadstring(...\"" .. url_script .. "\")...")
-        local isiFolder = sh("su -c 'ls -l " .. AUTOEXEC_DIR .. " 2>&1 | tail -n +2'") or ""
+        local isiFolder = sh("su -c 'ls -l \"" .. AUTOEXEC_DIR .. "\" 2>&1 | tail -n +2'") or ""
         if isiFolder ~= "" then
             for baris in isiFolder:gmatch("[^\r\n]+") do
                 local nm = baris:match("(%S+)%s*$")
