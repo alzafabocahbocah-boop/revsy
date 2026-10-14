@@ -1,4 +1,4 @@
--- uplevelnew v8.219 — scanTrex: fix getPetTipe semua format uuid + fallback Backpack Tool
+-- uplevelnew v8.220 — TrexSwap GUI: stat label terpisah, ANIM log gak ketutup counter
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.219"
+local VERSION = "v8.220"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2357,7 +2357,7 @@ do
     -- T-Rex: swap via CustomAnimationState "Eat" (DataStream ActivePets)
     task.spawn(function()
         -- ── GUI TrexSwap (log + copy) ─────────────────────────
-        local _tsLabel, _tsLogs = nil, {}
+        local _tsLabel, _tsLogs, _tsStatLabel = nil, {}, nil
         pcall(function()
             local pg = plr:WaitForChild("PlayerGui", 5)
             if not pg then return end
@@ -2367,17 +2367,28 @@ do
             sg2.Parent = pg
             -- frame utama
             local fr = Instance.new("Frame")
-            fr.Size = UDim2.new(0, 270, 0, 130)
+            fr.Size = UDim2.new(0, 270, 0, 148)
             fr.Position = UDim2.new(0, 10, 0, 60)
             fr.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
             fr.BackgroundTransparency = 0.1
             fr.BorderSizePixel = 0; fr.Active = true; fr.Draggable = true
             fr.Parent = sg2
             Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 7)
+            -- label stat (counter — tidak campur log)
+            local statLbl = Instance.new("TextLabel")
+            statLbl.Size = UDim2.new(1, -8, 0, 14)
+            statLbl.Position = UDim2.new(0, 4, 0, 2)
+            statLbl.BackgroundTransparency = 1
+            statLbl.TextColor3 = Color3.fromRGB(150, 150, 255)
+            statLbl.Font = Enum.Font.GothamBold; statLbl.TextSize = 10
+            statLbl.TextXAlignment = Enum.TextXAlignment.Left
+            statLbl.Text = "ev=0 AP=0 anim=0"
+            statLbl.Parent = fr
+            _tsStatLabel = statLbl
             -- label log (8 baris)
             local lbl = Instance.new("TextLabel")
             lbl.Size = UDim2.new(1, -8, 0, 88)
-            lbl.Position = UDim2.new(0, 4, 0, 2)
+            lbl.Position = UDim2.new(0, 4, 0, 16)
             lbl.BackgroundTransparency = 1
             lbl.TextColor3 = Color3.fromRGB(100, 220, 100)
             lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 10
@@ -2390,7 +2401,7 @@ do
             -- tombol copy
             local btn = Instance.new("TextButton")
             btn.Size = UDim2.new(0.55, -2, 0, 18)
-            btn.Position = UDim2.new(0, 4, 0, 94)
+            btn.Position = UDim2.new(0, 4, 0, 112)
             btn.BackgroundColor3 = Color3.fromRGB(50, 120, 200)
             btn.BorderSizePixel = 0
             btn.TextColor3 = Color3.fromRGB(255,255,255)
@@ -2408,7 +2419,7 @@ do
             -- tombol clear
             local btnClr = Instance.new("TextButton")
             btnClr.Size = UDim2.new(0.45, -2, 0, 18)
-            btnClr.Position = UDim2.new(0.55, 2, 0, 94)
+            btnClr.Position = UDim2.new(0.55, 2, 0, 112)
             btnClr.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
             btnClr.BorderSizePixel = 0
             btnClr.TextColor3 = Color3.fromRGB(200,200,200)
@@ -2423,7 +2434,7 @@ do
             -- tombol rejoin
             local btnRej = Instance.new("TextButton")
             btnRej.Size = UDim2.new(1, -8, 0, 16)
-            btnRej.Position = UDim2.new(0, 4, 0, 114)
+            btnRej.Position = UDim2.new(0, 4, 0, 132)
             btnRej.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
             btnRej.BorderSizePixel = 0
             btnRej.TextColor3 = Color3.fromRGB(255,255,255)
@@ -2559,9 +2570,12 @@ do
                 _evActivePets = _evActivePets + 1
                 if type(data) == "table" then scanTrex(data) end
             end
-            if _evTotal % 10 == 0 then
-                tsLog("ev=" .. _evTotal .. " AP=" .. _evActivePets .. " anim=" .. _dbgAnimFound)
-            end
+            -- update stat label langsung, tidak campur log ANIM
+            pcall(function()
+                if _tsStatLabel then
+                    _tsStatLabel.Text = "ev=" .. _evTotal .. " AP=" .. _evActivePets .. " anim=" .. _dbgAnimFound
+                end
+            end)
         end)
         tsLog("listener ON (counter+scan)")
     end)
