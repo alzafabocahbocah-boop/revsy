@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.534-cf"
+local VERSION = "9.535-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1966,20 +1966,15 @@ end
 
 local function tulis_autoexec(cfg, urlPanel)
     if cfg.executor == "arceus" then
-        if not cfg.autoexec_dir then
-            -- cari folder RobloxClone* yang punya subfolder "Arceus X/Autoexec"
-            -- (Arceus Juragan/Lite taruh autoexec di dalam clone, bukan di /sdcard/Arceus X/)
-            -- cari via ls: list semua subfolder /sdcard/RobloxClone*/Arceus X/Autoexec
-            local found = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Autoexec 2>/dev/null | head -1'")
-                          :match("([^\r\n]+)")
-            if found and found ~= "" then
-                cfg.autoexec_dir = found
-                info("arceus autoexec folder: " .. found)
-            else
-                -- fallback ke path lama
-                cfg.autoexec_dir = "/sdcard/Arceus X/Autoexec"
-                warn("RobloxClone gak ketemu, fallback ke " .. cfg.autoexec_dir)
-            end
+        -- selalu detect ulang tiap kali (jangan cache, biar gak nyangkut path lama)
+        local found = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Autoexec 2>/dev/null | head -1'")
+                      :match("([^\r\n]+)")
+        if found and found ~= "" then
+            cfg.autoexec_dir = found
+            info("arceus autoexec folder: " .. found)
+        else
+            cfg.autoexec_dir = "/sdcard/Arceus X/Autoexec"
+            warn("RobloxClone gak ketemu, fallback ke " .. cfg.autoexec_dir)
         end
         -- lanjut nulis autoexec normal (jangan return early)
     end
@@ -2002,15 +1997,10 @@ local function tulis_autoexec(cfg, urlPanel)
     end
     local path = AUTOEXEC_DIR .. "/" .. fname
     local bersih = ""
-    if cfg.autoexec_bersih ~= false then
-        -- pakai find biar aman di dalam su -c '...' (hindari [ ] bracket yg bikin syntax error)
-        -- zenx_extra.lua (script key golaspay) JANGAN dihapus -- dibuat pasang.sh, bukan worker
-        -- cari semua file di folder autoexec, hapus yg bukan loader kita atau zenx_extra.lua
-        local bersih_whitelist = (cfg.executor == "arceus")
-            and '"zenx_extra.lua" ! -name "zenx.lua" ! -name "zenx.lua.txt"'
-            or  '"zenx_extra.lua" ! -name "' .. fname .. '"'
-        bersih = 'find "' .. AUTOEXEC_DIR .. '" -maxdepth 1 -type f ! -name ' .. bersih_whitelist .. ' | ' ..
-                 'while read f; do echo "HAPUS:$f"; rm -f "$f"; done; '
+    if cfg.autoexec_bersih ~= false and cfg.executor ~= "arceus" then
+        -- arceus: skip bersih (pipe+while di dalam su -c single-quote ribet)
+        -- Delta dll: pakai tmp file bersihkan via cp biasa
+        bersih = 'find "' .. AUTOEXEC_DIR .. '" -maxdepth 1 -type f ! -name "' .. fname .. '" ! -name "zenx_extra.lua" -exec sh -c \'echo "HAPUS:$1"; rm -f "$1"\' _ {} \\;; '
     end
 
     local cek
@@ -2019,8 +2009,9 @@ local function tulis_autoexec(cfg, urlPanel)
         -- loader sudah 1 baris tanpa newline, aman di-escape untuk shell single-quote
         local loader_esc = loader:gsub("'", "'\\''")
         local path_lua = AUTOEXEC_DIR .. "/zenx.lua"
-        cek = sh("su -c 'mkdir -p \"" .. AUTOEXEC_DIR .. "\"; " .. bersih ..
-                 "printf '%s' '" .. loader_esc .. "' > \"" .. path .. "\"" ..
+        -- tulis zenx.lua.txt lalu cp ke zenx.lua, tanpa pipe/while (aman di su -c single-quote)
+        cek = sh("su -c 'mkdir -p \"" .. AUTOEXEC_DIR .. "\"" ..
+                 "; printf " .. '"%s"' .. " '" .. loader_esc .. "' > \"" .. path .. "\"" ..
                  "; cp \"" .. path .. "\" \"" .. path_lua .. "\"" ..
                  "; chmod 664 \"" .. path .. "\" \"" .. path_lua .. "\"" ..
                  "; cat \"" .. path .. "\"'")
