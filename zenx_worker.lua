@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.528-cf"
+local VERSION = "9.529-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1987,10 +1987,6 @@ local function tulis_autoexec(cfg, urlPanel)
                  "loadstring(game:HttpGet(\"" .. url_script .. "\"))()\n"
     end
     local path = AUTOEXEC_DIR .. "/" .. fname
-    local tmp = os.getenv("HOME") .. "/.zenx_loader.tmp"
-    local f = io.open(tmp, "w")
-    if not f then warn("gagal bikin file tmp loader"); return false end
-    f:write(loader); f:close()
     local bersih = ""
     if cfg.autoexec_bersih ~= false then
         -- pakai glob dengan quotes biar path spasi aman
@@ -2002,11 +1998,26 @@ local function tulis_autoexec(cfg, urlPanel)
                  "done; "
     end
 
-    -- path bisa ada spasi (misal "Arceus X"), harus dikasih quotes
-    local cek = sh('su -c \'mkdir -p "' .. AUTOEXEC_DIR .. '"; ' .. bersih ..
-                   'cp "' .. tmp .. '" "' .. path .. '"' ..
-                   '; chmod 664 "' .. path .. '"' ..
-                   '; cat "' .. path .. '"' .. "'")
+    local cek
+    if cfg.executor == "arceus" then
+        -- pakai printf langsung kayak pasang.sh (hindari masalah cp cross-fs)
+        -- loader sudah 1 baris tanpa newline, aman di-escape untuk shell single-quote
+        local loader_esc = loader:gsub("'", "'\\''")
+        cek = sh("su -c 'mkdir -p \"" .. AUTOEXEC_DIR .. "\"; " .. bersih ..
+                 "printf '%s' '" .. loader_esc .. "' > \"" .. path .. "\"" ..
+                 "; chmod 664 \"" .. path .. "\"" ..
+                 "; cat \"" .. path .. "\"'")
+    else
+        -- executor lain: tulis via tmp file (loader bisa multiline)
+        local tmp = os.getenv("HOME") .. "/.zenx_loader.tmp"
+        local f = io.open(tmp, "w")
+        if not f then warn("gagal bikin file tmp loader"); return false end
+        f:write(loader); f:close()
+        cek = sh('su -c \'mkdir -p "' .. AUTOEXEC_DIR .. '"; ' .. bersih ..
+                 'cp "' .. tmp .. '" "' .. path .. '"' ..
+                 '; chmod 664 "' .. path .. '"' ..
+                 '; cat "' .. path .. '"' .. "'")
+    end
 
     local dibuang = {}
     for nm in tostring(cek):gmatch("HAPUS:([^\n]+)") do
