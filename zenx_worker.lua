@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.532-cf"
+local VERSION = "9.533-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1993,7 +1993,7 @@ local function tulis_autoexec(cfg, urlPanel)
     -- executor lain (Delta dll): pakai pcall cleanup + zenx_loader.txt
     local fname, loader
     if cfg.executor == "arceus" then
-        fname  = "zenx.lua"
+        fname  = "zenx.lua.txt"
         loader = 'loadstring(game:HttpGet("' .. url_script .. '"))()'
     else
         fname  = "zenx_loader.txt"
