@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.522-cf"
+local VERSION = "9.523-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1966,7 +1966,7 @@ end
 
 local function tulis_autoexec(cfg, urlPanel)
     if cfg.executor == "arceus" then
-        cfg.autoexec_dir = cfg.autoexec_dir or "/sdcard/Arceus/autoexec"
+        cfg.autoexec_dir = cfg.autoexec_dir or "/sdcard/Arceus X/Autoexec"
         -- lanjut nulis autoexec normal (jangan return early)
     end
     local url_script = (urlPanel and urlPanel ~= "") and urlPanel or cfg.script_url
