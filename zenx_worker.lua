@@ -429,6 +429,12 @@ function denyut_dirs(cfg)
     for _, d in ipairs(kandidat) do
         if d and d ~= "" and not seen[d] then seen[d] = true; dirs[#dirs + 1] = d end
     end
+    -- tambah semua RobloxClone*/Arceus X/Workspace
+    local cloneOut = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Workspace 2>/dev/null'") or ""
+    for line in cloneOut:gmatch("[^\n]+") do
+        line = line:match("^%s*(.-)%s*$")
+        if line ~= "" and not seen[line] then seen[line] = true; dirs[#dirs + 1] = line end
+    end
     return dirs
 end
 
