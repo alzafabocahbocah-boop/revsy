@@ -1,4 +1,4 @@
--- uplevelnew v8.236 — log raw uuid penuh + len untuk debug unequip/equip
+-- uplevelnew v8.237 — debug swap: log equipRE/active/pcall result
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.236"
+local VERSION = "v8.237"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2571,11 +2571,14 @@ do
                             if not running or stopRequested or _isCollecting or _isTransisi then
                                 -- guard aktif, skip swap
                             else
-                                tsLog("SWAP! raw=" .. raw .. " len=" .. #raw)
+                                local inActive = _activeUuids ~= nil and (_activeUuids[raw] or _activeUuids["{"..raw.."}"])
+                                tsLog("SWAP! raw=" .. raw:sub(1,8) .. " equipRE=" .. tostring(equipRE~=nil) .. " active=" .. tostring(inActive))
                                 task.spawn(function()
-                                    unequipPet(raw)
+                                    local ok1,e1 = pcall(function() unequipPet(raw) end)
+                                    tsLog("UNEQUIP ok=" .. tostring(ok1) .. (ok1 and "" or " err="..tostring(e1)))
                                     task.wait(0.03)
-                                    equipPet(raw)
+                                    local ok2,e2 = pcall(function() equipPet(raw) end)
+                                    tsLog("EQUIP ok=" .. tostring(ok2) .. (ok2 and "" or " err="..tostring(e2)))
                                     _swapLastSwap[raw] = tick()
                                 end)
                             end
