@@ -1,4 +1,4 @@
--- uplevelnew v8.233 — fix find pattern: t%-rex (pattern) -> t-rex (plain), biar match
+-- uplevelnew v8.234 — cleanup debug noise: hapus DBG/ANIM/ANIM2/SVC logs, swap confirmed
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.233"
+local VERSION = "v8.234"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2556,18 +2556,6 @@ do
                         local uuid = v1:match("{([^}]+)}")  or v1:match("/([^/]+)/CustomAnimationState") or "?"
                         local raw = uuid:gsub("[{}]","")
                         _dbgAnimFound = _dbgAnimFound + 1
-                        tsLog("ANIM:" .. animStr .. " uuid=" .. raw:sub(1,8) .. " path=" .. v1:sub(#v1-30, #v1))
-                        -- debug: cek format key di container
-                        if _kgContainer and _dbgAnimFound <= 3 then
-                            local found1 = _kgContainer[raw] ~= nil
-                            local found2 = _kgContainer["{" .. raw .. "}"] ~= nil
-                            tsLog("DBG uuid='" .. raw:sub(1,12) .. "' len=" .. #raw .. " c[raw]=" .. tostring(found1) .. " c[{raw}]=" .. tostring(found2))
-                            -- log 2 sample key dari container
-                            local n=0; for k in pairs(_kgContainer) do
-                                if n < 2 then tsLog("DBG ckey='" .. tostring(k):sub(1,20) .. "'") end
-                                n=n+1
-                            end
-                        end
                         -- cek tipe pet — container key pakai format {uuid}
                         local fmtU = "{" .. raw .. "}"
                         local tipe = nil
@@ -2578,13 +2566,12 @@ do
                                 if pt ~= "" then tipe = pt end
                             end
                         end
-                        local tl = tipe and tostring(tipe):lower() or "NIL"
-                        tsLog("ANIM2:" .. animStr .. " " .. raw:sub(1,8) .. " t=" .. tl:sub(1,12))
+                        local tl = tipe and tostring(tipe):lower() or ""
                         if animStr == "Eat" and (tl:find("t-rex",1,true) or tl:find("trex",1,true)) then
                             if not running or stopRequested or _isCollecting or _isTransisi then
-                                tsLog("SKIP guard " .. raw:sub(1,8) .. " r=" .. tostring(running) .. " stop=" .. tostring(stopRequested) .. " col=" .. tostring(_isCollecting) .. " tr=" .. tostring(_isTransisi))
+                                -- guard aktif, skip swap
                             else
-                                tsLog("SWAP! " .. raw:sub(1,8) .. " tipe=" .. tl:sub(1,10))
+                                tsLog("SWAP! " .. raw:sub(1,8))
                                 task.spawn(function()
                                     unequipPet(raw)
                                     task.wait(0.03)
@@ -2606,25 +2593,13 @@ do
             _evTotal = _evTotal + 1
             -- args[1]=_, args[2]=service, args[3]=data ATAU args[3]=subservice, args[4]=data
             local svc = tostring(args[2] or "")
-            -- log service name baru yang belum pernah muncul + jumlah args
-            if not _seenSvc[svc] then
-                _seenSvc[svc] = true
-                tsLog("SVC:" .. svc:sub(1,25) .. " #args=" .. #args)
-                -- log tipe semua arg
-                for i, a in ipairs(args) do
-                    tsLog("  arg[" .. i .. "]=" .. type(a) .. " " .. tostring(a):sub(1,25))
-                end
-            end
-            -- coba semua kombinasi: arg3 dan arg4 sebagai data
             local data3 = args[3]
             local data4 = args[4]
             if svc:find("ActivePets", 1, true) then
                 _evActivePets = _evActivePets + 1
                 local data = type(data3)=="table" and data3 or (type(data4)=="table" and data4 or nil)
                 if data then
-                    -- hitung ukuran tabel
                     local sz = 0; for _ in pairs(data) do sz=sz+1 end
-                    -- log setiap kali data tidak kosong
                     if sz > 0 then
                         deepFind(data, 0, "AP")
                     end
