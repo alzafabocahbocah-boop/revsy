@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.523-cf"
+local VERSION = "9.524-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1976,7 +1976,10 @@ local function tulis_autoexec(cfg, urlPanel)
     end
     local AUTOEXEC_DIR = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
     local loader = 'pcall(function() if delfile then pcall(delfile,"ZenxMarket_cache.lua") pcall(delfile,"ZenxMarket_cache_time.txt") end end) loadstring(game:HttpGet("' .. url_script .. '"))()'
-    local path = AUTOEXEC_DIR .. "/zenx_loader.txt"
+    -- Arceus X butuh .lua, executor lain (Delta dll) pakai .txt
+    local ext = (cfg.executor == "arceus") and ".lua" or ".txt"
+    local fname = "zenx_loader" .. ext
+    local path = AUTOEXEC_DIR .. "/" .. fname
     local tmp = os.getenv("HOME") .. "/.zenx_loader.tmp"
     local f = io.open(tmp, "w")
     if not f then warn("gagal bikin file tmp loader"); return false end
@@ -1985,7 +1988,7 @@ local function tulis_autoexec(cfg, urlPanel)
     if cfg.autoexec_bersih ~= false then
         bersih = "for f in " .. AUTOEXEC_DIR .. "/*; do " ..
                  '[ -f "$f" ] || continue; ' ..
-                 'case "$f" in */zenx_loader.txt) ;; ' ..
+                 'case "$f" in */' .. fname .. ') ;; ' ..
                  '*) echo "HAPUS:$f"; rm -f "$f";; esac; ' ..
                  "done; "
     end
