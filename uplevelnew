@@ -1,4 +1,4 @@
--- uplevelnew v8.224 — Copy All include STAT log, stat label tetap terpisah dari ANIM area
+-- uplevelnew v8.225 — Copy All include STAT log, stat label tetap terpisah dari ANIM area
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.224"
+local VERSION = "v8.225"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2508,6 +2508,38 @@ do
         -- DBG: catat service name unik yang pernah masuk
         local _seenSvc = {}
         local _dumpedSvc = {}
+
+        -- ── APPROACH 2: scan workspace instance pet langsung ──────
+        -- Cari BasePart/Model dengan attribute CustomAnimationState
+        local function scanWorkspacePets()
+            local found = 0
+            local function scanDesc(parent, depth)
+                if depth > 5 then return end
+                for _, inst in ipairs(parent:GetChildren()) do
+                    local anim = inst:GetAttribute("CustomAnimationState")
+                    if anim ~= nil then
+                        found = found + 1
+                        local petUuid = tostring(inst:GetAttribute("PET_UUID") or inst:GetAttribute("UUID") or "?")
+                        tsLog("WS-ANIM:" .. tostring(anim) .. " uuid=" .. petUuid:sub(1,8) .. " nm=" .. inst.Name:sub(1,12))
+                    end
+                    if inst:IsA("Model") or inst:IsA("Folder") then
+                        scanDesc(inst, depth+1)
+                    end
+                end
+            end
+            pcall(function() scanDesc(workspace, 0) end)
+            return found
+        end
+
+        -- jalankan scan workspace setiap 3 detik
+        task.spawn(function()
+            while task.wait(3) do
+                local n = scanWorkspacePets()
+                if n > 0 then
+                    tsLog("WS-SCAN: " .. n .. " anim attrs found")
+                end
+            end
+        end)
 
         -- DBG: deep find CustomAnimationState di semua path (depth 12)
         local function deepFind(t, depth, path)
