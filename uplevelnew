@@ -1,4 +1,4 @@
--- uplevelnew v8.225 — Copy All include STAT log, stat label tetap terpisah dari ANIM area
+-- uplevelnew v8.226 — Copy All include STAT log, stat label tetap terpisah dari ANIM area
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.225"
+local VERSION = "v8.226"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2620,28 +2620,37 @@ do
             end
         end
 
-        ds2.OnClientEvent:Connect(function(_, service, data)
+        ds2.OnClientEvent:Connect(function(...)
+            local args = {...}
             _evTotal = _evTotal + 1
-            local svc = tostring(service)
-            -- log service name baru yang belum pernah muncul
+            -- args[1]=_, args[2]=service, args[3]=data ATAU args[3]=subservice, args[4]=data
+            local svc = tostring(args[2] or "")
+            -- log service name baru yang belum pernah muncul + jumlah args
             if not _seenSvc[svc] then
                 _seenSvc[svc] = true
-                tsLog("SVC:" .. svc:sub(1,30))
+                tsLog("SVC:" .. svc:sub(1,25) .. " #args=" .. #args)
+                -- log tipe semua arg
+                for i, a in ipairs(args) do
+                    tsLog("  arg[" .. i .. "]=" .. type(a) .. " " .. tostring(a):sub(1,25))
+                end
             end
+            -- coba semua kombinasi: arg3 dan arg4 sebagai data
+            local data3 = args[3]
+            local data4 = args[4]
             if svc:find("ActivePets", 1, true) then
                 _evActivePets = _evActivePets + 1
-                if type(data) == "table" then
-                    -- deepFind setiap 20 AP event sampai CustomAnimationState ketemu
+                -- pakai arg3 kalau tabel, else arg4
+                local data = type(data3)=="table" and data3 or (type(data4)=="table" and data4 or nil)
+                if data then
                     if _dbgAnimFound == 0 and _evActivePets % 20 == 1 then
-                        tsLog("DEEPFIND AP#" .. _evActivePets)
+                        tsLog("DEEPFIND AP#" .. _evActivePets .. " arg=" .. (type(data3)=="table" and "3" or "4"))
                         deepFind(data, 0, "AP")
                         tsLog("DEEPFIND end")
                     end
                     scanTrex(data)
                 else
-                    -- data bukan tabel — log tipenya
                     if _evActivePets <= 3 then
-                        tsLog("AP data=" .. type(data) .. " " .. tostring(data):sub(1,30))
+                        tsLog("AP nodata a3=" .. type(data3) .. " a4=" .. type(data4))
                     end
                 end
             end
