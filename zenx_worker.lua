@@ -1966,7 +1966,8 @@ end
 
 local function tulis_autoexec(cfg, urlPanel)
     if cfg.executor == "arceus" then
-        return true
+        cfg.autoexec_dir = cfg.autoexec_dir or "/sdcard/Arceus/autoexec"
+        -- lanjut nulis autoexec normal (jangan return early)
     end
     local url_script = (urlPanel and urlPanel ~= "") and urlPanel or cfg.script_url
     if not url_script or url_script == "" then
