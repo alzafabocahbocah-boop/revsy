@@ -187,7 +187,7 @@ local CFG = {
 -- Format: {["Nama Pet"] = true} — case-sensitive, harus cocok dengan nama di lineup
 -- Contoh: T-Rex di sesi 1 perlu swap skill -> masukkan di sini
 local SWAP_SKILL_CFG = {
-    ["T-Rex"]         = "noguard",  -- noguard = jeda 4.2s
+    -- T-Rex dihandle via CustomAnimationState listener (bukan polling)
     ["Mimic Octopus"] = 4.2,        -- jeda 4.2s saat skill ready
 }
 
@@ -2355,6 +2355,48 @@ do
     if req2 and req2:IsA("RemoteEvent") then
         pcall(function() req2:FireServer() end)
     end
+    -- T-Rex: swap via CustomAnimationState "Eat" (DataStream ActivePets)
+    task.spawn(function()
+        local ds2 = ge2 and ge2:WaitForChild("DataStream", 15)
+        if not ds2 then return end
+        local SKIP_TREX = { Idle=true, Walk=true, Run=true }
+        local function scanTrex(t, depth)
+            depth = depth or 0
+            if depth > 6 or type(t) ~= "table" then return end
+            for _, v in pairs(t) do
+                if type(v) == "table" then
+                    local path = tostring(v[1] or "")
+                    if path:find("CustomAnimationState", 1, true) then
+                        local uuid = path:match("{([^}]+)}") or "?"
+                        local animStr = tostring(v[2] or "")
+                        -- T-Rex: hanya Eat
+                        if animStr == "Eat" then
+                            local raw = uuid:gsub("[{}]", "")
+                            local tipe = getPetTipeFromUUID(raw) or getPetTipeFromUUID("{"..raw.."}")
+                            local tl = tipe and tostring(tipe):lower() or ""
+                            if tl:find("t%-rex", 1, true) or tl:find("trex", 1, true) then
+                                if not running or stopRequested or _isCollecting or _isTransisi then return end
+                                addLog("TrexSwap: " .. raw:sub(1,8) .. " [Eat] → swap")
+                                task.spawn(function()
+                                    unequipPet(raw)
+                                    task.wait(0.03)
+                                    equipPet(raw)
+                                    _swapLastSwap[raw] = tick()
+                                end)
+                            end
+                        end
+                    else
+                        scanTrex(v, depth+1)
+                    end
+                end
+            end
+        end
+        ds2.OnClientEvent:Connect(function(_, service, data)
+            if not tostring(service):find("ActivePets", 1, true) then return end
+            if type(data) == "table" then scanTrex(data) end
+        end)
+        addLog("TrexSwap: CustomAnimationState listener ON")
+    end)
 end
 local function petReadyUpl(uuid)
     local key = tostring(uuid):gsub("[{}]","")
