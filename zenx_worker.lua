@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.524-cf"
+local VERSION = "9.525-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1986,17 +1986,19 @@ local function tulis_autoexec(cfg, urlPanel)
     f:write(loader); f:close()
     local bersih = ""
     if cfg.autoexec_bersih ~= false then
-        bersih = "for f in " .. AUTOEXEC_DIR .. "/*; do " ..
+        -- pakai glob dengan quotes biar path spasi aman
+        bersih = 'for f in "' .. AUTOEXEC_DIR .. '"/*; do ' ..
                  '[ -f "$f" ] || continue; ' ..
                  'case "$f" in */' .. fname .. ') ;; ' ..
                  '*) echo "HAPUS:$f"; rm -f "$f";; esac; ' ..
                  "done; "
     end
 
-    local cek = sh("su -c 'mkdir -p " .. AUTOEXEC_DIR .. "; " .. bersih ..
-                   "cp " .. tmp .. " " .. path ..
-                   "; chmod 664 " .. path ..
-                   "; cat " .. path .. "'")
+    -- path bisa ada spasi (misal "Arceus X"), harus dikasih quotes
+    local cek = sh('su -c \'mkdir -p "' .. AUTOEXEC_DIR .. '"; ' .. bersih ..
+                   'cp "' .. tmp .. '" "' .. path .. '"' ..
+                   '; chmod 664 "' .. path .. '"' ..
+                   '; cat "' .. path .. '"' .. "'")
 
     local dibuang = {}
     for nm in tostring(cek):gmatch("HAPUS:([^\n]+)") do
