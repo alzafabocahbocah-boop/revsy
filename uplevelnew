@@ -1,4 +1,4 @@
--- uplevelnew v8.237 — debug swap: log equipRE/active/pcall result
+-- uplevelnew v8.238 — fix Lua scope: forward refs unequipPet/equipPet/_swapLastSwap
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.237"
+local VERSION = "v8.238"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2354,6 +2354,9 @@ do
     if req2 and req2:IsA("RemoteEvent") then
         pcall(function() req2:FireServer() end)
     end
+    -- forward refs utk TrexSwap (didefinisikan setelah spawn block ini)
+    local unequipPet, equipPet
+    local _swapLastSwap = {}
     -- T-Rex: swap via CustomAnimationState "Eat" (DataStream ActivePets)
     task.spawn(function()
         -- ── GUI TrexSwap (log + copy) ─────────────────────────
@@ -2696,7 +2699,7 @@ local function farmCenter()
 end
 local _clusterPos = nil  -- cache posisi, di-refresh saat start
 
-local function equipPet(uuid)
+equipPet = function(uuid)
     if not equipRE then return end
     local pos = _clusterPos or farmCenter()
     if pos then
@@ -2705,7 +2708,7 @@ local function equipPet(uuid)
         pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), nil) end)
     end
 end
-local function unequipPet(uuid)
+unequipPet = function(uuid)
     if not equipRE then return end
     pcall(function() equipRE:FireServer("UnequipPet", fmtUUID(uuid)) end)
 end
@@ -3553,7 +3556,7 @@ end)
 -- ===================== SWAP SKILL READY-LOOP =====================
 -- Poll tiap 0.05s: pet di _activeUuids yg namanya ada di SWAP_SKILL_CFG
 -- Swap TEPAT saat transisi cooldown false->true (baru jadi ready), bukan saat udah lama ready
-local _swapBusy, _swapLastSwap, _swapBusySince = {}, {}, {}
+local _swapBusy, _swapBusySince = {}, {}  -- _swapLastSwap dideklarasi di TrexSwap block
 local _swapWasReady = {}  -- track state cooldown sebelumnya per uuid
 task.spawn(function()
     while true do
