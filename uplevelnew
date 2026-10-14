@@ -1,4 +1,4 @@
--- uplevelnew v8.216 — merge 2 OnClientEvent jadi 1 (counter+scan), debug GUI TrexSwap
+-- uplevelnew v8.217 — scanTrex: log SEMUA anim+tipe, depth 8, counter animFound
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.216"
+local VERSION = "v8.217"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2433,21 +2433,25 @@ do
 
         -- satu listener: counter + scanTrex sekaligus
         local _evTotal, _evActivePets = 0, 0
+        -- DBG: hitung berapa kali scan dipanggil dan berapa CustomAnimationState ketemu
+        local _dbgScanCalls, _dbgAnimFound = 0, 0
         local function scanTrex(t, depth)
             depth = depth or 0
-            if depth > 6 or type(t) ~= "table" then return end
+            _dbgScanCalls = _dbgScanCalls + 1
+            if depth > 8 or type(t) ~= "table" then return end  -- depth dinaikkan ke 8
             for _, v in pairs(t) do
                 if type(v) == "table" then
                     local path = tostring(v[1] or "")
                     if path:find("CustomAnimationState", 1, true) then
+                        _dbgAnimFound = _dbgAnimFound + 1
                         local uuid = path:match("{([^}]+)}") or "?"
                         local animStr = tostring(v[2] or "")
-                        -- log semua anim (bukan Idle/Walk/Run)
+                        local raw = uuid:gsub("[{}]", "")
+                        local tipe = getPetTipeFromUUID(raw) or getPetTipeFromUUID("{"..raw.."}")
+                        local tl = tipe and tostring(tipe):lower() or "NIL"
+                        -- log SEMUA anim termasuk Idle/Walk/Run supaya keliatan
+                        tsLog("ANIM:" .. animStr .. " " .. raw:sub(1,6) .. " t=" .. tl:sub(1,10))
                         if animStr ~= "" and animStr ~= "Idle" and animStr ~= "Walk" and animStr ~= "Run" then
-                            local raw = uuid:gsub("[{}]", "")
-                            local tipe = getPetTipeFromUUID(raw) or getPetTipeFromUUID("{"..raw.."}")
-                            local tl = tipe and tostring(tipe):lower() or "?"
-                            tsLog(animStr .. " " .. raw:sub(1,6) .. " t=" .. tl:sub(1,8))
                             if animStr == "Eat" and (tl:find("t%-rex",1,true) or tl:find("trex",1,true)) then
                                 if not running or stopRequested or _isCollecting or _isTransisi then
                                     tsLog("SKIP guard " .. raw:sub(1,6))
@@ -2476,7 +2480,7 @@ do
                 if type(data) == "table" then scanTrex(data) end
             end
             if _evTotal % 10 == 0 then
-                tsLog("ev total=" .. _evTotal .. " activepets=" .. _evActivePets)
+                tsLog("ev=" .. _evTotal .. " AP=" .. _evActivePets .. " anim=" .. _dbgAnimFound)
             end
         end)
         tsLog("listener ON (counter+scan)")
