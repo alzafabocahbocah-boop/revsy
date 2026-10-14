@@ -1,4 +1,4 @@
--- uplevelnew v8.217 — scanTrex: log SEMUA anim+tipe, depth 8, counter animFound
+-- uplevelnew v8.218 — TrexSwap GUI: 8 baris, clear+rejoin, container check, diagnosa tipe
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.217"
+local VERSION = "v8.218"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2367,19 +2367,19 @@ do
             sg2.Parent = pg
             -- frame utama
             local fr = Instance.new("Frame")
-            fr.Size = UDim2.new(0, 220, 0, 80)
+            fr.Size = UDim2.new(0, 270, 0, 130)
             fr.Position = UDim2.new(0, 10, 0, 60)
-            fr.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-            fr.BackgroundTransparency = 0.2
+            fr.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+            fr.BackgroundTransparency = 0.1
             fr.BorderSizePixel = 0; fr.Active = true; fr.Draggable = true
             fr.Parent = sg2
-            Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 6)
-            -- label log (5 baris)
+            Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 7)
+            -- label log (8 baris)
             local lbl = Instance.new("TextLabel")
-            lbl.Size = UDim2.new(1, -8, 0, 56)
+            lbl.Size = UDim2.new(1, -8, 0, 88)
             lbl.Position = UDim2.new(0, 4, 0, 2)
             lbl.BackgroundTransparency = 1
-            lbl.TextColor3 = Color3.fromRGB(255, 220, 80)
+            lbl.TextColor3 = Color3.fromRGB(100, 220, 100)
             lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 10
             lbl.TextXAlignment = Enum.TextXAlignment.Left
             lbl.TextYAlignment = Enum.TextYAlignment.Top
@@ -2389,8 +2389,8 @@ do
             _tsLabel = lbl
             -- tombol copy
             local btn = Instance.new("TextButton")
-            btn.Size = UDim2.new(1, -8, 0, 18)
-            btn.Position = UDim2.new(0, 4, 0, 60)
+            btn.Size = UDim2.new(0.55, -2, 0, 18)
+            btn.Position = UDim2.new(0, 4, 0, 94)
             btn.BackgroundColor3 = Color3.fromRGB(50, 120, 200)
             btn.BorderSizePixel = 0
             btn.TextColor3 = Color3.fromRGB(255,255,255)
@@ -2405,6 +2405,36 @@ do
                 btn.Text = ok and "✓ Copied!" or "❌ " .. tostring(err):sub(1,20)
                 task.delay(2, function() btn.Text = "📋 Copy All" end)
             end)
+            -- tombol clear
+            local btnClr = Instance.new("TextButton")
+            btnClr.Size = UDim2.new(0.45, -2, 0, 18)
+            btnClr.Position = UDim2.new(0.55, 2, 0, 94)
+            btnClr.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+            btnClr.BorderSizePixel = 0
+            btnClr.TextColor3 = Color3.fromRGB(200,200,200)
+            btnClr.Font = Enum.Font.GothamBold; btnClr.TextSize = 10
+            btnClr.Text = "🗑 Clear"
+            btnClr.Parent = fr
+            Instance.new("UICorner", btnClr).CornerRadius = UDim.new(0, 4)
+            btnClr.MouseButton1Click:Connect(function()
+                _tsLogs = {}
+                if _tsLabel then _tsLabel.Text = "(cleared)" end
+            end)
+            -- tombol rejoin
+            local btnRej = Instance.new("TextButton")
+            btnRej.Size = UDim2.new(1, -8, 0, 16)
+            btnRej.Position = UDim2.new(0, 4, 0, 114)
+            btnRej.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            btnRej.BorderSizePixel = 0
+            btnRej.TextColor3 = Color3.fromRGB(255,255,255)
+            btnRej.Font = Enum.Font.GothamBold; btnRej.TextSize = 10
+            btnRej.Text = "⟳ REJOIN"
+            btnRej.Parent = fr
+            Instance.new("UICorner", btnRej).CornerRadius = UDim.new(0, 4)
+            btnRej.MouseButton1Click:Connect(function()
+                btnRej.Text = "..."
+                game:GetService("TeleportService"):Teleport(game.PlaceId, plr)
+            end)
         end)
 
         local function tsLog(msg)
@@ -2413,9 +2443,8 @@ do
             if #_tsLogs > 1000 then table.remove(_tsLogs, 1) end
             pcall(function()
                 if _tsLabel then
-                    -- tampil 5 baris terakhir
                     local lines = {}
-                    for i = math.max(1, #_tsLogs-4), #_tsLogs do
+                    for i = math.max(1, #_tsLogs-7), #_tsLogs do
                         lines[#lines+1] = _tsLogs[i]
                     end
                     _tsLabel.Text = table.concat(lines, "\n")
@@ -2430,6 +2459,37 @@ do
         local ds2 = ge2:WaitForChild("DataStream", 15)
         if not ds2 then tsLog("ERR: DataStream nil"); return end
         tsLog("ds2 OK, listener ON")
+
+        -- DBG: cek container getgc setelah 3 detik
+        task.delay(3, function()
+            local c = _kgContainer
+            if c then
+                local cnt = 0; for _ in pairs(c) do cnt = cnt + 1 end
+                tsLog("CONT: " .. cnt .. " entries OK")
+                local shown = 0
+                for uuid, e in pairs(c) do
+                    if type(e) == "table" and shown < 2 then
+                        local pt = e.PetType or (e.PetData and e.PetData.PetType) or "nil"
+                        tsLog("CONT: " .. tostring(uuid):sub(1,12) .. " t=" .. tostring(pt):sub(1,12))
+                        shown = shown + 1
+                    end
+                end
+            else
+                tsLog("CONT: NIL — getPetType pakai fallback Tool")
+                -- fallback: cek Backpack Tool
+                local bp = plr:FindFirstChild("Backpack")
+                if bp then
+                    local tools = bp:GetChildren()
+                    tsLog("CONT: Backpack tools=" .. #tools)
+                    for i = 1, math.min(2, #tools) do
+                        local t = tools[i]
+                        if t:IsA("Tool") then
+                            tsLog("CONT: Tool=" .. t.Name .. " f=" .. tostring(t:GetAttribute("f") or "nil"))
+                        end
+                    end
+                end
+            end
+        end)
 
         -- satu listener: counter + scanTrex sekaligus
         local _evTotal, _evActivePets = 0, 0
