@@ -2356,11 +2356,8 @@ do
     end
     -- T-Rex: swap via CustomAnimationState "Eat" (DataStream ActivePets)
     task.spawn(function()
-        local ds2 = ge2 and ge2:WaitForChild("DataStream", 15)
-        if not ds2 then return end
-
-        -- ── GUI label TrexSwap ────────────────────────────────
-        local _tsGui, _tsLabel
+        -- ── GUI TrexSwap (log + copy) ─────────────────────────
+        local _tsLabel, _tsLogs = nil, {}
         pcall(function()
             local pg = plr:WaitForChild("PlayerGui", 5)
             if not pg then return end
@@ -2368,30 +2365,71 @@ do
             sg2.Name = "TrexSwapDbg"; sg2.ResetOnSpawn = false
             sg2.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
             sg2.Parent = pg
+            -- frame utama
             local fr = Instance.new("Frame")
-            fr.Size = UDim2.new(0, 200, 0, 28)
+            fr.Size = UDim2.new(0, 220, 0, 80)
             fr.Position = UDim2.new(0, 10, 0, 60)
             fr.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-            fr.BackgroundTransparency = 0.3
+            fr.BackgroundTransparency = 0.2
             fr.BorderSizePixel = 0; fr.Active = true; fr.Draggable = true
             fr.Parent = sg2
             Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 6)
+            -- label log (5 baris)
             local lbl = Instance.new("TextLabel")
-            lbl.Size = UDim2.new(1, -8, 1, 0)
-            lbl.Position = UDim2.new(0, 4, 0, 0)
+            lbl.Size = UDim2.new(1, -8, 0, 56)
+            lbl.Position = UDim2.new(0, 4, 0, 2)
             lbl.BackgroundTransparency = 1
             lbl.TextColor3 = Color3.fromRGB(255, 220, 80)
-            lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 11
+            lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 10
             lbl.TextXAlignment = Enum.TextXAlignment.Left
-            lbl.Text = "TrexSwap: listener ON"
+            lbl.TextYAlignment = Enum.TextYAlignment.Top
+            lbl.TextWrapped = true
+            lbl.Text = "TrexSwap: init..."
             lbl.Parent = fr
             _tsLabel = lbl
+            -- tombol copy
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1, -8, 0, 18)
+            btn.Position = UDim2.new(0, 4, 0, 60)
+            btn.BackgroundColor3 = Color3.fromRGB(50, 120, 200)
+            btn.BorderSizePixel = 0
+            btn.TextColor3 = Color3.fromRGB(255,255,255)
+            btn.Font = Enum.Font.GothamBold; btn.TextSize = 10
+            btn.Text = "📋 Copy All"
+            btn.Parent = fr
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+            btn.MouseButton1Click:Connect(function()
+                local ok, err = pcall(function()
+                    setclipboard(table.concat(_tsLogs, "\n"))
+                end)
+                btn.Text = ok and "✓ Copied!" or "❌ " .. tostring(err):sub(1,20)
+                task.delay(2, function() btn.Text = "📋 Copy All" end)
+            end)
         end)
+
         local function tsLog(msg)
             addLog(msg)
-            pcall(function() if _tsLabel then _tsLabel.Text = msg end end)
+            table.insert(_tsLogs, string.format("[%.2f] %s", os.clock(), msg))
+            if #_tsLogs > 30 then table.remove(_tsLogs, 1) end
+            pcall(function()
+                if _tsLabel then
+                    -- tampil 5 baris terakhir
+                    local lines = {}
+                    for i = math.max(1, #_tsLogs-4), #_tsLogs do
+                        lines[#lines+1] = _tsLogs[i]
+                    end
+                    _tsLabel.Text = table.concat(lines, "\n")
+                end
+            end)
         end
         -- ─────────────────────────────────────────────────────
+
+        -- cek ge2
+        if not ge2 then tsLog("ERR: ge2 nil"); return end
+        tsLog("ge2 OK, cari DataStream...")
+        local ds2 = ge2:WaitForChild("DataStream", 15)
+        if not ds2 then tsLog("ERR: DataStream nil"); return end
+        tsLog("ds2 OK, listener ON")
 
         local function scanTrex(t, depth)
             depth = depth or 0
@@ -2402,25 +2440,24 @@ do
                     if path:find("CustomAnimationState", 1, true) then
                         local uuid = path:match("{([^}]+)}") or "?"
                         local animStr = tostring(v[2] or "")
-                        -- T-Rex: hanya Eat
-                        if animStr == "Eat" then
+                        -- log semua anim (bukan Idle/Walk/Run)
+                        if animStr ~= "" and animStr ~= "Idle" and animStr ~= "Walk" and animStr ~= "Run" then
                             local raw = uuid:gsub("[{}]", "")
                             local tipe = getPetTipeFromUUID(raw) or getPetTipeFromUUID("{"..raw.."}")
-                            local tl = tipe and tostring(tipe):lower() or ""
-                            if tl:find("t%-rex", 1, true) or tl:find("trex", 1, true) then
+                            local tl = tipe and tostring(tipe):lower() or "?"
+                            tsLog(animStr .. " " .. raw:sub(1,6) .. " t=" .. tl:sub(1,8))
+                            if animStr == "Eat" and (tl:find("t%-rex",1,true) or tl:find("trex",1,true)) then
                                 if not running or stopRequested or _isCollecting or _isTransisi then
-                                    tsLog("TrexSwap: SKIP (guard) " .. raw:sub(1,8))
+                                    tsLog("SKIP guard " .. raw:sub(1,6))
                                     return
                                 end
-                                tsLog("TrexSwap: " .. raw:sub(1,8) .. " [Eat] → swap")
+                                tsLog("SWAP " .. raw:sub(1,6))
                                 task.spawn(function()
                                     unequipPet(raw)
                                     task.wait(0.03)
                                     equipPet(raw)
                                     _swapLastSwap[raw] = tick()
                                 end)
-                            else
-                                tsLog("TrexSwap: Eat detect uuid=" .. raw:sub(1,8) .. " tipe=" .. tostring(tipe):sub(1,12))
                             end
                         end
                     else
@@ -2433,7 +2470,6 @@ do
             if not tostring(service):find("ActivePets", 1, true) then return end
             if type(data) == "table" then scanTrex(data) end
         end)
-        tsLog("TrexSwap: listener ON")
     end)
 end
 local function petReadyUpl(uuid)
