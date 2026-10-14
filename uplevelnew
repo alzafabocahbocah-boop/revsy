@@ -1,4 +1,4 @@
--- uplevelnew v8.215 — swap T-Rex via CustomAnimationState listener (Eat), sesi 1 fixed 8 T-Rex
+-- uplevelnew v8.216 — merge 2 OnClientEvent jadi 1 (counter+scan), debug GUI TrexSwap
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.215"
+local VERSION = "v8.216"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2431,6 +2431,8 @@ do
         if not ds2 then tsLog("ERR: DataStream nil"); return end
         tsLog("ds2 OK, listener ON")
 
+        -- satu listener: counter + scanTrex sekaligus
+        local _evTotal, _evActivePets = 0, 0
         local function scanTrex(t, depth)
             depth = depth or 0
             if depth > 6 or type(t) ~= "table" then return end
@@ -2467,9 +2469,17 @@ do
             end
         end
         ds2.OnClientEvent:Connect(function(_, service, data)
-            if not tostring(service):find("ActivePets", 1, true) then return end
-            if type(data) == "table" then scanTrex(data) end
+            _evTotal = _evTotal + 1
+            local svc = tostring(service)
+            if svc:find("ActivePets", 1, true) then
+                _evActivePets = _evActivePets + 1
+                if type(data) == "table" then scanTrex(data) end
+            end
+            if _evTotal % 10 == 0 then
+                tsLog("ev total=" .. _evTotal .. " activepets=" .. _evActivePets)
+            end
         end)
+        tsLog("listener ON (counter+scan)")
     end)
 end
 local function petReadyUpl(uuid)
