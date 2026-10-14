@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.527-cf"
+local VERSION = "9.528-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1975,11 +1975,17 @@ local function tulis_autoexec(cfg, urlPanel)
         return false
     end
     local AUTOEXEC_DIR = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
-    local loader = "pcall(function() if delfile then pcall(delfile,\"ZenxMarket_cache.lua\") pcall(delfile,\"ZenxMarket_cache_time.txt\") end end)\n" ..
-                   "loadstring(game:HttpGet(\"" .. url_script .. "\"))()\n"
-    -- Arceus X butuh .lua, nama file sama kayak pasang.sh (zenx.lua) biar konsisten
-    -- executor lain (Delta dll) pakai zenx_loader.txt
-    local fname = (cfg.executor == "arceus") and "zenx.lua" or "zenx_loader.txt"
+    -- Arceus X: 1 baris doang kayak pasang.sh (gak perlu pcall cleanup Delta)
+    -- executor lain (Delta dll): pakai pcall cleanup + zenx_loader.txt
+    local fname, loader
+    if cfg.executor == "arceus" then
+        fname  = "zenx.lua"
+        loader = 'loadstring(game:HttpGet("' .. url_script .. '"))()'
+    else
+        fname  = "zenx_loader.txt"
+        loader = "pcall(function() if delfile then pcall(delfile,\"ZenxMarket_cache.lua\") pcall(delfile,\"ZenxMarket_cache_time.txt\") end end)\n" ..
+                 "loadstring(game:HttpGet(\"" .. url_script .. "\"))()\n"
+    end
     local path = AUTOEXEC_DIR .. "/" .. fname
     local tmp = os.getenv("HOME") .. "/.zenx_loader.tmp"
     local f = io.open(tmp, "w")
