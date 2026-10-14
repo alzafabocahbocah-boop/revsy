@@ -2358,6 +2358,41 @@ do
     task.spawn(function()
         local ds2 = ge2 and ge2:WaitForChild("DataStream", 15)
         if not ds2 then return end
+
+        -- ── GUI label TrexSwap ────────────────────────────────
+        local _tsGui, _tsLabel
+        pcall(function()
+            local pg = plr:WaitForChild("PlayerGui", 5)
+            if not pg then return end
+            local sg2 = Instance.new("ScreenGui")
+            sg2.Name = "TrexSwapDbg"; sg2.ResetOnSpawn = false
+            sg2.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+            sg2.Parent = pg
+            local fr = Instance.new("Frame")
+            fr.Size = UDim2.new(0, 200, 0, 28)
+            fr.Position = UDim2.new(0, 10, 0, 60)
+            fr.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+            fr.BackgroundTransparency = 0.3
+            fr.BorderSizePixel = 0; fr.Active = true; fr.Draggable = true
+            fr.Parent = sg2
+            Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 6)
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(1, -8, 1, 0)
+            lbl.Position = UDim2.new(0, 4, 0, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.TextColor3 = Color3.fromRGB(255, 220, 80)
+            lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 11
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.Text = "TrexSwap: listener ON"
+            lbl.Parent = fr
+            _tsLabel = lbl
+        end)
+        local function tsLog(msg)
+            addLog(msg)
+            pcall(function() if _tsLabel then _tsLabel.Text = msg end end)
+        end
+        -- ─────────────────────────────────────────────────────
+
         local function scanTrex(t, depth)
             depth = depth or 0
             if depth > 6 or type(t) ~= "table" then return end
@@ -2373,14 +2408,19 @@ do
                             local tipe = getPetTipeFromUUID(raw) or getPetTipeFromUUID("{"..raw.."}")
                             local tl = tipe and tostring(tipe):lower() or ""
                             if tl:find("t%-rex", 1, true) or tl:find("trex", 1, true) then
-                                if not running or stopRequested or _isCollecting or _isTransisi then return end
-                                addLog("TrexSwap: " .. raw:sub(1,8) .. " [Eat] → swap")
+                                if not running or stopRequested or _isCollecting or _isTransisi then
+                                    tsLog("TrexSwap: SKIP (guard) " .. raw:sub(1,8))
+                                    return
+                                end
+                                tsLog("TrexSwap: " .. raw:sub(1,8) .. " [Eat] → swap")
                                 task.spawn(function()
                                     unequipPet(raw)
                                     task.wait(0.03)
                                     equipPet(raw)
                                     _swapLastSwap[raw] = tick()
                                 end)
+                            else
+                                tsLog("TrexSwap: Eat detect uuid=" .. raw:sub(1,8) .. " tipe=" .. tostring(tipe):sub(1,12))
                             end
                         end
                     else
@@ -2393,7 +2433,7 @@ do
             if not tostring(service):find("ActivePets", 1, true) then return end
             if type(data) == "table" then scanTrex(data) end
         end)
-        addLog("TrexSwap: CustomAnimationState listener ON")
+        tsLog("TrexSwap: listener ON")
     end)
 end
 local function petReadyUpl(uuid)
