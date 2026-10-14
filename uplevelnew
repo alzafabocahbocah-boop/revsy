@@ -1,4 +1,4 @@
--- uplevelnew v8.229 — debug uuid format vs container key
+-- uplevelnew v8.230 — fix lookup pakai {uuid}, hapus scanTrex duplikat
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.229"
+local VERSION = "v8.230"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2568,24 +2568,11 @@ do
                                 n=n+1
                             end
                         end
-                        -- cek tipe pet
-                        local tipe = getPetTipeFromUUID(raw)
-                            or getPetTipeFromUUID("{" .. raw .. "}")
-                        if not tipe then
-                            local fmtU = "{" .. raw .. "}"
-                            for _, parent in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
-                                if parent then
-                                    for _, t2 in ipairs(parent:GetChildren()) do
-                                        if t2:IsA("Tool") then
-                                            local tu = "{" .. tostring(t2:GetAttribute("PET_UUID") or ""):gsub("[{}]","") .. "}"
-                                            if tu == fmtU then tipe = tostring(t2:GetAttribute("f") or t2.Name); break end
-                                        end
-                                    end
-                                end
-                                if tipe then break end
-                            end
-                        end
+                        -- cek tipe pet — container key pakai format {uuid}
+                        local fmtU = "{" .. raw .. "}"
+                        local tipe = getPetTipeFromUUID(fmtU) or getPetTipeFromUUID(raw)
                         local tl = tipe and tostring(tipe):lower() or "NIL"
+                        tsLog("ANIM2:" .. animStr .. " " .. raw:sub(1,8) .. " t=" .. tl:sub(1,12))
                         if animStr == "Eat" and (tl:find("t%-rex",1,true) or tl:find("trex",1,true)) then
                             if not running or stopRequested or _isCollecting or _isTransisi then
                                 tsLog("SKIP guard " .. raw:sub(1,8))
@@ -2606,60 +2593,6 @@ do
             end
         end
 
-        local function scanTrex(t, depth)
-            depth = depth or 0
-            if depth > 12 or type(t) ~= "table" then return end
-            for _, v in pairs(t) do
-                if type(v) == "table" then
-                    local path = tostring(v[1] or "")
-                    if path:find("CustomAnimationState", 1, true) then
-                        _dbgAnimFound = _dbgAnimFound + 1
-                        local uuid = path:match("{([^}]+)}") or "?"
-                        local animStr = tostring(v[2] or "")
-                        local raw = uuid:gsub("[{}]", "")
-                        local tipe = getPetTipeFromUUID(raw)
-                            or getPetTipeFromUUID("{" .. raw .. "}")
-                            or getPetTipeFromUUID("{" .. raw:gsub("[{}]","") .. "}")
-                        if not tipe then
-                            local fmtU = "{" .. raw:gsub("[{}]","") .. "}"
-                            for _, parent in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
-                                if parent then
-                                    for _, t2 in ipairs(parent:GetChildren()) do
-                                        if t2:IsA("Tool") then
-                                            local tu = "{" .. tostring(t2:GetAttribute("PET_UUID") or ""):gsub("[{}]","") .. "}"
-                                            if tu == fmtU then
-                                                tipe = tostring(t2:GetAttribute("f") or t2.Name)
-                                                break
-                                            end
-                                        end
-                                    end
-                                end
-                                if tipe then break end
-                            end
-                        end
-                        local tl = tipe and tostring(tipe):lower() or "NIL"
-                        tsLog("ANIM:" .. animStr .. " " .. raw:sub(1,6) .. " t=" .. tl:sub(1,10))
-                        if animStr ~= "" and animStr ~= "Idle" and animStr ~= "Walk" and animStr ~= "Run" then
-                            if animStr == "Eat" and (tl:find("t%-rex",1,true) or tl:find("trex",1,true)) then
-                                if not running or stopRequested or _isCollecting or _isTransisi then
-                                    tsLog("SKIP guard " .. raw:sub(1,6))
-                                    return
-                                end
-                                tsLog("SWAP " .. raw:sub(1,6))
-                                task.spawn(function()
-                                    unequipPet(raw)
-                                    task.wait(0.03)
-                                    equipPet(raw)
-                                    _swapLastSwap[raw] = tick()
-                                end)
-                            end
-                        end
-                    else
-                        scanTrex(v, depth+1)
-                    end
-                end
-            end
-        end
 
         ds2.OnClientEvent:Connect(function(...)
             local args = {...}
