@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.535-cf"
+local VERSION = "9.536-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -2005,16 +2005,18 @@ local function tulis_autoexec(cfg, urlPanel)
 
     local cek
     if cfg.executor == "arceus" then
-        -- pakai printf langsung kayak pasang.sh (hindari masalah cp cross-fs)
-        -- loader sudah 1 baris tanpa newline, aman di-escape untuk shell single-quote
-        local loader_esc = loader:gsub("'", "'\\''")
+        -- tulis via tmp file (paling aman, hindari quoting hell di su -c)
+        local tmp = os.getenv("HOME") .. "/.zenx_arceus.tmp"
+        local ft = io.open(tmp, "w")
+        if not ft then warn("gagal bikin file tmp arceus"); return false end
+        ft:write(loader); ft:close()
         local path_lua = AUTOEXEC_DIR .. "/zenx.lua"
-        -- tulis zenx.lua.txt lalu cp ke zenx.lua, tanpa pipe/while (aman di su -c single-quote)
-        cek = sh("su -c 'mkdir -p \"" .. AUTOEXEC_DIR .. "\"" ..
-                 "; printf " .. '"%s"' .. " '" .. loader_esc .. "' > \"" .. path .. "\"" ..
-                 "; cp \"" .. path .. "\" \"" .. path_lua .. "\"" ..
-                 "; chmod 664 \"" .. path .. "\" \"" .. path_lua .. "\"" ..
-                 "; cat \"" .. path .. "\"'")
+        -- cp tmp ke zenx.lua.txt + zenx.lua
+        cek = sh('su -c \'mkdir -p "' .. AUTOEXEC_DIR .. '"' ..
+                 '; cp "' .. tmp .. '" "' .. path .. '"' ..
+                 '; cp "' .. tmp .. '" "' .. path_lua .. '"' ..
+                 '; chmod 664 "' .. path .. '" "' .. path_lua .. '"' ..
+                 '; cat "' .. path .. '"' .. "'")
     else
         -- executor lain: tulis via tmp file (loader bisa multiline)
         local tmp = os.getenv("HOME") .. "/.zenx_loader.tmp"
