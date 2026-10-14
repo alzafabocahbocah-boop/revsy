@@ -1531,6 +1531,47 @@ do
         end
     end)
 
+    -- ── Ele skill-swap: swap elephant saat CustomAnimationState skill ──
+    task.spawn(function()
+        local ge2 = RS:WaitForChild("GameEvents", 15)
+        if not ge2 then return end
+        local ds = ge2:WaitForChild("DataStream", 15)
+        if not ds then return end
+        local SKIP_ELE = { Idle=true, Walk=true, Run=true }
+        local function scanEleAnim(t, depth)
+            depth = depth or 0
+            if depth > 6 or type(t) ~= "table" then return end
+            for _, v in pairs(t) do
+                if type(v) == "table" then
+                    local path = tostring(v[1] or "")
+                    if path:find("CustomAnimationState", 1, true) then
+                        local uuid = path:match("{([^}]+)}") or "?"
+                        local animStr = tostring(v[2] or "")
+                        if animStr ~= "" and not SKIP_ELE[animStr] then
+                            -- cek apakah uuid ini elephant
+                            local raw = uuid:gsub("[{}]", "")
+                            if eleUuids[raw] or eleUuids["{"..raw.."}"] then
+                                print(string.format("[EleSwap] %s [%s] → swap!", raw:sub(1,8), animStr))
+                                task.spawn(function()
+                                    unequipPet(raw)
+                                    task.wait(0.3)
+                                    equipPet(raw)
+                                end)
+                            end
+                        end
+                    else
+                        scanEleAnim(v, depth+1)
+                    end
+                end
+            end
+        end
+        ds.OnClientEvent:Connect(function(_, service, data)
+            if not tostring(service):find("ActivePets", 1, true) then return end
+            if type(data) == "table" then scanEleAnim(data) end
+        end)
+        print("[EleSwap] listener ON")
+    end)
+
     -- ============ up6kg: CUMA config Tim Ele (6kg + Rainbow Elephant) ============
     -- kgLog, cocokSemua, tampilNotif HARUS di sini sebelum buatS1ELE/buatS2ELE
     local function kgLog(s) if _G.ZenxKgLog then _G.ZenxKgLog(s) end print("[UpKg] "..s) end
