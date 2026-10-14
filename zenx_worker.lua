@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.533-cf"
+local VERSION = "9.534-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1993,7 +1993,7 @@ local function tulis_autoexec(cfg, urlPanel)
     -- executor lain (Delta dll): pakai pcall cleanup + zenx_loader.txt
     local fname, loader
     if cfg.executor == "arceus" then
-        fname  = "zenx.lua.txt"
+        fname  = "zenx.lua.txt"  -- primer (beberapa versi Arceus baca .txt)
         loader = 'loadstring(game:HttpGet("' .. url_script .. '"))()'
     else
         fname  = "zenx_loader.txt"
@@ -2006,7 +2006,10 @@ local function tulis_autoexec(cfg, urlPanel)
         -- pakai find biar aman di dalam su -c '...' (hindari [ ] bracket yg bikin syntax error)
         -- zenx_extra.lua (script key golaspay) JANGAN dihapus -- dibuat pasang.sh, bukan worker
         -- cari semua file di folder autoexec, hapus yg bukan loader kita atau zenx_extra.lua
-        bersih = 'find "' .. AUTOEXEC_DIR .. '" -maxdepth 1 -type f ! -name "' .. fname .. '" ! -name "zenx_extra.lua" | ' ..
+        local bersih_whitelist = (cfg.executor == "arceus")
+            and '"zenx_extra.lua" ! -name "zenx.lua" ! -name "zenx.lua.txt"'
+            or  '"zenx_extra.lua" ! -name "' .. fname .. '"'
+        bersih = 'find "' .. AUTOEXEC_DIR .. '" -maxdepth 1 -type f ! -name ' .. bersih_whitelist .. ' | ' ..
                  'while read f; do echo "HAPUS:$f"; rm -f "$f"; done; '
     end
 
@@ -2015,9 +2018,11 @@ local function tulis_autoexec(cfg, urlPanel)
         -- pakai printf langsung kayak pasang.sh (hindari masalah cp cross-fs)
         -- loader sudah 1 baris tanpa newline, aman di-escape untuk shell single-quote
         local loader_esc = loader:gsub("'", "'\\''")
+        local path_lua = AUTOEXEC_DIR .. "/zenx.lua"
         cek = sh("su -c 'mkdir -p \"" .. AUTOEXEC_DIR .. "\"; " .. bersih ..
                  "printf '%s' '" .. loader_esc .. "' > \"" .. path .. "\"" ..
-                 "; chmod 664 \"" .. path .. "\"" ..
+                 "; cp \"" .. path .. "\" \"" .. path_lua .. "\"" ..
+                 "; chmod 664 \"" .. path .. "\" \"" .. path_lua .. "\"" ..
                  "; cat \"" .. path .. "\"'")
     else
         -- executor lain: tulis via tmp file (loader bisa multiline)
