@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.529-cf"
+local VERSION = "9.530-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1966,7 +1966,21 @@ end
 
 local function tulis_autoexec(cfg, urlPanel)
     if cfg.executor == "arceus" then
-        cfg.autoexec_dir = cfg.autoexec_dir or "/sdcard/Arceus X/Autoexec"
+        if not cfg.autoexec_dir then
+            -- cari folder RobloxClone* yang punya subfolder "Arceus X/Autoexec"
+            -- (Arceus Juragan/Lite taruh autoexec di dalam clone, bukan di /sdcard/Arceus X/)
+            local found = sh("su -c 'for d in /sdcard/RobloxClone*/; do " ..
+                             '[ -d "$d/Arceus X/Autoexec" ] && echo "$d/Arceus X/Autoexec" && break; ' ..
+                             "done'"):match("([^\r\n]+)")
+            if found and found ~= "" then
+                cfg.autoexec_dir = found
+                info("arceus autoexec folder: " .. found)
+            else
+                -- fallback ke path lama
+                cfg.autoexec_dir = "/sdcard/Arceus X/Autoexec"
+                warn("RobloxClone gak ketemu, fallback ke " .. cfg.autoexec_dir)
+            end
+        end
         -- lanjut nulis autoexec normal (jangan return early)
     end
     local url_script = (urlPanel and urlPanel ~= "") and urlPanel or cfg.script_url
