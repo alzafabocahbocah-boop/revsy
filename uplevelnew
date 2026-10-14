@@ -1,4 +1,4 @@
--- uplevelnew v8.218 — TrexSwap GUI: 8 baris, clear+rejoin, container check, diagnosa tipe
+-- uplevelnew v8.219 — scanTrex: fix getPetTipe semua format uuid + fallback Backpack Tool
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.218"
+local VERSION = "v8.219"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2507,7 +2507,27 @@ do
                         local uuid = path:match("{([^}]+)}") or "?"
                         local animStr = tostring(v[2] or "")
                         local raw = uuid:gsub("[{}]", "")
-                        local tipe = getPetTipeFromUUID(raw) or getPetTipeFromUUID("{"..raw.."}")
+                        local tipe = getPetTipeFromUUID(raw)
+                            or getPetTipeFromUUID("{" .. raw .. "}")
+                            or getPetTipeFromUUID("{" .. raw:gsub("[{}]","") .. "}")
+                        -- DBG: fallback Backpack Tool kalau container nil
+                        if not tipe then
+                            local fmtU = "{" .. raw:gsub("[{}]","") .. "}"
+                            for _, parent in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
+                                if parent then
+                                    for _, t in ipairs(parent:GetChildren()) do
+                                        if t:IsA("Tool") then
+                                            local tu = "{" .. tostring(t:GetAttribute("PET_UUID") or ""):gsub("[{}]","") .. "}"
+                                            if tu == fmtU then
+                                                tipe = tostring(t:GetAttribute("f") or t.Name)
+                                                break
+                                            end
+                                        end
+                                    end
+                                end
+                                if tipe then break end
+                            end
+                        end
                         local tl = tipe and tostring(tipe):lower() or "NIL"
                         -- log SEMUA anim termasuk Idle/Walk/Run supaya keliatan
                         tsLog("ANIM:" .. animStr .. " " .. raw:sub(1,6) .. " t=" .. tl:sub(1,10))
