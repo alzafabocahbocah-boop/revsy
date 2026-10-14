@@ -1,4 +1,4 @@
--- uplevelnew v8.239 — fix scope: forward refs dipindah ke luar do-block
+-- uplevelnew v8.240 — T-Rex nocd: swapLoop idle>3s kalau rdy==nil (no CD)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.239"
+local VERSION = "v8.240"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -187,7 +187,8 @@ local CFG = {
 -- Format: {["Nama Pet"] = true} — case-sensitive, harus cocok dengan nama di lineup
 -- Contoh: T-Rex di sesi 1 perlu swap skill -> masukkan di sini
 local SWAP_SKILL_CFG = {
-    -- semua pet swap via CustomAnimationState listener, ready-loop DIMATIIN
+    -- "nocd" = swap via swapLoop kalau rdy==nil & idle>3s (no CD pet), DataStream tetap jalan paralel
+    ["T-Rex"] = "nocd",
 }
 
 -- sesiPool persist via _G agar tidak reset saat re-execute script
@@ -3567,27 +3568,30 @@ task.spawn(function()
             local tipe = getPetTipeFromUUID(uuid)
             if not tipe then continue end
             if not SWAP_SKILL_CFG[tipe] then continue end
-            -- T-Rex: swap hanya dari DataStream (deepFind), skip swapLoop
             local cfgVal  = SWAP_SKILL_CFG[tipe]
-            if cfgVal == "noguard" then continue end  -- T-Rex handled by TrexSwap DataStream
-            local noGuard = false
+            if cfgVal == "noguard" then continue end  -- legacy, skip
+            local isNocd  = (cfgVal == "nocd")       -- pet tanpa CD: swap kalau idle >3s
+            local noGuard = isNocd                    -- nocd: gak pakai busy guard
             local pnpDelay = (type(cfgVal) == "number") and cfgVal or 4.2
-            -- guard untuk pet lain
+            -- guard untuk pet ber-CD
             if not noGuard then
                 if _swapBusy[uuid] and _swapBusySince[uuid] and (tick()-_swapBusySince[uuid])>6 then
                     _swapBusy[uuid]=nil
                 end
                 if _swapBusy[uuid] then continue end
             end
-            -- deteksi transisi: swap HANYA saat false->true (baru jadi ready)
-            local rdy = petReadyUpl(uuid)
-            local was = _swapWasReady[uuid]
-            -- fallback: kalau cache nil & idle >4s anggap ready (transisi nil->nil skip)
+            local rdy  = petReadyUpl(uuid)
+            local was  = _swapWasReady[uuid]
             local idle = _swapLastSwap[uuid] and (tick()-_swapLastSwap[uuid]) or 999
-            local triggerSwap = (rdy == true and was == false)
-                             or (rdy == nil and idle > 5)
-            _swapWasReady[uuid] = rdy  -- update state SEBELUM swap
-            local isGenuineReady = (rdy == true and was == false) or (rdy == nil and idle > 5)
+            -- nocd: hanya trigger kalau rdy==nil & idle>3s (pet tanpa CD sama sekali)
+            -- normal: trigger saat false->true, atau nil & idle>5s
+            local triggerSwap
+            if isNocd then
+                triggerSwap = (rdy == nil and idle > 3)
+            else
+                triggerSwap = (rdy == true and was == false) or (rdy == nil and idle > 5)
+            end
+            _swapWasReady[uuid] = rdy
             if triggerSwap then
                 if not noGuard then
                     _swapBusy[uuid]     = true
@@ -3595,10 +3599,7 @@ task.spawn(function()
                 end
                 task.spawn(function()
                     pcall(function()
-                        local m = modelByUuid[uuid]
-                        local pos = _clusterPos or farmCenter()
-                        if m then pcall(function() pos = m:GetPivot().Position end) end
-                        if isGenuineReady then task.wait(pnpDelay) end  -- PNP delay per-pet (T-Rex noguard skip, Mimic 3.5s, default 4.2s)
+                        if not isNocd then task.wait(pnpDelay) end  -- nocd: langsung swap, no PNP delay
                         unequipPet(uuid); task.wait(0.03)
                         equipPet(uuid)
                         _swapLastSwap[uuid] = tick()
