@@ -1,0 +1,5191 @@
+-- uplevelnew v8.247 — destroy BoltPart di Camera tiap 3 menit (anti garis putih)
+-- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
+-- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
+-- Bahan umur >= 500 -> unequip
+-- v8.153: sesi 1 def dinamis — >=8 T-Rex age>=500 -> 8 T-Rex, kurang -> 7 Mimic+1 T-Rex
+-- v8.152: hapus unequip Mimic di sesi 2 (enforceEquip jalan terus)
+-- v8.151: T-Rex jml=8, swap delay 4.2s
+-- v8.150: T-Rex jml=1 (test)
+-- v8.149: reduclag auto-on (weather, particles, lighting FX, shadows — cleanup tiap 10s)
+-- v8.148: fallback swap idle 4s → 5s, fallback juga kena PNP delay 4.0s
+-- v8.147: fix unequip Mimic pakai getPetTipeFromUUID (bukan manual cek entry.Name)
+-- v8.146: sesi 2 unequip Mimic saat bahan age naik dari snapshot awal masuk sesi 2
+-- v8.145: sesi 2 pindah sesi 1 saat nm < 200 (sebelumnya < 100)
+-- v8.144: sesi 2 pindah sesi 1 saat nm < 100 (sebelumnya < 50)
+-- v8.143: swap delay 4.1s → 4.0s
+-- v8.142: T-Rex jml=8 (production)
+-- v8.141: swap delay 3.8s → 4.1s
+-- v8.140: T-Rex jml=1 (test), swap delay 3.6s → 3.8s
+-- v8.139: doCollect no delay, collect terus langsung tanpa throttle
+-- v8.138: swap skill T-Rex aktif lagi, delay 1.5s → 3.6s
+-- v8.137: AUTO LVL switch default off (manual start)
+-- v8.136: swap skill T-Rex dimatiin sementara
+-- v8.135: scan + collect paralel di sesi 1 (scan terus jalan, collect di background)
+-- v8.134: updateUI nightmare count saat collect mutasi (GUI gak freeze)
+-- v8.133: unequipAll sebelum return dari sesi 1 saat target tercapai
+-- v8.132: T-Rex kembali 8, delay 3.3s → 1.5s
+-- v8.131: swap PNP delay 3s → 3.3s
+-- v8.130: version bump test
+-- v8.129: T-Rex noguard mode (hapus _swapBusy guard), delay 3s
+-- v8.128: swap PNP delay 3s → 2.7s
+-- v8.127: swap PNP delay 2.6s → 3s
+-- v8.126: swap PNP delay 2.2s → 2.6s
+-- v8.125: swap PNP delay 1.9s → 2.2s
+-- v8.124: swap PNP delay 1.7s → 1.9s
+-- v8.123: swap PNP delay 1.5s → 1.7s
+-- v8.122: jeda 1.5s swap hanya saat genuine ready (false→true), bukan nil fallback
+-- v8.121: enforceEquip di semua sesi loop; swap jeda 1.5s sebelum unequip (PNP delay)
+-- v8.120: SWAP_SKILL_CFG — ready-loop swap per nama pet (tanpa sound listener)
+local function _main()
+
+local RS = game:GetService("ReplicatedStorage")
+local plr = game.Players.LocalPlayer
+print("[UPL] start 1 - RS/plr ok")
+local UIS = game:GetService("UserInputService")
+local playerGui = plr:WaitForChild("PlayerGui", 10)
+print("[UPL] start 2 - playerGui ok")
+local gameEvents = RS:WaitForChild("GameEvents", 10)
+print("[UPL] start 3 - gameEvents="..(gameEvents and "ok" or "NIL"))
+
+-- ===================== REMOTES =====================
+-- equipRE: scan SELURUH RS descendants cari "PetsService" RemoteEvent (mirip uplevel asli)
+local equipRE = nil
+local function findEquipRE()
+    for _, v in pairs(RS:GetDescendants()) do
+        if v.Name == "PetsService" and v:IsA("RemoteEvent") then return v end
+    end
+    for _, v in pairs(RS:GetDescendants()) do
+        if v.Name == "PetsService" then return v end
+    end
+    return nil
+end
+equipRE = findEquipRE()
+-- retry tiap 3s kalau belum ketemu (game mungkin belum fully load)
+if not equipRE then
+    task.spawn(function()
+        for _ = 1, 10 do
+            task.wait(3)
+            equipRE = findEquipRE()
+            if equipRE then print("[UPL] equipRE found (retry): "..equipRE:GetFullName()); break end
+        end
+    end)
+end
+local plantRE = gameEvents:FindFirstChild("Plant_RE")
+local sellInventoryRE = gameEvents:FindFirstChild("Sell_Inventory")
+local harvestRE = gameEvents:FindFirstChild("HarvestRemote")
+local cropsRE = gameEvents:FindFirstChild("Crops") and gameEvents.Crops:FindFirstChild("Collect")
+
+-- ===== FAV BUAH — cari RemoteEvent "FavoriteFruit"/"SetFruitFavorite" di RS =====
+local _fruitFavRE = nil
+local function getFruitFavRE()
+    if _fruitFavRE then return _fruitFavRE end
+    -- cari di gameEvents dulu (paling cepat)
+    local names = {"FavoriteFruit","SetFruitFavorite","Favourite_Fruit","FavFruit","Favorite_Fruit"}
+    for _,n in ipairs(names) do
+        local v = gameEvents:FindFirstChild(n)
+        if v then _fruitFavRE = v; addLog("FavRE found in gameEvents: "..n); return v end
+    end
+    -- scan seluruh RS descendants
+    for _,v in ipairs(RS:GetDescendants()) do
+        local ln = v.Name:lower()
+        if (ln:find("favorite") or ln:find("favourite") or ln:find("favfruit")) and
+           (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) then
+            _fruitFavRE = v; addLog("FavRE found: "..v:GetFullName()); return v
+        end
+    end
+    addLog("WARN: FavoriteFruit RE tidak ditemukan di RS")
+    return nil
+end
+-- ambil buah dari farm (Plants_Physical) — bukan dari Backpack Roblox
+local function getFruitsFromFarm()
+    local out = {}
+    pcall(function()
+        local farm = getPlayerFarm()
+        if not farm then return end
+        local imp = farm:FindFirstChild("Important"); if not imp then return end
+        local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
+        for _,pt in ipairs(plants:GetChildren()) do
+            local fruits = pt:FindFirstChild("Fruits"); if fruits then
+                for _,fruit in ipairs(fruits:GetChildren()) do
+                    local id = fruit:GetAttribute("Id") or fruit:GetAttribute("id")
+                    if id then out[#out+1] = {obj=fruit, id=tostring(id)} end
+                end
+            end
+        end
+    end)
+    return out
+end
+-- fav/unfav 1 buah berdasarkan id (fire RemoteEvent ke server)
+local function setFruitFav(id, b)
+    local re = getFruitFavRE()
+    if re then
+        local ok,err = pcall(function()
+            if re:IsA("RemoteEvent") then re:FireServer(tostring(id), b and true or false)
+            else re:InvokeServer(tostring(id), b and true or false) end
+        end)
+        if ok then addLog("setFruitFav id="..tostring(id):sub(1,12).." b="..tostring(b)); return true
+        else addLog("WARN setFruitFav: "..tostring(err)) end
+    end
+    -- fallback: set attribute langsung di object (bisa jalan di beberapa versi game)
+    pcall(function()
+        local farm = getPlayerFarm(); if not farm then return end
+        local imp = farm:FindFirstChild("Important"); if not imp then return end
+        local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
+        for _,pt in ipairs(plants:GetChildren()) do
+            local fruits = pt:FindFirstChild("Fruits"); if fruits then
+                for _,fruit in ipairs(fruits:GetChildren()) do
+                    local fid = fruit:GetAttribute("Id") or fruit:GetAttribute("id")
+                    if fid and tostring(fid) == tostring(id) then
+                        fruit:SetAttribute("Favorited", b)
+                        fruit:SetAttribute("Favourite", b)
+                        addLog("setFruitFav attr fallback id="..tostring(id):sub(1,12).." b="..tostring(b))
+                    end
+                end
+            end
+        end
+    end)
+    return false
+end
+
+local VERSION = "v8.247"
+
+-- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
+-- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
+local dbgLog
+local addLog
+local mutLog = function() end
+local weatherLog
+
+-- ===================== KONFIGURASI =====================
+-- v8.153: SESI1_DEF dinamis — di-rebuild tiap masuk sesi 1
+-- default awal pakai T-Rex; buildSesi1Def() update sebelum runSesi1 jalan
+local SESI1_DEF = {
+    {nama="T-Rex", jml=8},
+}
+local SESI2_DEF = {
+    {nama="Mimic Octopus", jml=6},
+    {nama="Baku",          jml=1},
+}
+local SESI_CADANGAN_DEF = {
+    {nama="Mimic Octopus",  jml=7},
+    {nama="Ghostly Spider", jml=1},
+}
+local SESI_CADANGAN2_DEF = {
+    {nama="Mimic Octopus", jml=4},
+    {nama="Baku",          jml=1},
+}
+local CFG = {
+    bahanType      = "Bahan",
+    bahanMaxAge    = 500,
+    nightmareTarget= 4700,
+    loopWait       = 1,
+    equipWait      = 0.08,  -- 0.08s antar equip (lebih stabil dari 0.06)
+}
+
+-- ===================== SWAP SKILL CONFIG =====================
+-- Pet yang namanya ada di sini -> di-swap tiap skill ready (polling 0.05s, TANPA sound listener)
+-- Format: {["Nama Pet"] = true} — case-sensitive, harus cocok dengan nama di lineup
+-- Contoh: T-Rex di sesi 1 perlu swap skill -> masukkan di sini
+local SWAP_SKILL_CFG = {
+    -- "nocd" = swap via swapLoop kalau rdy==nil & idle>3s (no CD pet), DataStream tetap jalan paralel
+    ["T-Rex"] = "nocd",
+}
+
+-- sesiPool persist via _G agar tidak reset saat re-execute script
+-- Pool juga di-save ke file lokal (writefile) agar survive rejoin
+if type(_G.UPL_POOL) ~= "table" then
+    _G.UPL_POOL = {[1]={}, [2]={}, [3]={}, [4]={}}
+end
+if not _G.UPL_POOL[3] then _G.UPL_POOL[3]={} end
+if not _G.UPL_POOL[4] then _G.UPL_POOL[4]={} end
+local sesiPool = _G.UPL_POOL
+
+-- ===== POOL FILE PERSIST (writefile/readfile — survive rejoin) =====
+local _poolFile = "zenx_uplevel_pool_" .. (plr.Name or "x") .. ".txt"
+
+local function savePoolFile()
+    pcall(function()
+        if not writefile then return end
+        -- format: sesi|tipe|slot|uuid  (1 baris per slot)
+        local lines = {"#upl2"}  -- marker versi
+        for s=1,4 do
+            for tipe,slots in pairs(sesiPool[s]) do
+                for i,entry in pairs(slots) do
+                    if entry and entry.uuid then
+                        lines[#lines+1] = s.."|"..tipe.."|"..tostring(i).."|"..tostring(entry.uuid)
+                    end
+                end
+            end
+        end
+        writefile(_poolFile, table.concat(lines,"\n"))
+    end)
+end
+
+local function loadPoolFile()
+    pcall(function()
+        if not (isfile and isfile(_poolFile) and readfile) then return end
+        local data = readfile(_poolFile)
+        if not tostring(data):match("^#upl2") then return end  -- format lama, skip
+        for line in tostring(data):gmatch("[^\n]+") do
+            local s,tipe,i,uuid = line:match("^(%d+)|(.+)|(%d+)|(.+)$")
+            if s and tipe and i and uuid then
+                s=tonumber(s); i=tonumber(i)
+                if s and i and sesiPool[s] then
+                    if not sesiPool[s][tipe] then sesiPool[s][tipe]={} end
+                    sesiPool[s][tipe][i]={uuid=uuid, tipe=tipe}
+                end
+            end
+        end
+    end)
+end
+
+-- load saat startup (pool _G kosong = rejoin, baca dari file)
+local _poolKosong = not next(sesiPool[1]) and not next(sesiPool[2])
+if _poolKosong then loadPoolFile() end
+
+-- ===================== TEMA =====================
+local C = {
+    bg       = Color3.fromRGB(0, 0, 0),
+    panel    = Color3.fromRGB(8, 8, 8),
+    card     = Color3.fromRGB(16, 16, 16),
+    cardSel  = Color3.fromRGB(28, 28, 28),
+    input    = Color3.fromRGB(10, 10, 10),
+    border   = Color3.fromRGB(38, 38, 38),
+    borderSel= Color3.fromRGB(78, 214, 204),
+    line     = Color3.fromRGB(51, 51, 51),
+    text     = Color3.fromRGB(255, 255, 255),
+    textDim  = Color3.fromRGB(160, 160, 160),
+    textMute = Color3.fromRGB(102, 102, 102),
+    accent   = Color3.fromRGB(78, 214, 204),
+    accent2  = Color3.fromRGB(78, 214, 204),
+    danger   = Color3.fromRGB(120, 120, 120),
+}
+local FONT   = Enum.Font.GothamSemibold
+local FONT_B = Enum.Font.GothamBold
+
+local TIPE_COL = {
+    ["Mimic Octopus"] = Color3.fromRGB(78,214,204),
+    ["T-Rex"]         = Color3.fromRGB(220,160,60),
+    ["Baku"]          = Color3.fromRGB(160,120,220),
+    ["Peacock"]       = Color3.fromRGB(78,200,130),
+    ["Bahan"]         = Color3.fromRGB(200,160,80),
+}
+local function petCol(nama) return TIPE_COL[nama] or C.accent end
+
+-- ===================== UI HELPERS =====================
+local function mk(cls, props)
+    local o = Instance.new(cls)
+    for k, v in pairs(props or {}) do o[k] = v end
+    return o
+end
+local function corner(o, r) mk("UICorner",{CornerRadius=UDim.new(0,r or 8),Parent=o}); return o end
+local function stroke(o, col, th)
+    return mk("UIStroke",{Color=col or C.border,Thickness=th or 1.5,
+        ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Parent=o})
+end
+local function pad(o, all)
+    mk("UIPadding",{PaddingTop=UDim.new(0,all),PaddingBottom=UDim.new(0,all),
+        PaddingLeft=UDim.new(0,all),PaddingRight=UDim.new(0,all),Parent=o})
+end
+local function lbl(parent, text, size, col, xalign)
+    return mk("TextLabel",{
+        BackgroundTransparency=1, Text=text, Font=FONT,
+        TextSize=size or 13, TextColor3=col or C.text,
+        TextXAlignment=xalign or Enum.TextXAlignment.Left,
+        TextYAlignment=Enum.TextYAlignment.Center, Parent=parent,
+    })
+end
+
+-- ===================== DESTROY OLD =====================
+pcall(function()
+    local par = (gethui and gethui()) or playerGui
+    local old = par:FindFirstChild("ZenxUpLevel"); if old then old:Destroy() end
+    local old2 = playerGui:FindFirstChild("ZenxUpLevel"); if old2 then old2:Destroy() end
+end)
+
+print("[UPL] start 4 - sebelum GUI")
+-- ===================== SCREEN GUI =====================
+local gui = mk("ScreenGui",{
+    Name="ZenxUpLevel", ResetOnSpawn=false, IgnoreGuiInset=true,
+    ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
+})
+pcall(function() gui.Parent = (gethui and gethui()) or playerGui end)
+if not gui.Parent then gui.Parent = playerGui end
+
+local main = mk("Frame",{
+    Size=UDim2.new(0,660,0,420), Position=UDim2.new(0.5,-330,0.5,-210),
+    BackgroundColor3=C.bg, BorderSizePixel=0, Parent=gui,
+})
+corner(main,12); stroke(main,C.border,1.5)
+
+-- ===================== TITLE BAR =====================
+local titleBar = mk("Frame",{Size=UDim2.new(1,0,0,44),BackgroundColor3=C.panel,BorderSizePixel=0,Parent=main})
+mk("UICorner",{CornerRadius=UDim.new(0,12),Parent=titleBar})
+mk("Frame",{Size=UDim2.new(1,0,0,12),Position=UDim2.new(0,0,1,-12),BackgroundColor3=C.panel,BorderSizePixel=0,Parent=titleBar})
+local judul = lbl(titleBar,"⚖  AUTO LVL",15,C.text)
+judul.Font=FONT_B; judul.Position=UDim2.new(0,15,0,0); judul.Size=UDim2.new(0,180,1,0)
+local verL = lbl(titleBar,VERSION,11,C.textMute,Enum.TextXAlignment.Right)
+verL.Position=UDim2.new(1,-190,0,0); verL.Size=UDim2.new(0,108,1,0)
+local closeBtn = mk("TextButton",{Size=UDim2.new(0,30,0,30),Position=UDim2.new(1,-40,0.5,-15),
+    BackgroundColor3=Color3.fromRGB(58,30,34),Text="✕",Font=FONT_B,TextSize=26,
+    TextColor3=Color3.fromRGB(240,130,140),AutoButtonColor=true,Parent=titleBar})
+corner(closeBtn,8)
+local minBtn = mk("TextButton",{Size=UDim2.new(0,30,0,30),Position=UDim2.new(1,-76,0.5,-15),
+    BackgroundColor3=C.card,Text="–",Font=FONT_B,TextSize=26,TextColor3=C.textDim,
+    AutoButtonColor=true,Parent=titleBar})
+corner(minBtn,8); stroke(minBtn,C.border,1)
+
+do
+    local dragging,dragStart,startPos
+    titleBar.InputBegan:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
+            dragging=true; dragStart=inp.Position; startPos=main.Position
+            inp.Changed:Connect(function() if inp.UserInputState==Enum.UserInputState.End then dragging=false end end)
+        end
+    end)
+    UIS.InputChanged:Connect(function(inp)
+        if dragging and (inp.UserInputType==Enum.UserInputType.MouseMovement or inp.UserInputType==Enum.UserInputType.Touch) then
+            local d=inp.Position-dragStart
+            main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
+        end
+    end)
+end
+
+-- mini logo Z
+local miniLogo = mk("TextButton",{Size=UDim2.new(0,50,0,50),Position=UDim2.new(0,16,0.4,0),
+    BackgroundColor3=Color3.fromRGB(20,20,20),Text="",AutoButtonColor=false,Visible=false,ZIndex=60,Parent=gui})
+mk("UICorner",{CornerRadius=UDim.new(1,0),Parent=miniLogo})
+mk("UIGradient",{Color=ColorSequence.new(Color3.fromRGB(34,34,34),Color3.fromRGB(16,16,16)),Rotation=90,Parent=miniLogo})
+local miniSt=mk("UIStroke",{Color=Color3.fromRGB(245,245,245),Thickness=1.5,Transparency=0.1,Parent=miniLogo})
+local innerR=mk("Frame",{Size=UDim2.new(1,-8,1,-8),Position=UDim2.new(0,4,0,4),BackgroundTransparency=1,ZIndex=60,Parent=miniLogo})
+mk("UICorner",{CornerRadius=UDim.new(1,0),Parent=innerR}); mk("UIStroke",{Color=Color3.fromRGB(70,70,70),Thickness=1,Transparency=0.3,Parent=innerR})
+local miniZ=lbl(miniLogo,"Z",24,Color3.fromRGB(248,248,248),Enum.TextXAlignment.Center)
+miniZ.Font=FONT_B; miniZ.Size=UDim2.new(1,0,1,0); miniZ.ZIndex=61
+miniLogo.MouseEnter:Connect(function() miniSt.Transparency=0 end)
+miniLogo.MouseLeave:Connect(function() miniSt.Transparency=0.1 end)
+minBtn.MouseButton1Click:Connect(function() main.Visible=false; miniLogo.Visible=true; pcall(closePopup) end)
+miniLogo.MouseButton1Click:Connect(function() miniLogo.Visible=false; main.Visible=true end)
+closeBtn.MouseButton1Click:Connect(function() pcall(closePopup); gui:Destroy() end)
+
+-- resize corner
+local resH=mk("TextButton",{Size=UDim2.new(0,16,0,16),Position=UDim2.new(1,-16,1,-16),
+    BackgroundColor3=C.line,Text="",AutoButtonColor=false,ZIndex=10,Parent=main}); corner(resH,3)
+do
+    local resizing,resStart,stSize
+    resH.InputBegan:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1 then
+            resizing=true; resStart=inp.Position; stSize=main.Size
+            inp.Changed:Connect(function() if inp.UserInputState==Enum.UserInputState.End then resizing=false end end)
+        end
+    end)
+    UIS.InputChanged:Connect(function(inp)
+        if resizing and inp.UserInputType==Enum.UserInputType.MouseMovement then
+            local d=inp.Position-resStart
+            main.Size=UDim2.new(0,math.max(480,stSize.X.Offset+d.X),0,math.max(340,stSize.Y.Offset+d.Y))
+        end
+    end)
+end
+
+-- ===================== SIDEBAR =====================
+local sidebar=mk("Frame",{Size=UDim2.new(0,125,1,-44),Position=UDim2.new(0,0,0,44),
+    BackgroundColor3=C.panel,BorderSizePixel=0,Parent=main})
+mk("Frame",{Size=UDim2.new(0,1,1,0),Position=UDim2.new(1,-1,0,0),BackgroundColor3=C.line,BorderSizePixel=0,Parent=sidebar})
+
+local activeSide="AUTO LVL"; local sideBtns={}; local showSideFn
+local function makeSideBtn(name, y)
+    local b=mk("TextButton",{Size=UDim2.new(1,-14,0,38),Position=UDim2.new(0,7,0,y),
+        BackgroundColor3=(name==activeSide) and C.cardSel or C.panel,Text="",AutoButtonColor=false,Parent=sidebar}); corner(b,9)
+    local ab=mk("Frame",{Size=UDim2.new(0,3,0.55,0),Position=UDim2.new(0,0,0.225,0),
+        BackgroundColor3=C.accent,BorderSizePixel=0,Visible=(name==activeSide),Parent=b}); corner(ab,2)
+    local t=lbl(b,name,12,(name==activeSide) and C.text or C.textDim)
+    t.Position=UDim2.new(0,13,0,0); t.Size=UDim2.new(1,-13,1,0); t.Font=FONT_B
+    sideBtns[name]={btn=b,accent=ab,label=t}
+    b.MouseButton1Click:Connect(function()
+        activeSide=name
+        for n,d in pairs(sideBtns) do
+            local on=(n==name); d.btn.BackgroundColor3=on and C.cardSel or C.panel
+            d.accent.Visible=on; d.label.TextColor3=on and C.text or C.textDim
+        end
+        if showSideFn then showSideFn(name) end
+    end)
+end
+makeSideBtn("AUTO LVL",14); makeSideBtn("MISC",56); makeSideBtn("LOG",98); makeSideBtn("TRADE",140); makeSideBtn("TRADE ALL",182)
+
+-- ===================== CONTENT CONTAINERS =====================
+local autoContent=mk("Frame",{Size=UDim2.new(1,-125,1,-44),Position=UDim2.new(0,125,0,44),BackgroundTransparency=1,Parent=main}); pad(autoContent,10)
+local cfgScroll=mk("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,
+    ScrollBarThickness=4,ScrollBarImageColor3=C.line,CanvasSize=UDim2.new(0,0,0,0),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=autoContent})
+mk("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder,Parent=cfgScroll})
+
+local miscContent=mk("Frame",{Size=UDim2.new(1,-125,1,-44),Position=UDim2.new(0,125,0,44),BackgroundTransparency=1,Visible=false,Parent=main}); pad(miscContent,10)
+local miscScroll=mk("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,
+    ScrollBarThickness=4,ScrollBarImageColor3=C.line,CanvasSize=UDim2.new(0,0,0,0),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=miscContent})
+mk("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder,Parent=miscScroll})
+
+local logContent=mk("Frame",{Size=UDim2.new(1,-125,1,-44),Position=UDim2.new(0,125,0,44),BackgroundTransparency=1,Visible=false,Parent=main}); pad(logContent,10)
+local logScroll=mk("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,
+    ScrollBarThickness=4,ScrollBarImageColor3=C.line,CanvasSize=UDim2.new(0,0,0,0),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=logContent})
+mk("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder,Parent=logScroll})
+
+local tradeContent=mk("Frame",{Size=UDim2.new(1,-125,1,-44),Position=UDim2.new(0,125,0,44),BackgroundTransparency=1,Visible=false,Parent=main}); pad(tradeContent,10)
+local tradeScroll=mk("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,
+    ScrollBarThickness=4,ScrollBarImageColor3=C.line,CanvasSize=UDim2.new(0,0,0,0),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=tradeContent})
+mk("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder,Parent=tradeScroll})
+
+local tradeAllContent=mk("Frame",{Size=UDim2.new(1,-125,1,-44),Position=UDim2.new(0,125,0,44),BackgroundTransparency=1,Visible=false,Parent=main}); pad(tradeAllContent,10)
+local tradeAllScroll=mk("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,
+    ScrollBarThickness=4,ScrollBarImageColor3=C.line,CanvasSize=UDim2.new(0,0,0,0),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=tradeAllContent})
+mk("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder,Parent=tradeAllScroll})
+
+showSideFn=function(name)
+    autoContent.Visible=(name=="AUTO LVL"); miscContent.Visible=(name=="MISC")
+    logContent.Visible=(name=="LOG"); tradeContent.Visible=(name=="TRADE")
+    tradeAllContent.Visible=(name=="TRADE ALL")
+end
+
+-- ===================== HELPERS REUSABLE =====================
+local function sectionHeader(parent, txt, lo)
+    local h=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundTransparency=1,LayoutOrder=lo or 0,Parent=parent})
+    local bar=mk("Frame",{Size=UDim2.new(0,3,0,14),Position=UDim2.new(0,2,0.5,-7),BackgroundColor3=C.accent,BorderSizePixel=0,Parent=h}); corner(bar,2)
+    local t=lbl(h,txt,12,C.accent); t.Font=FONT_B; t.Position=UDim2.new(0,12,0,0); t.Size=UDim2.new(1,-12,1,0)
+    return h
+end
+local function makeSwitch(parent, labelTxt, lo, initOn)
+    local row=mk("Frame",{Size=UDim2.new(1,0,0,44),BackgroundColor3=C.card,BorderSizePixel=0,LayoutOrder=lo or 0,Parent=parent})
+    corner(row,8); stroke(row,C.border,1)
+    local lt=lbl(row,labelTxt,13,C.text); lt.Position=UDim2.new(0,14,0,0); lt.Size=UDim2.new(1,-70,1,0)
+    local pill=mk("Frame",{Size=UDim2.new(0,46,0,24),Position=UDim2.new(1,-58,0.5,-12),
+        BackgroundColor3=initOn and C.accent or C.input,BorderSizePixel=0,Parent=row}); corner(pill,12)
+    local knob=mk("Frame",{Size=UDim2.new(0,18,0,18),
+        Position=initOn and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9),
+        BackgroundColor3=initOn and C.bg or C.textDim,BorderSizePixel=0,Parent=pill}); corner(knob,9)
+    local on=initOn or false
+    local function setVis(state)
+        on=state; pill.BackgroundColor3=on and C.accent or C.input
+        knob.BackgroundColor3=on and C.bg or C.textDim
+        knob.Position=on and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9)
+    end
+    local ev=Instance.new("BindableEvent")
+    pill.InputBegan:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1 then setVis(not on); ev:Fire(on) end
+    end)
+    return row, setVis, function() return on end, ev.Event
+end
+
+-- ===================== MUTATION STRIP (mirip uplevel asli) =====================
+-- NOTE: Rainbow TIDAK dihapus (Rainbow Dilop = jenis tersendiri, bukan mutasi)
+local MUTATION_PREFIXES={
+    "Everchanted ","Frozen ","Inverted ","Golden ","Diamond ",
+    "Mythical ","Hexed ","Ascended ","Radiant ","Shocked ","Bloodlit ",
+    "Twilight ","Voidtouched ","Foxfire ","Aurora ","Static ","Stormcloud ",
+    "Frost ","Burnt ","Lethal ","Cooked ","Choc ",
+    -- extra yg umum di versi lain:
+    "Nightmare ","Nocturnal ","Nutty ","Mega ","Prismatic ","Shiny ","Sparkle ",
+    "Holographic ","Disco ","Crystal ","Corrupted ","Angelic ","Infernal ",
+    "Titanic ","Colossal ","Gargantuan ","Celestial ","Void ","Moonlit ","Galactic ",
+    "Rainbow ",
+}
+local function stripMutation(s)
+    if not s then return "" end
+    local r=s; local ch=true
+    while ch do ch=false
+        for _,p in ipairs(MUTATION_PREFIXES) do
+            if r:sub(1,#p)==p then r=r:sub(#p+1); ch=true; break end
+        end
+    end
+    return r
+end
+local function fmtUUID(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.."}" end; return s end
+
+-- ===================== getgc MEMORY CONTAINER =====================
+-- Container adalah tabel memori game {uuid -> {PetData={Level, BaseWeight, ...}, PetType="..."}}
+-- Age = PetData.Level | UUID = key container (braced format)
+local _kgContainer = nil
+local function findMemoryContainer()
+    if not getgc then return nil end
+    local backpackUUIDs, bpCount = {}, 0
+    local bp = plr:FindFirstChild("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") then
+                local u = t:GetAttribute("PET_UUID")
+                if u then
+                    local k=tostring(u); if k:sub(1,1)~="{" then k="{"..k.."}" end
+                    backpackUUIDs[k]=true; bpCount=bpCount+1
+                end
+            end
+        end
+    end
+    local best,bestCount,bestMatch=nil,0,0
+    pcall(function()
+        for _, obj in pairs(getgc(true)) do
+            if type(obj)=="table" then
+                local uuidLike,matchCount=0,0
+                for k in pairs(obj) do
+                    if type(k)=="string" and #k>=32 and k:find("-") then
+                        uuidLike=uuidLike+1
+                        if backpackUUIDs[k] then matchCount=matchCount+1 end
+                        if uuidLike>=50 and matchCount==0 then break end
+                    end
+                end
+                if uuidLike>=5 then
+                    local sample=nil; for _,v in pairs(obj) do sample=v; break end
+                    if type(sample)=="table" and rawget(sample,"PetData") then
+                        local cnt=0; for _ in pairs(obj) do cnt=cnt+1 end
+                        local better=false
+                        if bpCount>0 then
+                            if matchCount>bestMatch then better=true
+                            elseif matchCount==bestMatch and cnt>bestCount then better=true end
+                        else if cnt>bestCount then better=true end end
+                        if better then best=obj; bestCount=cnt; bestMatch=matchCount end
+                    end
+                end
+            end
+        end
+    end)
+    return best
+end
+local function ambilContainer()
+    if _kgContainer then
+        local ok=false
+        pcall(function()
+            for _,v in pairs(_kgContainer) do
+                if type(v)=="table" and rawget(v,"PetData") then ok=true end; break
+            end
+        end)
+        if ok then return _kgContainer end
+    end
+    _kgContainer=findMemoryContainer(); return _kgContainer
+end
+-- refresh container tiap 15s (getgc berat)
+task.spawn(function()
+    while true do pcall(ambilContainer); task.wait(15) end
+end)
+-- initial find (async)
+task.spawn(function() pcall(ambilContainer) end)
+
+-- Baca age dari container
+local function getAgeFromContainer(uuid)
+    local c=_kgContainer; if not c then return nil end
+    local key=fmtUUID(uuid)
+    local e=c[key]
+    if type(e)=="table" and e.PetData then return tonumber(e.PetData.Level) end
+    return nil
+end
+
+-- ===================== LIST PETS =====================
+-- listPetsEngine: dari backpack (PET_UUID attr, tipe dari attr atau Name strip, age dari container)
+-- PENTING: tidak boleh hanya andalkan attr "f" — banyak Tool yang tidak punya attr itu
+local function listPetsEngine()
+    local bp=plr:FindFirstChild("Backpack"); if not bp then return {} end
+    local out={}
+    for _,t in ipairs(bp:GetChildren()) do
+        if t:IsA("Tool") then
+            local rawUUID=t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+            if rawUUID then
+                local uuid=fmtUUID(rawUUID)
+                -- Ambil tipe: coba attr "f", PetType, type — lalu fallback ke Name pattern
+                local rawTipe=t:GetAttribute("f") or t:GetAttribute("PetType") or t:GetAttribute("type")
+                if not rawTipe or rawTipe=="" then
+                    -- Name format: "Mimic Octopus [uuid]" atau "Rainbow Mimic Octopus [uuid]"
+                    -- strip sampai "[" untuk dapatkan nama lengkap termasuk mutation prefix
+                    rawTipe = t.Name:match("^(.-)%s*%[") or t.Name:match("^(.-)$") or t.Name
+                end
+                rawTipe=tostring(rawTipe)
+                local tipe=stripMutation(rawTipe)
+                local age=getAgeFromContainer(rawUUID) or 0
+                -- Estimasi kg dari container kalau ada
+                local kgEst=0
+                local cEnt=_kgContainer and _kgContainer[fmtUUID(rawUUID)]
+                if type(cEnt)=="table" and cEnt.PetData then
+                    local bw=tonumber(cEnt.PetData.BaseWeight) or 0
+                    local lv=tonumber(cEnt.PetData.Level) or 0
+                    kgEst=bw*(lv+10)/10
+                end
+                out[#out+1]={uuid=uuid, tipe=tipe, age=age, fullName=rawTipe, kg=kgEst}
+            end
+        end
+    end
+    return out
+end
+
+-- listPetsAll: baca SEMUA pet dari CONTAINER (equipped + backpack), fallback ke Engine
+-- Container punya PetType field — ini yg dipakai uplevel asli utk picker
+local function listPetsAll()
+    local c=_kgContainer
+    if not c then return listPetsEngine() end
+    local out={}
+    for uuid,e in pairs(c) do
+        if type(e)=="table" and (e.PetType or (e.PetData and e.PetData.PetType)) then
+            local rawTipe=tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+            local tipe=stripMutation(rawTipe)
+            local pd=e.PetData or {}
+            local bw=tonumber(pd.BaseWeight) or 0
+            local lv=tonumber(pd.Level) or 0
+            local kg=bw*(lv+10)/10  -- kg current (sama dgn uplevel asli)
+            out[#out+1]={uuid=fmtUUID(uuid), tipe=tipe, age=lv, kg=kg, fullName=rawTipe}
+        end
+    end
+    if #out==0 then return listPetsEngine() end
+    return out
+end
+
+-- v8.153: buildSesi1Def — hitung T-Rex age>=500 di inventory, pilih lineup sesi 1
+-- >= 8 T-Rex age>=500 -> 8 T-Rex | kurang -> N T-Rex + (8-N) Mimic Octopus
+local function buildSesi1Def()
+    local trexTua = 0
+    dbgLog("[DBG] bSD step1: listPetsAll")
+    -- hitung dari backpack + container
+    local all = listPetsAll()
+    for _, p in ipairs(all) do
+        if p.tipe == "T-Rex" and (p.age or 0) >= 500 then
+            trexTua = trexTua + 1
+        end
+    end
+    dbgLog("[DBG] bSD step2: trexTua(container)="..trexTua)
+    -- hitung T-Rex yang equipped di Character (tidak masuk backpack)
+    local char = plr.Character
+    if char then
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") then
+                local rawTipe = t:GetAttribute("f") or t:GetAttribute("PetType") or t:GetAttribute("type") or t.Name or ""
+                local tipe = stripMutation(tostring(rawTipe))
+                if tipe == "T-Rex" then
+                    local rawUUID = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                    local age = (rawUUID and getAgeFromContainer(rawUUID)) or 0
+                    dbgLog("[DBG] T-Rex equipped: age="..age.." uuid="..(tostring(rawUUID):sub(1,8)))
+                    if age >= 500 then trexTua = trexTua + 1 end
+                end
+            end
+        end
+    end
+    dbgLog("[DBG] bSD step3: trexTua(+char)="..trexTua)
+    -- hitung T-Rex di garden (workspace.PetsPhysical) — UUID jadi Name object
+    local seenUUID = {}
+    -- tandai UUID dari container (backpack+equipped) agar tidak double count
+    local all2 = listPetsAll()
+    for _, p in ipairs(all2) do
+        if p.uuid then seenUUID[p.uuid] = true end
+    end
+    -- tandai juga UUID dari Character yang baru di-scan
+    if char then
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") then
+                local rawUUID = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                if rawUUID then seenUUID[fmtUUID(rawUUID)] = true end
+            end
+        end
+    end
+    local c = _kgContainer
+    dbgLog("[DBG] garden scan: c="..(c and "ok" or "nil"))
+    local okG, errG = pcall(function()
+        -- debug: list semua direct children workspace yang mungkin nyimpen placed pets
+        local wsNames = {}
+        for _, ch in ipairs(workspace:GetChildren()) do
+            local n = ch.Name
+            if n:find("[Pp]et") or n:find("[Pp]laced") or n:find("[Ff]arm") or n:find("[Gg]arden") or n:find("[Aa]nimal") then
+                table.insert(wsNames, n.."("..ch.ClassName.."#"..#ch:GetChildren()..")")
+            end
+        end
+        dbgLog("[DBG] ws pet-related: "..table.concat(wsNames, ", "))
+
+        -- coba beberapa kandidat folder
+        local candidates = {"PetsPhysical","PlacedPets","Pets","GardenPets","FarmPets"}
+        for _, folderName in ipairs(candidates) do
+            local pp = workspace:FindFirstChild(folderName)
+            if pp then
+                dbgLog("[DBG] found "..folderName..": "..#pp:GetChildren().." children")
+                -- cek isi child pertama buat tau strukturnya
+                local first = pp:GetChildren()[1]
+                if first then
+                    dbgLog("[DBG] "..folderName.."[1]: Name="..first.Name.." Class="..first.ClassName)
+                    -- cek attributes
+                    local attrs = {}
+                    pcall(function()
+                        for k,v in pairs(first:GetAttributes()) do
+                            table.insert(attrs, k.."="..tostring(v):sub(1,12))
+                            if #attrs >= 5 then break end
+                        end
+                    end)
+                    if #attrs > 0 then dbgLog("[DBG] "..folderName.."[1] attrs: "..table.concat(attrs,", ")) end
+                end
+                if folderName == "PetsPhysical" then
+                    -- skip PetsPhysical karena isinya PetMover bukan UUID
+                else
+                    for _, obj in ipairs(pp:GetChildren()) do
+                        local rawUUID = obj.Name
+                        local uuid = fmtUUID(rawUUID)
+                        local entry = c and c[uuid]
+                        dbgLog("[DBG] "..folderName.." obj: raw="..tostring(rawUUID):sub(1,12).." entry="..(type(entry)=="table" and "ok" or "nil"))
+                        if not seenUUID[uuid] and type(entry) == "table" then
+                            local rawTipe = tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "")
+                            local tipe = stripMutation(rawTipe)
+                            local age = tonumber((entry.PetData or {}).Level) or 0
+                            dbgLog("[DBG] garden pet: "..tipe.." age="..age.." uuid="..uuid:sub(1,8))
+                            if tipe == "T-Rex" and age >= 500 then
+                                trexTua = trexTua + 1
+                                seenUUID[uuid] = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if not okG then dbgLog("[DBG] garden scan ERROR: "..tostring(errG)) end
+    dbgLog("[DBG] buildSesi1Def: trexTua="..trexTua.." (inc garden)")
+    -- threshold 7: 1 T-Rex bisa di garden (tidak ke-detect container), asumsi ada 8 total
+    -- v8.210: N T-Rex masuk semua ke lineup, Mimic ngisi sisanya (8-N)
+    local nTrex = math.min(trexTua, 8)
+    if nTrex >= 7 then
+        -- 7 atau 8 T-Rex -> full 8 T-Rex (1 mungkin di garden, tidak ke-detect)
+        SESI1_DEF = { {nama="T-Rex", jml=8} }
+        addLog("Sesi 1 def: 8 T-Rex (age>=500 terdeteksi "..trexTua..", threshold 7)")
+    elseif nTrex == 0 then
+        SESI1_DEF = { {nama="Mimic Octopus", jml=8} }
+        addLog("Sesi 1 def: 8 Mimic (T-Rex age>=500 belum ada)")
+    else
+        local nMimic = 8 - nTrex
+        SESI1_DEF = { {nama="T-Rex", jml=nTrex}, {nama="Mimic Octopus", jml=nMimic} }
+        addLog("Sesi 1 def: "..nTrex.." T-Rex + "..nMimic.." Mimic (T-Rex age>=500 = "..trexTua..")")
+    end
+end
+
+-- listPetsBackpack: filter by tipe (untuk picker), pakai listPetsAll
+local function listPetsBackpack(filterNama)
+    local all=listPetsAll()
+    local out={}
+    for _,p in ipairs(all) do
+        if filterNama==nil or p.tipe==filterNama then
+            out[#out+1]=p
+        end
+    end
+    table.sort(out, function(a,b) return (a.age or 0)>(b.age or 0) end)
+    return out
+end
+
+-- ===================== PET PICKER POPUP =====================
+local lineupHolders={}
+
+local function openPetPicker(sesiNum, nama, idx, onPicked)
+    local old=gui:FindFirstChild("ZenxUPLPicker"); if old then old:Destroy() end
+    local ov=mk("Frame",{Name="ZenxUPLPicker",Size=UDim2.new(1,0,1,0),
+        BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=0.45,ZIndex=300,Parent=gui})
+    local pk=mk("Frame",{Size=UDim2.new(0,300,0,360),AnchorPoint=Vector2.new(0.5,0.5),
+        Position=UDim2.new(0.5,0,0.5,0),BackgroundColor3=C.panel,BorderSizePixel=0,ZIndex=301,Parent=ov})
+    corner(pk,12); stroke(pk,C.border,1.5)
+    local ptitle=lbl(pk,"Pilih "..nama.."  ·  Sesi "..sesiNum.." #"..idx,13,C.text)
+    ptitle.Font=FONT_B; ptitle.Position=UDim2.new(0,12,0,10); ptitle.Size=UDim2.new(1,-44,0,22); ptitle.ZIndex=302
+    -- status container
+    local ctainerLbl=lbl(pk,_kgContainer and "● data OK" or "● loading data...",10,
+        _kgContainer and C.accent or Color3.fromRGB(220,160,60))
+    ctainerLbl.Position=UDim2.new(0,12,0,32); ctainerLbl.Size=UDim2.new(1,-44,0,12); ctainerLbl.ZIndex=302
+    local px=mk("TextButton",{Size=UDim2.new(0,28,0,24),Position=UDim2.new(1,-36,0,10),
+        BackgroundColor3=Color3.fromRGB(58,30,34),Text="✕",Font=FONT_B,TextSize=22,
+        TextColor3=Color3.fromRGB(240,130,140),ZIndex=302,Parent=pk}); corner(px,7)
+    px.MouseButton1Click:Connect(function() ov:Destroy() end)
+    local psrch=mk("TextBox",{Size=UDim2.new(1,-20,0,28),Position=UDim2.new(0,10,0,50),
+        BackgroundColor3=C.card,TextColor3=C.text,PlaceholderText="cari...",Text="",
+        Font=FONT,TextSize=13,ClearTextOnFocus=false,ZIndex=302,Parent=pk}); corner(psrch,6)
+    local plist=mk("ScrollingFrame",{Size=UDim2.new(1,-20,1,-88),Position=UDim2.new(0,10,0,86),
+        BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=4,ScrollBarImageColor3=C.line,
+        CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,ZIndex=302,Parent=pk})
+    mk("UIListLayout",{Padding=UDim.new(0,5),Parent=plist})
+    -- hapus pilihan
+    local clrEntry=mk("TextButton",{Size=UDim2.new(1,-4,0,34),BackgroundColor3=C.cardSel,
+        Text="✕  Hapus pilihan (tipe otomatis)",Font=FONT_B,TextSize=12,
+        TextColor3=C.textDim,AutoButtonColor=true,ZIndex=302,Parent=plist}); corner(clrEntry,8)
+    clrEntry.MouseButton1Click:Connect(function() onPicked(nil); ov:Destroy() end)
+    local col=petCol(nama)
+    local function refresh(filter)
+        for _,c in ipairs(plist:GetChildren()) do
+            if c~=clrEntry and (c:IsA("TextButton") or c:IsA("TextLabel")) then c:Destroy() end
+        end
+        -- update status container
+        ctainerLbl.Text=_kgContainer and "● data OK" or "● data belum ready (tunggu getgc)"
+        ctainerLbl.TextColor3=_kgContainer and C.accent or Color3.fromRGB(220,160,60)
+        local pets=listPetsBackpack(nama)
+        filter=(filter or ""):lower()
+        local shown=0
+        for _,p in ipairs(pets) do
+            if filter=="" or p.fullName:lower():find(filter,1,true) or p.tipe:lower():find(filter,1,true) then
+                shown=shown+1
+                local it=mk("TextButton",{Size=UDim2.new(1,-4,0,52),BackgroundColor3=C.card,
+                    Text="",AutoButtonColor=true,ZIndex=302,Parent=plist}); corner(it,8); stroke(it,C.border,1)
+                local dot=mk("Frame",{Size=UDim2.new(0,8,0,8),Position=UDim2.new(0,12,0.5,-4),
+                    BackgroundColor3=col,BorderSizePixel=0,ZIndex=303,Parent=it}); corner(dot,4)
+                -- nama pet (fullName / tipe)
+                local nmL=lbl(it,tostring(p.fullName or p.tipe or nama),15,C.text); nmL.Font=FONT_B
+                nmL.Position=UDim2.new(0,26,0,7); nmL.Size=UDim2.new(1,-90,0,22); nmL.ZIndex=303
+                nmL.TextTruncate=Enum.TextTruncate.AtEnd
+                -- sub: kg · age
+                local kgStr=string.format("%.2f",p.kg or 0)
+                local subL=lbl(it,"kg "..kgStr.."  ·  age "..(p.age or 0),12,C.textDim)
+                subL.Position=UDim2.new(0,26,0,31); subL.Size=UDim2.new(1,-90,0,16); subL.ZIndex=303
+                -- kg besar di kanan (seperti uplevel asli)
+                local kgBig=lbl(it,string.format("%.1fkg",p.kg or 0),16,col,Enum.TextXAlignment.Right)
+                kgBig.Font=FONT_B; kgBig.Position=UDim2.new(1,-82,0.5,-11); kgBig.Size=UDim2.new(0,74,0,22); kgBig.ZIndex=303
+                it.MouseButton1Click:Connect(function() onPicked(p); ov:Destroy() end)
+            end
+        end
+        if shown==0 then
+            -- debug: tampilkan semua tipe yg ditemukan di backpack/container
+            local allPets=listPetsAll(); local tipeFound={}; local seen={}
+            for _,p in ipairs(allPets) do
+                if not seen[p.tipe] then seen[p.tipe]=true; tipeFound[#tipeFound+1]=p.tipe end
+            end
+            local dbgStr
+            if not _kgContainer then
+                dbgStr="getgc belum ready — klik Refresh\n(tunggu ~5 detik lalu coba lagi)"
+            elseif #allPets==0 then
+                dbgStr="Container kosong / backpack kosong\nPastikan ada pet di backpack"
+            else
+                local tipeList=#tipeFound>0 and table.concat(tipeFound,", ") or "?"
+                dbgStr="Tidak ada '"..nama.."'\nTipe ditemukan: "..tipeList
+            end
+            local e=lbl(plist,dbgStr,11,C.textDim)
+            e.Size=UDim2.new(1,0,0,70); e.TextXAlignment=Enum.TextXAlignment.Center
+            e.TextWrapped=true; e.ZIndex=302
+        end
+        -- tombol refresh
+        local refBtn=mk("TextButton",{Size=UDim2.new(1,-4,0,30),BackgroundColor3=C.card,
+            Text="🔄  Refresh (getgc ulang)",Font=FONT_B,TextSize=11,TextColor3=C.textDim,
+            AutoButtonColor=true,ZIndex=302,Parent=plist}); corner(refBtn,7)
+        refBtn.MouseButton1Click:Connect(function()
+            refBtn.Text="loading..."; refBtn.TextColor3=C.accent
+            task.spawn(function()
+                pcall(function() _kgContainer=findMemoryContainer() end)
+                task.wait(0.5)
+                refresh(psrch.Text)
+            end)
+        end)
+    end
+    refresh("")
+    psrch:GetPropertyChangedSignal("Text"):Connect(function() refresh(psrch.Text) end)
+    ov.InputBegan:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1 then
+            local m=inp.Position; local ap,sz=pk.AbsolutePosition,pk.AbsoluteSize
+            if m.X<ap.X or m.X>ap.X+sz.X or m.Y<ap.Y or m.Y>ap.Y+sz.Y then ov:Destroy() end
+        end
+    end)
+end
+
+-- ===================== LINEUP RENDER =====================
+local function renderLineup(sesiNum, defs)
+    local holder=lineupHolders[sesiNum]; if not holder then return end
+    for _,c in ipairs(holder:GetChildren()) do
+        if c:IsA("Frame") or c:IsA("TextButton") then c:Destroy() end
+    end
+    local pool=sesiPool[sesiNum] or {}
+    local order=0
+    for _,sup in ipairs(defs) do
+        local nm=sup.nama; local col=petCol(nm)
+        for i=1,sup.jml do
+            order=order+1
+            local entry=(pool[nm] or {})[i]
+            local card=mk("TextButton",{BackgroundColor3=C.card,Text="",AutoButtonColor=true,
+                LayoutOrder=order,Parent=holder}); corner(card,10)
+            stroke(card, entry and col or C.border, entry and 1.5 or 1)
+            mk("Frame",{Size=UDim2.new(0,3,1,-14),Position=UDim2.new(0,0,0,7),
+                BackgroundColor3=col,BorderSizePixel=0,Parent=card}); -- accent bar
+            local shortNm=nm:gsub("Mimic Octopus","M.Oct"):gsub("T%-Rex","T-Rex")
+            local tyL=lbl(card,shortNm,9,col); tyL.Font=FONT_B
+            tyL.Position=UDim2.new(0,10,0,7); tyL.Size=UDim2.new(1,-14,0,12)
+            if entry then
+                -- nama pet (fullName / tipe)
+                local pnL=lbl(card,tostring(entry.fullName or nm):gsub("Rainbow ",""):gsub("Choc ",""),11,C.text)
+                pnL.Font=FONT_B; pnL.Position=UDim2.new(0,10,0,21); pnL.Size=UDim2.new(1,-12,0,18)
+                pnL.TextTruncate=Enum.TextTruncate.AtEnd
+                -- kg dan age live dari container
+                local liveData=_kgContainer and _kgContainer[entry.uuid]
+                local livePD=type(liveData)=="table" and liveData.PetData or nil
+                local liveAge=livePD and tonumber(livePD.Level) or entry.age or 0
+                local liveBW=livePD and tonumber(livePD.BaseWeight) or 0
+                local liveKg=liveBW>0 and liveBW*(liveAge+10)/10 or (entry.kg or 0)
+                local kgStr=liveKg>0 and string.format("%.1fkg",liveKg) or "? kg"
+                local ageL=lbl(card,kgStr.."  age "..(liveAge>0 and tostring(liveAge) or "?"),10,col)
+                ageL.Position=UDim2.new(0,10,0,39); ageL.Size=UDim2.new(1,-14,0,14)
+            else
+                local plusL=lbl(card,"+ pilih",12,C.textDim)
+                plusL.Position=UDim2.new(0,10,0,24); plusL.Size=UDim2.new(1,-14,0,20)
+            end
+            card.MouseButton1Click:Connect(function()
+                openPetPicker(sesiNum, nm, i, function(p)
+                    if not sesiPool[sesiNum][nm] then sesiPool[sesiNum][nm]={} end
+                    sesiPool[sesiNum][nm][i]=p
+                    renderLineup(sesiNum, defs)
+                    savePoolFile()  -- persist ke file biar survive rejoin
+                end)
+            end)
+        end
+    end
+end
+
+-- ===================== AUTO LVL TAB =====================
+sectionHeader(cfgScroll,"• STATUS",1)
+
+local progCountLbl,progPctLbl,progFill,sesiStatL,nmKebunL,shovelL,maxInvL,sesiBL,sesiInfoL
+local age500plusL,age500minusL,bahanAgeL,totalPetL
+do
+    local progCard=mk("Frame",{Size=UDim2.new(1,0,0,66),BackgroundColor3=C.card,BorderSizePixel=0,
+        LayoutOrder=2,Parent=cfgScroll}); corner(progCard,10); stroke(progCard,C.border,1)
+    local pTopLbl=lbl(progCard,"NIGHTMARE COLLECTED",11,C.textMute)
+    pTopLbl.Position=UDim2.new(0,14,0,10); pTopLbl.Size=UDim2.new(0.6,0,0,14)
+    progCountLbl=lbl(progCard,"0 / 2500",14,C.text,Enum.TextXAlignment.Right)
+    progCountLbl.Font=FONT_B; progCountLbl.Position=UDim2.new(1,-106,0,8); progCountLbl.Size=UDim2.new(0,92,0,18)
+    progPctLbl=lbl(progCard,"0%",14,C.accent,Enum.TextXAlignment.Right)
+    progPctLbl.Font=FONT_B; progPctLbl.Position=UDim2.new(1,-106,0,28); progPctLbl.Size=UDim2.new(0,92,0,14)
+    local progBg=mk("Frame",{Size=UDim2.new(1,-28,0,5),Position=UDim2.new(0,14,0,50),
+        BackgroundColor3=C.input,BorderSizePixel=0,Parent=progCard}); corner(progBg,3)
+    progFill=mk("Frame",{Size=UDim2.new(0,0,1,0),BackgroundColor3=C.accent,BorderSizePixel=0,Parent=progBg}); corner(progFill,3)
+    local statRow=mk("Frame",{Size=UDim2.new(1,0,0,52),BackgroundTransparency=1,LayoutOrder=3,Parent=cfgScroll})
+    mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,6),Parent=statRow})
+    local function statMini(parent,val,sub,col)
+        local c=mk("Frame",{Size=UDim2.new(0.25,-5,1,0),BackgroundColor3=C.card,BorderSizePixel=0,Parent=parent})
+        corner(c,10); stroke(c,C.border,1)
+        local v=lbl(c,val,18,col or C.text,Enum.TextXAlignment.Left); v.Font=FONT_B
+        v.Position=UDim2.new(0,9,0,7); v.Size=UDim2.new(1,-9,0,22)
+        local s=lbl(c,sub,9,C.textMute); s.Position=UDim2.new(0,9,0,31); s.Size=UDim2.new(1,-9,0,14)
+        return v
+    end
+    sesiStatL=statMini(statRow,"1","SESI",C.accent)
+    nmKebunL=statMini(statRow,"0","KEBUN",C.text)
+    shovelL=statMini(statRow,"0","MUTASI",C.textDim)
+    maxInvL=statMini(statRow,"—","MAX INV",C.textDim)
+    -- Row 2: age 500+ / age 500- / bahan age
+    local statRow2=mk("Frame",{Size=UDim2.new(1,0,0,52),BackgroundTransparency=1,LayoutOrder=4,Parent=cfgScroll})
+    mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,6),Parent=statRow2})
+    local function statMini2(parent,val,sub,col,w)
+        local c=mk("Frame",{Size=UDim2.new(w or 0.333,-5,1,0),BackgroundColor3=C.card,BorderSizePixel=0,Parent=parent})
+        corner(c,10); stroke(c,C.border,1)
+        local v=lbl(c,val,18,col or C.text,Enum.TextXAlignment.Left); v.Font=FONT_B
+        v.Position=UDim2.new(0,9,0,7); v.Size=UDim2.new(1,-9,0,22)
+        local s=lbl(c,sub,9,C.textMute); s.Position=UDim2.new(0,9,0,31); s.Size=UDim2.new(1,-9,0,14)
+        return v
+    end
+    age500plusL  = statMini2(statRow2,"0","AGE 500+", C.text)
+    age500minusL = statMini2(statRow2,"0","AGE 500-", C.text)
+    bahanAgeL    = statMini2(statRow2,"—","BAHAN AGE", C.text)
+    totalPetL    = statMini2(statRow2,"—","TOTAL PET", C.text)
+    totalPetL.RichText = true  -- enable RichText agar bisa warnai "/220" abu-abu
+    -- background loop: update stat age 500 + total pet tiap 5 detik (tidak tunggu sesi jalan)
+    task.spawn(function()
+        while true do
+            task.wait(5)
+            pcall(function()
+                local c = _kgContainer
+                local plus, minus, total = 0, 0, 0
+                if c then
+                    for _, entry in pairs(c) do
+                        if type(entry) == "table" and entry.PetData then
+                            total = total + 1
+                            local lv = tonumber(entry.PetData.Level) or 0
+                            if lv >= 500 then plus = plus + 1 else minus = minus + 1 end
+                        end
+                    end
+                end
+                age500plusL.Text  = tostring(plus)
+                age500minusL.Text = tostring(minus)
+                if _bahanUuid then
+                    local ba = getAgeFallback(_bahanUuid)
+                    bahanAgeL.Text = tostring(ba)
+                else
+                    bahanAgeL.Text = "—"
+                end
+                -- TOTAL PET / MAX INVENTORY:
+                -- Prioritas 1: baca dari _G.ZenxKgStat (up6kg sudah jalan -> akurat)
+                local kgSt = _G.ZenxKgStat
+                local totalAll = (kgSt and tonumber(kgSt.totalAll)) or total
+                local maxInvKg = (kgSt and tonumber(kgSt.maxInv))
+                -- Prioritas 2: hitung max inventory sendiri (cek UI game "Pet Items (X/Y)" dulu)
+                if not maxInvKg or maxInvKg <= 0 then
+                    if not _G.__ZenxMaxPetCache or (tick() - (_G.__ZenxMaxPetTime or 0)) > 30 then
+                        local maxUI = nil
+                        pcall(function()
+                            local pg = plr:FindFirstChild("PlayerGui")
+                            if pg then
+                                for _, d in ipairs(pg:GetDescendants()) do
+                                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
+                                        local low = d.Text:lower()
+                                        if low:find("pet") and low:find("item") then
+                                            local a, b = d.Text:match("(%d+)%s*/%s*(%d+)")
+                                            if a and b then
+                                                a, b = tonumber(a), tonumber(b)
+                                                if a and b and b > 0 and math.abs(a - totalAll) <= 15 then
+                                                    maxUI = b; break
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                        -- fallback getgc cari MaxPetsInInventory (tally MODE, mirip up6kg)
+                        if not maxUI and getgc then
+                            local tally = {}
+                            local floor = math.max(0, totalAll - 5)
+                            pcall(function()
+                                for _, obj in ipairs(getgc(true)) do
+                                    if type(obj) == "table" then
+                                        local mp = rawget(obj, "MaxPetsInInventory")
+                                        if type(mp) == "number" and mp > 0
+                                            and rawget(obj, "MaxEggsInFarm") ~= nil
+                                            and rawget(obj, "MaxEquippedPets") ~= nil
+                                            and mp >= floor then
+                                            tally[mp] = (tally[mp] or 0) + 1
+                                        end
+                                    end
+                                end
+                            end)
+                            local bestN, bestV = 0, nil
+                            for v, n in pairs(tally) do
+                                if n > bestN or (n == bestN and (not bestV or v < bestV)) then
+                                    bestV = v; bestN = n
+                                end
+                            end
+                            maxUI = bestV
+                        end
+                        _G.__ZenxMaxPetCache = maxUI or _G.__ZenxMaxPetCache
+                        _G.__ZenxMaxPetTime  = tick()
+                    end
+                    maxInvKg = _G.__ZenxMaxPetCache
+                end
+                -- tampilkan: "170/220" — /220 berwarna abu-abu
+                if maxInvKg and maxInvKg > 0 then
+                    totalPetL.Text = string.format("%d<font color='#555555'>/%d</font>", totalAll, maxInvKg)
+                else
+                    totalPetL.Text = tostring(totalAll)
+                end
+            end)
+        end
+    end)
+    -- v8.120: LAPOR STAT ke panel -- tulis zenx_upkgstat_<akun>.json tiap 15s (worker baca -> /upkgstat-batch -> panel)
+    -- Format sama persis dengan uplevel supaya worker bisa baca tanpa perubahan
+    task.spawn(function()
+        while true do
+            pcall(function()
+                if not (plr and plr.Name and writefile) then return end
+                local c = _kgContainer
+                if not c then return end
+                local plus, minus, total = 0, 0, 0
+                local tipeUdah, tipeBelum = {}, {}
+                local petAgePlus, petAgeMinus = {}, {}
+                for _, entry in pairs(c) do
+                    if type(entry) == "table" and entry.PetData then
+                        total = total + 1
+                        local lv = tonumber(entry.PetData.Level) or 0
+                        local tipe = tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "")
+                        -- strip suffix "[Mutation]..." supaya nama bersih
+                        tipe = tipe:match("^(.-)%s*%[") or tipe
+                        tipe = tipe:gsub("%s+$", "")
+                        if lv >= 500 then
+                            plus = plus + 1
+                            if tipe ~= "" then tipeUdah[tipe] = (tipeUdah[tipe] or 0) + 1 end
+                            if tipe ~= "" then
+                                if not petAgePlus[tipe] then petAgePlus[tipe] = {} end
+                                local arr = petAgePlus[tipe]
+                                if #arr < 12 then arr[#arr+1] = lv end
+                            end
+                        else
+                            minus = minus + 1
+                            if tipe ~= "" then tipeBelum[tipe] = (tipeBelum[tipe] or 0) + 1 end
+                            if tipe ~= "" then
+                                if not petAgeMinus[tipe] then petAgeMinus[tipe] = {} end
+                                local arr = petAgeMinus[tipe]
+                                if #arr < 12 then arr[#arr+1] = lv end
+                            end
+                        end
+                    end
+                end
+                local maxInv = _G.__ZenxMaxPetCache or 0
+                -- helper json
+                local function jsonKV(tbl)
+                    local parts = {}
+                    for k, v in pairs(tbl or {}) do
+                        parts[#parts+1] = string.format("%q:%d", tostring(k), tonumber(v) or 0)
+                    end
+                    return "{" .. table.concat(parts, ",") .. "}"
+                end
+                local function jsonKVArr(tbl)
+                    local parts, n = {}, 0
+                    for k, arr in pairs(tbl or {}) do
+                        if n >= 60 then break end
+                        if type(arr) == "table" then
+                            local nums = {}
+                            for i = 1, 12 do nums[i] = tostring(tonumber(arr[i]) or 0) end
+                            parts[#parts+1] = string.format("%q:[%s]", tostring(k), table.concat(nums, ","))
+                            n = n + 1
+                        end
+                    end
+                    return "{" .. table.concat(parts, ",") .. "}"
+                end
+                -- bahan: tipe bahan yang sedang dipakai (ambil dari container via _bahanUuid)
+                local bahan = {}
+                if _bahanUuid and c then
+                    local e = c[fmtUUID(_bahanUuid)] or c[tostring(_bahanUuid)]
+                    if type(e) == "table" then
+                        local t = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+                        t = t:match("^(.-)%s*%[") or t; t = t:gsub("%s+$", "")
+                        if t ~= "" then bahan[1] = t end
+                    end
+                end
+                local bahanStr = ""
+                for i, b in ipairs(bahan) do bahanStr = bahanStr .. (i>1 and "," or "") .. string.format("%q", b) end
+                -- config label (preset uplevelnew)
+                local cfgLabel = tostring(_G.ZenxKgConfig or "uplevelnew")
+                local js = string.format(
+                    '{"akun":%q,"config":%q,"bahan":[%s],"total":%d,"udah":%d,"belum":%d,"totalAll":%d,"maxInv":%d,"tipeUdah":%s,"tipeBelum":%s,"petAgePlus":%s,"petAgeMinus":%s,"ts":%d}',
+                    plr.Name, cfgLabel, bahanStr,
+                    total, plus, minus,
+                    total, maxInv,
+                    jsonKV(tipeUdah), jsonKV(tipeBelum),
+                    jsonKVArr(petAgePlus), jsonKVArr(petAgeMinus),
+                    os.time())
+                writefile("zenx_upkgstat_" .. plr.Name .. ".json", js)
+            end)
+            task.wait(15)
+        end
+    end)
+
+    local sesiF=mk("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.card,BorderSizePixel=0,
+        LayoutOrder=5,Parent=cfgScroll}); corner(sesiF,10); stroke(sesiF,C.accent,1)
+    local sesiBadge=mk("Frame",{Size=UDim2.new(0,60,0,22),Position=UDim2.new(0,12,0.5,-11),
+        BackgroundColor3=C.cardSel,BorderSizePixel=0,Parent=sesiF}); corner(sesiBadge,6)
+    sesiBL=lbl(sesiBadge,"SESI 1",10,C.accent,Enum.TextXAlignment.Center)
+    sesiBL.Font=FONT_B; sesiBL.Size=UDim2.new(1,0,1,0)
+    sesiInfoL=lbl(sesiF,"leveling — kumpul nightmare",11.5,C.text)
+    sesiInfoL.Position=UDim2.new(0,80,0,0); sesiInfoL.Size=UDim2.new(1,-90,1,0)
+end
+
+-- ===================== TAB SESI (pill toggle) =====================
+sectionHeader(cfgScroll,"• LINEUP PET",5)
+
+local sesiTabRow=mk("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.input,BorderSizePixel=0,
+    LayoutOrder=6,Parent=cfgScroll}); corner(sesiTabRow,9)
+local tabW = 1/4
+local s1Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(0,3,0,3),
+    BackgroundColor3=C.accent,Text="SESI 1",Font=FONT_B,TextSize=10,
+    TextColor3=Color3.fromRGB(0,0,0),AutoButtonColor=false,Parent=sesiTabRow}); corner(s1Tab,7)
+local s2Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW,0,0,3),
+    BackgroundColor3=C.card,Text="SESI 2",Font=FONT_B,TextSize=10,
+    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow}); corner(s2Tab,7)
+local s3Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW*2,0,0,3),
+    BackgroundColor3=C.card,Text="CAD. 1",Font=FONT_B,TextSize=10,
+    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow}); corner(s3Tab,7)
+local s4Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW*3,0,0,3),
+    BackgroundColor3=C.card,Text="CAD. 2",Font=FONT_B,TextSize=10,
+    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow}); corner(s4Tab,7)
+
+local s1Holder=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
+    BackgroundTransparency=1,LayoutOrder=7,Parent=cfgScroll})
+mk("UIGridLayout",{CellSize=UDim2.new(0.5,-4,0,62),CellPadding=UDim2.new(0,8,0,8),
+    SortOrder=Enum.SortOrder.LayoutOrder,Parent=s1Holder})
+lineupHolders[1]=s1Holder
+
+local s2Holder=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
+    BackgroundTransparency=1,LayoutOrder=7,Visible=false,Parent=cfgScroll})
+mk("UIGridLayout",{CellSize=UDim2.new(0.5,-4,0,62),CellPadding=UDim2.new(0,8,0,8),
+    SortOrder=Enum.SortOrder.LayoutOrder,Parent=s2Holder})
+lineupHolders[2]=s2Holder
+
+local s3Holder=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
+    BackgroundTransparency=1,LayoutOrder=7,Visible=false,Parent=cfgScroll})
+mk("UIGridLayout",{CellSize=UDim2.new(0.5,-4,0,62),CellPadding=UDim2.new(0,8,0,8),
+    SortOrder=Enum.SortOrder.LayoutOrder,Parent=s3Holder})
+lineupHolders[3]=s3Holder
+
+local s4Holder=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
+    BackgroundTransparency=1,LayoutOrder=7,Visible=false,Parent=cfgScroll})
+mk("UIGridLayout",{CellSize=UDim2.new(0.5,-4,0,62),CellPadding=UDim2.new(0,8,0,8),
+    SortOrder=Enum.SortOrder.LayoutOrder,Parent=s4Holder})
+lineupHolders[4]=s4Holder
+
+-- baris bawah lineup: Auto Isi Semua + Reset Pool
+local btnRowBot=mk("Frame",{Size=UDim2.new(1,0,0,32),BackgroundTransparency=1,LayoutOrder=8,Parent=cfgScroll})
+mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder,Parent=btnRowBot})
+local autoIsiBtn=mk("TextButton",{Size=UDim2.new(0.65,-3,1,0),BackgroundColor3=C.card,
+    Text="⚡  Auto Isi Semua (rejoin)",Font=FONT_B,TextSize=11,TextColor3=C.textDim,
+    AutoButtonColor=false,LayoutOrder=1,Parent=btnRowBot}); corner(autoIsiBtn,8); stroke(autoIsiBtn,C.border,1)
+local resetPoolBtn=mk("TextButton",{Size=UDim2.new(0.35,-3,1,0),BackgroundColor3=C.card,
+    Text="🗑  Reset Semua",Font=FONT_B,TextSize=11,TextColor3=Color3.fromRGB(220,80,80),
+    AutoButtonColor=false,LayoutOrder=2,Parent=btnRowBot}); corner(resetPoolBtn,8); stroke(resetPoolBtn,Color3.fromRGB(80,30,30),1)
+
+local function setLineupTab(sesiNum)
+    local tabs={s1Tab,s2Tab,s3Tab,s4Tab}; local holders={s1Holder,s2Holder,s3Holder,s4Holder}
+    for i,tab in ipairs(tabs) do
+        local on=(i==sesiNum)
+        tab.BackgroundColor3=on and C.accent or C.card
+        tab.TextColor3=on and Color3.fromRGB(0,0,0) or C.textDim
+        holders[i].Visible=on
+    end
+end
+s1Tab.MouseButton1Click:Connect(function() setLineupTab(1) end)
+s2Tab.MouseButton1Click:Connect(function() setLineupTab(2) end)
+s3Tab.MouseButton1Click:Connect(function() setLineupTab(3) end)
+s4Tab.MouseButton1Click:Connect(function() setLineupTab(4) end)
+
+-- Auto Isi Semua: pilih pet terbaik (kg terbesar) per tipe untuk semua sesi sekaligus
+-- Berguna setelah rejoin — 1 klik langsung semua slot terisi tanpa pilih manual
+local function autoIsiSemua()
+    local all=listPetsAll()
+    table.sort(all,function(a,b) return (a.kg or 0)>(b.kg or 0) end)
+    addLog("AutoIsi: total pet="..#all)
+    -- clear semua pool dulu
+    for k in pairs(sesiPool[1]) do sesiPool[1][k]=nil end
+    for k in pairs(sesiPool[2]) do sesiPool[2][k]=nil end
+    for k in pairs(sesiPool[3]) do sesiPool[3][k]=nil end
+    for k in pairs(sesiPool[4]) do sesiPool[4][k]=nil end
+    -- uuid global yang sudah dipakai (satu pet tidak boleh di dua sesi sekaligus)
+    local usedGlobal={}
+    local function isiSesi(sesiNum, defs)
+        for _,sup in ipairs(defs) do
+            local nm=sup.nama
+            local count=0
+            for _,p in ipairs(all) do
+                if count>=sup.jml then break end
+                -- cocokkan tipe: exact match ATAU tipe ada di fullName (buat jaga-jaga case beda)
+                local uuidStr=tostring(p.uuid)
+                local tipeMatch = (p.tipe==nm) or
+                    (p.fullName and p.fullName:find(nm,1,true) ~= nil)
+                if tipeMatch and not usedGlobal[uuidStr] then
+                    if not sesiPool[sesiNum][nm] then sesiPool[sesiNum][nm]={} end
+                    count=count+1
+                    sesiPool[sesiNum][nm][count]={uuid=p.uuid, tipe=p.tipe, kg=p.kg}
+                    usedGlobal[uuidStr]=true
+                end
+            end
+            addLog("AutoIsi S"..sesiNum.." "..nm..": "..count.."/"..sup.jml)
+        end
+    end
+    isiSesi(1,SESI1_DEF); isiSesi(2,SESI2_DEF)
+    isiSesi(3,SESI_CADANGAN_DEF); isiSesi(4,SESI_CADANGAN2_DEF)
+    savePoolFile()  -- persist ke file biar survive rejoin
+    -- re-render semua tab
+    renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
+    renderLineup(3,SESI_CADANGAN_DEF); renderLineup(4,SESI_CADANGAN2_DEF)
+end
+local _autoIsiBusy=false
+autoIsiBtn.MouseButton1Click:Connect(function()
+    if _autoIsiBusy then return end  -- guard: jangan spawn ganda
+    _autoIsiBusy=true
+    autoIsiBtn.Text="⌛  mengisi..."; autoIsiBtn.TextColor3=C.textDim
+    task.spawn(function()
+        -- tunggu container load dulu (max 8s) — kalau container nil, kg semua 0 dan sort sia-sia
+        if not _kgContainer then
+            autoIsiBtn.Text="⌛  tunggu data kg..."
+            local t0=tick()
+            while not _kgContainer and tick()-t0 < 8 do task.wait(0.3) end
+            if not _kgContainer then
+                autoIsiBtn.Text="⚠  data kg belum ada!"; autoIsiBtn.TextColor3=Color3.fromRGB(220,80,80)
+                task.delay(3,function()
+                    autoIsiBtn.TextColor3=C.textDim; autoIsiBtn.Text="⚡  Auto Isi Semua (rejoin)"
+                end)
+                _autoIsiBusy=false
+                return
+            end
+        end
+        autoIsiSemua()
+        _autoIsiBusy=false
+        autoIsiBtn.TextColor3=C.accent; autoIsiBtn.Text="✓  Semua terisi!"
+        task.delay(2.5,function()
+            autoIsiBtn.TextColor3=C.textDim; autoIsiBtn.Text="⚡  Auto Isi Semua (rejoin)"
+        end)
+    end)
+end)
+-- AUTO ISI saat startup kalau pool kosong (fresh execute / rejoin + file kosong)
+if _poolKosong then
+    task.spawn(function()
+        -- tunggu container load dulu (max 15s)
+        local t0 = tick()
+        while not _kgContainer and tick() - t0 < 15 do task.wait(0.5) end
+        autoIsiSemua()
+        addLog("AutoIsi startup: pool kosong -> auto-pick kg terbesar")
+    end)
+end
+
+-- reset SEMUA pool — bersihkan pool (uuid jadi kosong, pilih manual lagi)
+resetPoolBtn.MouseButton1Click:Connect(function()
+    for k in pairs(sesiPool[1]) do sesiPool[1][k]=nil end
+    for k in pairs(sesiPool[2]) do sesiPool[2][k]=nil end
+    for k in pairs(sesiPool[3]) do sesiPool[3][k]=nil end
+    for k in pairs(sesiPool[4]) do sesiPool[4][k]=nil end
+    savePoolFile()  -- bersihkan file juga
+    renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
+    renderLineup(3,SESI_CADANGAN_DEF); renderLineup(4,SESI_CADANGAN2_DEF)
+    resetPoolBtn.Text="✓  Reset!"; resetPoolBtn.TextColor3=C.accent
+    task.delay(2,function() resetPoolBtn.Text="🗑  Reset Semua"; resetPoolBtn.TextColor3=Color3.fromRGB(220,80,80) end)
+end)
+
+-- ===================== KONTROL =====================
+sectionHeader(cfgScroll,"• KONTROL",9)
+local swRow,setSw,_getSw,swEv=makeSwitch(cfgScroll,"AUTO LVL — START",10,false)
+local swLbl=swRow:FindFirstChildWhichIsA("TextLabel")
+
+local statusCard=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.card,BorderSizePixel=0,
+    LayoutOrder=11,Parent=cfgScroll}); corner(statusCard,8); stroke(statusCard,C.border,1)
+local statusLbl=lbl(statusCard,"Status: Idle",12,C.textMute)
+statusLbl.Position=UDim2.new(0,12,0,0); statusLbl.Size=UDim2.new(1,-12,1,0)
+
+-- ===================== KONFIGURASI =====================
+sectionHeader(cfgScroll,"• KONFIGURASI",12)
+local function cfgInputRow(parent,label,defVal,lo,onChanged)
+    local r=mk("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.panel,BorderSizePixel=0,
+        LayoutOrder=lo or 0,Parent=parent}); corner(r,6); stroke(r,C.border,1)
+    local lt=lbl(r,label,12,C.text); lt.Position=UDim2.new(0,14,0,0); lt.Size=UDim2.new(0.55,0,1,0)
+    local box=mk("TextBox",{Size=UDim2.new(0,100,0,24),Position=UDim2.new(1,-108,0.5,-12),
+        BackgroundColor3=C.input,Text=tostring(defVal),Font=FONT_B,TextSize=14,
+        TextColor3=C.accent,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=r})
+    corner(box,5); stroke(box,C.border,1)
+    box:GetPropertyChangedSignal("Text"):Connect(function() local n=tonumber(box.Text); if n and onChanged then onChanged(n) end end)
+    return box
+end
+cfgInputRow(cfgScroll,"Target Nightmare",CFG.nightmareTarget,13,function(n) if n>0 then CFG.nightmareTarget=math.floor(n) end end)
+cfgInputRow(cfgScroll,"Loop interval (detik)",CFG.loopWait,14,function(n) if n>=1 then CFG.loopWait=n end end)
+cfgInputRow(cfgScroll,"Bahan max age (unequip)",CFG.bahanMaxAge,15,function(n) if n>0 then CFG.bahanMaxAge=math.floor(n) end end)
+
+-- initial render
+renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
+renderLineup(3,SESI_CADANGAN_DEF); renderLineup(4,SESI_CADANGAN2_DEF); setLineupTab(1)
+
+-- ===================== MISC TAB =====================
+local _psRunning,_psSelectedSeed,_psTarget,_psPopupOpen,countSeedInGarden,getSeedsInBackpack
+_psRunning=true; _psSelectedSeed="Blueberry"; _psTarget=800; _psPopupOpen=false
+do
+sectionHeader(miscScroll,"• REJOIN",1)
+local rejNow=mk("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.cardSel,
+    Text="REJOIN NOW",Font=FONT_B,TextSize=13,TextColor3=C.accent,
+    AutoButtonColor=false,LayoutOrder=2,Parent=miscScroll}); corner(rejNow,8); stroke(rejNow,C.accent,1.5)
+rejNow.MouseButton1Click:Connect(function()
+    pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId,plr) end)
+end)
+local presetRow=mk("Frame",{Size=UDim2.new(1,0,0,34),BackgroundTransparency=1,LayoutOrder=3,Parent=miscScroll})
+mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder,Parent=presetRow})
+for i,mins in ipairs({10,20,30,45,60}) do
+    local pb=mk("TextButton",{Size=UDim2.new(0,0,1,0),AutomaticSize=Enum.AutomaticSize.X,
+        BackgroundColor3=C.card,Text=" "..mins.."m ",Font=FONT_B,TextSize=12,TextColor3=C.textDim,
+        AutoButtonColor=false,LayoutOrder=i,Parent=presetRow}); corner(pb,7); stroke(pb,C.border,1)
+    pb.MouseButton1Click:Connect(function()
+        task.delay(mins*60,function() pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId,plr) end) end)
+        pb.TextColor3=C.accent
+    end)
+end
+sectionHeader(miscScroll,"• TOOLS",4)
+-- Unfav Semua Buah: sekali pencet langsung fire UnfavoriteAllPlants, pencet lagi untuk ulang
+local unfavAllRE = game:GetService("ReplicatedStorage"):WaitForChild("GameEvents",10):FindFirstChild("UnfavoriteAllPlants")
+local unfavBtn=mk("TextButton",{
+    Size=UDim2.new(1,0,0,36),BackgroundColor3=C.card,BorderSizePixel=0,
+    Text="★  Unfav Semua Buah",Font=FONT_B,TextSize=13,
+    TextColor3=C.accent,AutoButtonColor=false,LayoutOrder=5,Parent=miscScroll})
+corner(unfavBtn,8); stroke(unfavBtn,C.border,1.5)
+unfavBtn.MouseButton1Click:Connect(function()
+    if not unfavAllRE then
+        unfavAllRE=game:GetService("ReplicatedStorage").GameEvents:FindFirstChild("UnfavoriteAllPlants")
+    end
+    if unfavAllRE then
+        pcall(function() unfavAllRE:FireServer() end)
+        unfavBtn.Text="✓  Unfav Semua Buah (done)"
+        unfavBtn.TextColor3=Color3.fromRGB(100,220,100)
+        task.delay(2, function()
+            unfavBtn.Text="★  Unfav Semua Buah"
+            unfavBtn.TextColor3=C.accent
+        end)
+    else
+        unfavBtn.Text="✕  RE tidak ditemukan!"
+        unfavBtn.TextColor3=C.danger
+        task.delay(2,function() unfavBtn.Text="★  Unfav Semua Buah"; unfavBtn.TextColor3=C.accent end)
+    end
+end)
+
+sectionHeader(miscScroll,"• PLANT SEED",5)
+
+-- state plant seed (declared above do block)
+-- forward ref countSeedInGarden — diisi setelah getPlayerFarm tersedia
+
+-- getSeedsInBackpack: scan backpack cari Tool seed (tidak butuh getPlayerFarm, bisa di sini)
+-- Returns list of {display=tool.Name, seedType=SeedAttr, count=Quantity}
+-- seedType adalah nilai attr "Seed" (mis. "Watermelon") — ini yang dipakai FireServer & countSeedInGarden
+getSeedsInBackpack = function()
+    local result = {}
+    -- key = seedType (attr Seed value), value = entry tabel
+    local seen = {}
+    -- kumpulkan semua tool: Backpack + Character (tool yang sedang dipegang/equipped)
+    local sources = {}
+    local bp = plr:FindFirstChild("Backpack")
+    if bp then for _,t in ipairs(bp:GetChildren()) do table.insert(sources,t) end end
+    local char = plr.Character
+    if char then for _,t in ipairs(char:GetChildren()) do table.insert(sources,t) end end
+
+    for _,tool in ipairs(sources) do
+        if tool:IsA("Tool") then
+            -- prioritas: attr "Seed" (GAG1 confirmed), fallback attr lain, fallback name match
+            local seedAttr = tool:GetAttribute("Seed") or tool:GetAttribute("SeedType")
+                          or tool:GetAttribute("PlantType") or tool:GetAttribute("SeedTool")
+            local nm = tool.Name
+            if not seedAttr then
+                -- fallback: cek name mengandung "seed"
+                if nm:lower():find("seed") then
+                    -- ekstrak nama plant dari tool name mis. "Watermelon Seed [X39]" -> "Watermelon"
+                    seedAttr = nm:match("^(.-)%s*[Ss]eed") or nm
+                end
+            end
+            if seedAttr and type(seedAttr) == "string" then
+                -- normalize seedAttr jadi string yang bersih
+                seedAttr = tostring(seedAttr)
+                -- Quantity dari attr (GAG1 confirmed), fallback stacking counter
+                local qty = tool:GetAttribute("Quantity") or tool:GetAttribute("Amount") or 1
+                if type(qty) ~= "number" then qty = 1 end
+                -- key = seedType supaya berbeda Quantity stacking tetap satu entry
+                local key = seedAttr
+                if not seen[key] then
+                    seen[key] = {display=nm, seedType=seedAttr, count=0}
+                    table.insert(result, seen[key])
+                end
+                -- kalau ada Quantity attr, pakai qty; kalau tidak, +1 per tool instance
+                if tool:GetAttribute("Quantity") or tool:GetAttribute("Amount") then
+                    -- seed dengan Quantity attr: pakai nilai attr (bisa X39 dll)
+                    seen[key].count = seen[key].count + qty
+                    -- update display name ke tool name yang paling baru (biasanya sama)
+                    seen[key].display = nm
+                else
+                    seen[key].count = seen[key].count + 1
+                end
+            end
+        end
+    end
+    -- sort: Blueberry selalu atas, sisanya A-Z
+    table.sort(result, function(a, b)
+        local aB = a.seedType:lower() == "blueberry"
+        local bB = b.seedType:lower() == "blueberry"
+        if aB ~= bB then return aB end
+        return a.seedType:lower() < b.seedType:lower()
+    end)
+    return result
+end
+
+end -- MISC TAB do block
+
+-- ===================== POPUP SEED PICKER =====================
+-- popup frame (overlay di atas GUI utama)
+-- parent ke `gui` (ScreenGui ZenxUpLevel) — didefinisikan sebelum UI block ini
+local psPopup = mk("Frame",{
+    Size=UDim2.new(0,220,0,280),
+    Position=UDim2.new(0.5,-110,0.5,-140),
+    BackgroundColor3=C.bg, BorderSizePixel=0, Visible=false, ZIndex=50,
+    Parent=gui
+})
+corner(psPopup,12); stroke(psPopup,C.accent,2)
+
+local psPopupTitle=lbl(psPopup,"Pilih Seed",13,C.text,Enum.TextXAlignment.Center)
+psPopupTitle.Size=UDim2.new(1,0,0,32); psPopupTitle.Position=UDim2.new(0,0,0,0)
+psPopupTitle.Font=FONT_B; psPopupTitle.ZIndex=51
+
+local psCloseBtn=mk("TextButton",{
+    Size=UDim2.new(0,28,0,28),Position=UDim2.new(1,-32,0,2),
+    BackgroundTransparency=1,Text="✕",Font=FONT_B,TextSize=14,
+    TextColor3=C.textDim,AutoButtonColor=false,ZIndex=51,Parent=psPopup})
+
+local psScrollPop=mk("ScrollingFrame",{
+    Size=UDim2.new(1,-8,1,-36),Position=UDim2.new(0,4,0,34),
+    BackgroundTransparency=1,ScrollBarThickness=3,
+    ScrollBarImageColor3=C.border,CanvasSize=UDim2.new(0,0,0,0),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=51, Parent=psPopup})
+mk("UIListLayout",{Padding=UDim.new(0,3),SortOrder=Enum.SortOrder.LayoutOrder,Parent=psScrollPop})
+mk("UIPadding",{PaddingLeft=UDim.new(0,4),PaddingRight=UDim.new(0,4),PaddingTop=UDim.new(0,2),Parent=psScrollPop})
+
+local psSeedNameLbl  -- label nama seed yang dipilih (di card utama)
+local psKebunLbl     -- label jumlah di kebun (di card utama)
+
+local function closePopup()
+    psPopup.Visible = false; _psPopupOpen = false
+end
+local function openPopup()
+    -- kosongkan dulu
+    for _,c2 in ipairs(psScrollPop:GetChildren()) do
+        if c2:IsA("TextButton") or c2:IsA("Frame") then c2:Destroy() end
+    end
+    local seeds = getSeedsInBackpack()
+    if #seeds == 0 then
+        local empty=mk("TextLabel",{Size=UDim2.new(1,0,0,30),BackgroundTransparency=1,
+            Text="Tidak ada seed di backpack",TextColor3=C.textMute,Font=Enum.Font.Gotham,
+            TextSize=11,ZIndex=52,Parent=psScrollPop})
+        empty.TextWrapped=true
+    end
+    for i,s in ipairs(seeds) do
+        local row=mk("TextButton",{Size=UDim2.new(1,0,0,32),BackgroundColor3=C.card,
+            Text="",AutoButtonColor=false,LayoutOrder=i,ZIndex=52,Parent=psScrollPop})
+        corner(row,7)
+        -- highlight yang sedang dipilih (bandingkan seedType)
+        if _psSelectedSeed==s.seedType then stroke(row,C.accent,2) else stroke(row,C.border,1) end
+        -- tampilkan seedType (mis "Watermelon") agar lebih bersih, tapi bisa ganti s.display
+        local nameL=lbl(row,s.seedType,12,C.text)
+        nameL.Size=UDim2.new(0.7,0,1,0); nameL.Position=UDim2.new(0,10,0,0); nameL.ZIndex=53
+        local cntL=lbl(row,"×"..s.count,12,C.accent,Enum.TextXAlignment.Right)
+        cntL.Size=UDim2.new(0.3,-10,1,0); cntL.Position=UDim2.new(0.7,0,0,0); cntL.Font=FONT_B; cntL.ZIndex=53
+        row.MouseButton1Click:Connect(function()
+            -- simpan seedType (mis "Watermelon") bukan tool name penuh
+            _psSelectedSeed = s.seedType
+            pcall(function() psSeedNameLbl.Text=s.seedType end)
+            pcall(function() psKebunLbl.Text="kebun: ..." end)
+            -- update count di background (countSeedInGarden baru tersedia setelah getPlayerFarm)
+            task.spawn(function()
+                pcall(function() psKebunLbl.Text="kebun: "..countSeedInGarden(s.seedType) end)
+            end)
+            closePopup()
+        end)
+    end
+    psPopup.Visible = true; _psPopupOpen = true
+end
+psCloseBtn.MouseButton1Click:Connect(closePopup)
+
+-- ===================== CARD UTAMA PLANT SEED =====================
+local psCard=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
+    BackgroundColor3=C.card,BorderSizePixel=0,
+    LayoutOrder=5,Parent=miscScroll}); corner(psCard,10); stroke(psCard,C.border,1.5)
+mk("UIListLayout",{Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder,Parent=psCard})
+mk("UIPadding",{PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),PaddingTop=UDim.new(0,8),PaddingBottom=UDim.new(0,8),Parent=psCard})
+
+-- Row 1: Seed picker button + kebun count (absolute position, tidak pakai ListLayout)
+local psRow1=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundTransparency=1,LayoutOrder=1,Parent=psCard})
+local psLblSeed=lbl(psRow1,"Seed:",12,C.textDim)
+psLblSeed.Size=UDim2.new(0,38,1,0); psLblSeed.Position=UDim2.new(0,0,0,0)
+
+local psSeedPickBtn=mk("TextButton",{
+    Size=UDim2.new(1,-110,1,-2),Position=UDim2.new(0,42,0,1),
+    BackgroundColor3=C.cardSel,Text="— pilih seed —",Font=FONT_B,TextSize=11,
+    TextColor3=C.textDim,AutoButtonColor=false,Parent=psRow1})
+corner(psSeedPickBtn,6); stroke(psSeedPickBtn,C.border,1)
+psSeedNameLbl = psSeedPickBtn
+psSeedPickBtn.MouseButton1Click:Connect(function()
+    if _psPopupOpen then closePopup() else openPopup() end
+end)
+
+psKebunLbl=lbl(psRow1,"kebun: ?",11,C.textMute,Enum.TextXAlignment.Right)
+psKebunLbl.Size=UDim2.new(0,100,1,0); psKebunLbl.Position=UDim2.new(1,-102,0,0)
+
+-- Row 2: Target input (absolute)
+local psRow2=mk("Frame",{Size=UDim2.new(1,0,0,28),BackgroundTransparency=1,LayoutOrder=2,Parent=psCard})
+local psLblTarget=lbl(psRow2,"Target:",12,C.textDim)
+psLblTarget.Size=UDim2.new(0,52,1,0); psLblTarget.Position=UDim2.new(0,0,0,0)
+local psTargetBox=mk("TextBox",{
+    Size=UDim2.new(0,52,0,22),Position=UDim2.new(0,56,0.5,-11),
+    BackgroundColor3=C.cardSel,Text=tostring(_psTarget),Font=FONT_B,TextSize=13,
+    TextColor3=C.text,ClearTextOnFocus=false,Parent=psRow2})
+corner(psTargetBox,6); stroke(psTargetBox,C.border,1)
+psTargetBox.FocusLost:Connect(function()
+    local n=tonumber(psTargetBox.Text); if n and n>0 then _psTarget=math.floor(n) end
+    psTargetBox.Text=tostring(_psTarget)
+end)
+local psLblBiji=lbl(psRow2,"biji di kebun",12,C.textDim)
+psLblBiji.Size=UDim2.new(0,100,1,0); psLblBiji.Position=UDim2.new(0,114,0,0)
+
+-- Row 3: Toggle on/off
+local psToggleBtn=mk("TextButton",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.card,
+    Text="○  Auto Plant — OFF",Font=FONT_B,TextSize=13,TextColor3=C.textDim,
+    AutoButtonColor=false,LayoutOrder=3,Parent=psCard}); corner(psToggleBtn,7); stroke(psToggleBtn,C.border,1.5)
+
+local function updatePsToggleUI()
+    if _psRunning then
+        psToggleBtn.Text="●  Auto Plant — ON"
+        psToggleBtn.TextColor3=Color3.fromRGB(100,230,100)
+        psToggleBtn.BackgroundColor3=Color3.fromRGB(30,60,30)
+        stroke(psToggleBtn,Color3.fromRGB(80,200,80),1.5)
+    else
+        psToggleBtn.Text="○  Auto Plant — OFF"
+        psToggleBtn.TextColor3=C.textDim
+        psToggleBtn.BackgroundColor3=C.card
+        stroke(psToggleBtn,C.border,1.5)
+    end
+end
+
+psToggleBtn.MouseButton1Click:Connect(function()
+    if not _psSelectedSeed then
+        addLog("WARN: Pilih seed dulu lewat tombol seed")
+        return
+    end
+    _psRunning = not _psRunning
+    updatePsToggleUI()
+    addLog("Auto Plant "..((_psRunning) and "ON" or "OFF").." — "..((_psSelectedSeed) or "?"))
+end)
+
+-- Debug Plant Bounds: tampilin kotak merah batas Can_Plant + zona valid (margin 1)
+local _psDebugParts = {}
+local _psDebugOn = false
+
+local function clearPlantDebug()
+    for _,p in ipairs(_psDebugParts) do pcall(function() p:Destroy() end) end
+    _psDebugParts = {}
+end
+
+local function showPlantDebug()
+    clearPlantDebug()
+    pcall(function()
+        local farm = getPlayerFarm(); if not farm then addLog("Debug: farm tidak ditemukan"); return end
+        local canPlants = {}
+        for _,p in ipairs(farm:GetDescendants()) do
+            if p.Name == "Can_Plant" and p:IsA("BasePart") then
+                table.insert(canPlants, p)
+            end
+        end
+        if #canPlants == 0 then addLog("Debug: Can_Plant tidak ditemukan di farm"); return end
+        addLog("Debug plant bounds: "..#canPlants.." Can_Plant ditemukan")
+        local folder = Instance.new("Folder")
+        folder.Name = "_PlantDebug"
+        folder.Parent = workspace
+
+        for _,cp in ipairs(canPlants) do
+            -- Kotak LUAR (batas asli Can_Plant) — merah transparan
+            local outer = Instance.new("SelectionBox")
+            outer.Adornee = cp
+            outer.Color3 = Color3.fromRGB(255, 50, 50)
+            outer.LineThickness = 0.06
+            outer.SurfaceTransparency = 0.75
+            outer.SurfaceColor3 = Color3.fromRGB(255, 50, 50)
+            outer.Parent = folder
+            table.insert(_psDebugParts, outer)
+
+            -- Kotak DALAM (zona valid, margin 1 dari tiap sisi) — kuning
+            local p, s = cp.Position, cp.Size
+            local innerSX = math.max(s.X - 2, 0.5)
+            local innerSZ = math.max(s.Z - 2, 0.5)
+            local inner = Instance.new("Part")
+            inner.Anchored = true
+            inner.CanCollide = false
+            inner.CastShadow = false
+            inner.Transparency = 0.85
+            inner.Color = Color3.fromRGB(255, 220, 0)
+            inner.Size = Vector3.new(innerSX, 0.15, innerSZ)
+            inner.CFrame = CFrame.new(p.X, p.Y + 0.1, p.Z)
+            inner.Parent = folder
+            table.insert(_psDebugParts, inner)
+
+            -- Label nama part (BillboardGui)
+            local bb = Instance.new("BillboardGui")
+            bb.Size = UDim2.new(0, 160, 0, 36)
+            bb.StudsOffset = Vector3.new(0, 4, 0)
+            bb.AlwaysOnTop = true
+            bb.Adornee = cp
+            bb.Parent = folder
+            local lbl2 = Instance.new("TextLabel")
+            lbl2.Size = UDim2.new(1,0,1,0)
+            lbl2.BackgroundTransparency = 1
+            lbl2.Text = string.format("Can_Plant\n%.0f×%.0f → valid %.0f×%.0f", s.X, s.Z, innerSX, innerSZ)
+            lbl2.TextColor3 = Color3.new(1,1,1)
+            lbl2.TextStrokeTransparency = 0
+            lbl2.TextStrokeColor3 = Color3.new(0,0,0)
+            lbl2.Font = Enum.Font.GothamBold
+            lbl2.TextSize = 11
+            lbl2.TextWrapped = true
+            lbl2.Parent = bb
+            table.insert(_psDebugParts, bb)
+        end
+        table.insert(_psDebugParts, folder)
+    end)
+end
+
+-- Tombol Debug Plant Bounds
+local psDebugBtn = mk("TextButton",{
+    Size=UDim2.new(1,0,0,28), BackgroundColor3=C.card,
+    Text="🔴  Debug Plant Bounds — OFF", Font=FONT_B, TextSize=12,
+    TextColor3=C.textDim, AutoButtonColor=false, LayoutOrder=4, Parent=psCard
+})
+corner(psDebugBtn,7); stroke(psDebugBtn,C.border,1)
+psDebugBtn.MouseButton1Click:Connect(function()
+    _psDebugOn = not _psDebugOn
+    if _psDebugOn then
+        showPlantDebug()
+        psDebugBtn.Text = "🔴  Debug Plant Bounds — ON"
+        psDebugBtn.TextColor3 = Color3.fromRGB(255,100,100)
+        psDebugBtn.BackgroundColor3 = Color3.fromRGB(60,20,20)
+        stroke(psDebugBtn, Color3.fromRGB(200,60,60), 1.5)
+    else
+        clearPlantDebug()
+        psDebugBtn.Text = "🔴  Debug Plant Bounds — OFF"
+        psDebugBtn.TextColor3 = C.textDim
+        psDebugBtn.BackgroundColor3 = C.card
+        stroke(psDebugBtn, C.border, 1)
+    end
+end)
+
+-- ===================== END PLANT SEED UI =====================
+
+sectionHeader(miscScroll,"• OPSI",6)
+makeSwitch(miscScroll,"Auto Swap Skill",7,false); makeSwitch(miscScroll,"Auto Stop saat target",8,true)
+sectionHeader(miscScroll,"• INFO",7)
+local function infoR(t,v,lo)
+    local f=mk("Frame",{Size=UDim2.new(1,0,0,34),BackgroundColor3=C.card,BorderSizePixel=0,
+        LayoutOrder=lo or 0,Parent=miscScroll}); corner(f,8); stroke(f,C.border,1)
+    local lt=lbl(f,t,12,C.textDim); lt.Position=UDim2.new(0,12,0,0); lt.Size=UDim2.new(0.5,0,1,0)
+    local lv=lbl(f,v,13,C.text,Enum.TextXAlignment.Right); lv.Font=FONT_B
+    lv.Position=UDim2.new(0.5,0,0,0); lv.Size=UDim2.new(0.5,-10,1,0); return lv
+end
+infoR("Sesi 1","8 T-Rex (age≥500) / 7 M.Oct+1 T-Rex",8); infoR("Sesi 2","M.Oct×6 + Baku×1 + Bahan",9)
+infoR("Target","2500 nightmare",10); infoR("Loop interval","5 detik",11)
+
+-- ===================== LOG TAB =====================
+sectionHeader(logScroll,"• LOG",1)
+local logBg=mk("Frame",{Size=UDim2.new(1,0,0,300),BackgroundColor3=C.card,BorderSizePixel=0,
+    LayoutOrder=2,Parent=logScroll}); corner(logBg,10); stroke(logBg,C.border,1)
+local logBox=mk("TextLabel",{Size=UDim2.new(1,-16,1,-16),Position=UDim2.new(0,8,0,8),
+    BackgroundTransparency=1,Text="— menunggu mulai —",TextColor3=C.textMute,
+    Font=Enum.Font.Code,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,
+    TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Parent=logBg})
+local logBtnRow=mk("Frame",{Size=UDim2.new(1,0,0,34),BackgroundTransparency=1,LayoutOrder=3,Parent=logScroll})
+mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder,Parent=logBtnRow})
+local cpyBtn=mk("TextButton",{Size=UDim2.new(0.5,-4,1,0),BackgroundColor3=C.cardSel,
+    Text="COPY LOG",Font=FONT_B,TextSize=13,TextColor3=C.accent,AutoButtonColor=false,LayoutOrder=1,Parent=logBtnRow})
+corner(cpyBtn,8); stroke(cpyBtn,C.accent,1.5)
+local clrLogBtn=mk("TextButton",{Size=UDim2.new(0.5,-4,1,0),BackgroundColor3=C.card,
+    Text="CLEAR",Font=FONT_B,TextSize=13,TextColor3=C.textDim,AutoButtonColor=false,LayoutOrder=2,Parent=logBtnRow})
+corner(clrLogBtn,8); stroke(clrLogBtn,C.border,1)
+local sc_=setclipboard or toclipboard
+cpyBtn.MouseButton1Click:Connect(function()
+    pcall(function() if sc_ then sc_(logBox.Text) end end)
+    cpyBtn.Text="COPIED!"; task.delay(1.5,function() cpyBtn.Text="COPY LOG" end)
+end)
+
+-- ===================== DEBUG LOG (general) =====================
+sectionHeader(logScroll,"• DEBUG LOG",4)
+local function _cp(txt)
+    local fn=setclipboard or toclipboard
+        or (syn and syn.clipboard and syn.clipboard.set)
+        or (Clipboard and Clipboard.set)
+        or (cloneref and cloneref(game:GetService("CoreGui")) and nil)  -- just check
+    if fn then
+        local ok,err=pcall(fn,txt)
+        if ok then return true end
+    end
+    -- fallback: writefile ke output.txt supaya bisa dibaca
+    pcall(function()
+        local wf=writefile or (syn and syn.io and syn.io.writefile)
+        if wf then wf("dbg_output.txt", txt) end
+    end)
+    return false
+end
+local function mkDbgBox(layoutOrder, borderCol, placeholder)
+    local bg=mk("Frame",{Size=UDim2.new(1,0,0,240),BackgroundColor3=C.card,BorderSizePixel=0,
+        LayoutOrder=layoutOrder,Parent=logScroll}); corner(bg,10); stroke(bg,borderCol,1.5)
+    local box=mk("TextLabel",{Size=UDim2.new(1,-16,1,-66),Position=UDim2.new(0,8,0,8),
+        BackgroundTransparency=1,Text=placeholder,TextColor3=C.textMute,
+        Font=Enum.Font.Code,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,
+        TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Parent=bg})
+    local cpBtn=mk("TextButton",{Size=UDim2.new(0.5,-12,0,26),Position=UDim2.new(0,8,1,-34),
+        BackgroundColor3=borderCol,Text="COPY",Font=FONT_B,TextSize=12,
+        TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=bg}); corner(cpBtn,6)
+    local cpAllBtn=mk("TextButton",{Size=UDim2.new(0.5,-12,0,26),Position=UDim2.new(0.5,4,1,-34),
+        BackgroundColor3=Color3.fromRGB(40,40,60),Text="COPY ALL",Font=FONT_B,TextSize=12,
+        TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=bg}); corner(cpAllBtn,6)
+    local logs={}; local allLogs={}
+    local function logFn(s)
+        local line=tostring(s)
+        table.insert(allLogs,line)
+        table.insert(logs,1,line); if #logs>60 then logs[#logs]=nil end
+        pcall(function() box.Text=table.concat(logs,"\n") end)
+    end
+    cpBtn.MouseButton1Click:Connect(function()
+        pcall(_cp,box.Text)
+        cpBtn.Text="COPIED!"; task.delay(1.5,function() cpBtn.Text="COPY" end)
+    end)
+    cpAllBtn.MouseButton1Click:Connect(function()
+        local txt=table.concat(allLogs,"\n")
+        local ok=_cp(txt)
+        cpAllBtn.Text=ok and "COPIED ALL!" or "→ dbg_output.txt"
+        task.delay(2,function() cpAllBtn.Text="COPY ALL ("..#allLogs..")" end)
+    end)
+    return logFn
+end
+local dbgLogs={}; local dbgAllLogs={}
+local _dbgFn = mkDbgBox(5, Color3.fromRGB(60,140,220), "— menunggu log —")
+dbgLog = function(s)
+    local line=tostring(s)
+    table.insert(dbgAllLogs,line)
+    table.insert(dbgLogs,1,line); if #dbgLogs>60 then dbgLogs[#dbgLogs]=nil end
+    _dbgFn(s)
+end
+
+-- ===================== DEBUG WEATHER (observasi partikel cuaca) =====================
+sectionHeader(logScroll,"• DEBUG WEATHER",6)
+local _weatherFn = mkDbgBox(7, Color3.fromRGB(30,180,120), "— menunggu weather scan —")
+local weatherLogs={}; local weatherAllLogs={}
+weatherLog = function(s)
+    local line=tostring(s)
+    table.insert(weatherAllLogs,line)
+    table.insert(weatherLogs,1,line); if #weatherLogs>60 then weatherLogs[#weatherLogs]=nil end
+    _weatherFn(s)
+end
+
+
+-- ===================== STATE =====================
+local logs={}; local running=false; local stopRequested=false
+local totalNightmareCollected=0; local totalShovel=0; local totalFav=0; local _lastMutasiCount=0
+local _fruitCollectedSinceLastSell = 0  -- counter lintas processFruits, sell saat >=200
+local SELL_THRESHOLD = 200
+-- tracker sesi yang sedang aktif (untuk re-equip balik setelah cadangan)
+-- _G persist agar survive re-execute (rejoin): kalau SESI2/CADANGAN2 jalan, cadangan 2 tetap trigger walau script di-reload
+if type(_G._UPL_SESI_NUM) ~= "number" then _G._UPL_SESI_NUM = 1 end
+if _G._UPL_SESI_DEF == nil then _G._UPL_SESI_DEF = false end  -- false = sesi 1 (nil = belum init)
+local _activeSesiNum = _G._UPL_SESI_NUM
+local _activeSesiDef = (_G._UPL_SESI_DEF == false) and SESI1_DEF or _G._UPL_SESI_DEF
+
+-- addLog di-forward declare di atas (line ~152), di sini di-assign fungsi aslinya
+addLog = function(s)
+    -- print hanya kalau WARN/ERROR/HEAL (jangan spam console)
+    local str=tostring(s)
+    if str:find("WARN") or str:find("TIDAK") or str:find("NIL") or str:find("HEAL") or str:find("ERROR") then
+        print("[UPL] "..str)
+    end
+    table.insert(logs,1,str); if #logs>80 then logs[#logs]=nil end
+    pcall(function() logBox.Text=table.concat(logs,"\n") end)
+end
+
+-- waitForContainer: tunggu sampai _kgContainer ready (max maxSec detik)
+-- HARUS setelah addLog karena pakai addLog di dalamnya
+local function waitForContainer(maxSec)
+    maxSec=maxSec or 10
+    if _kgContainer then return true end
+    addLog("Tunggu container getgc...")
+    -- coba sync (blocking) dulu di coroutine ini
+    pcall(function() _kgContainer=findMemoryContainer() end)
+    if _kgContainer then
+        local n=0; pcall(function() for _ in pairs(_kgContainer) do n=n+1 end end)
+        addLog("Container ready ("..n.." pets)"); return true
+    end
+    -- poll tiap 0.5s sampai ready atau timeout
+    local t0=tick()
+    while not _kgContainer and (tick()-t0)<maxSec do
+        task.wait(0.5)
+        pcall(function() if not _kgContainer then _kgContainer=findMemoryContainer() end end)
+    end
+    if _kgContainer then
+        local n=0; pcall(function() for _ in pairs(_kgContainer) do n=n+1 end end)
+        addLog("Container ready ("..n.." pets)")
+        return true
+    else
+        addLog("WARN: Container belum ready "..maxSec.."s — fallback Name match")
+        return false
+    end
+end
+
+local function setStatus(s,col)
+    pcall(function() statusLbl.Text="Status: "..s; statusLbl.TextColor3=col or C.textMute end)
+end
+local function updateUI(collected,kebun,sesiNum)
+    pcall(function()
+        local ratio=collected/CFG.nightmareTarget
+        progCountLbl.Text=tostring(collected).." / "..CFG.nightmareTarget
+        progPctLbl.Text=math.floor(ratio*100).."%"
+        progFill.Size=UDim2.new(math.min(ratio,1),0,1,0)
+        progFill.BackgroundColor3=ratio>=0.8 and C.accent or ratio>=0.4 and Color3.fromRGB(220,160,60) or C.textDim
+        nmKebunL.Text=tostring(kebun); shovelL.Text=tostring(_lastMutasiCount or 0)
+        pcall(function()
+            local mx = _G.__ZenxMaxPetCache or 0
+            local c = _kgContainer
+            local tot = 0
+            if c then for _, e in pairs(c) do if type(e)=="table" and e.PetData then tot=tot+1 end end end
+            if mx > 0 then
+                maxInvL.RichText = true
+                maxInvL.Text = tostring(tot).."<font color='#555555'>/"..tostring(mx).."</font>"
+            else
+                maxInvL.Text = tostring(tot)
+            end
+        end)
+        -- hitung age 500+ / age 500- dari container
+        pcall(function()
+            local plus,minus=0,0
+            if _kgContainer then
+                for _,entry in pairs(_kgContainer) do
+                    local lv=tonumber(entry.PetData and entry.PetData.Level) or 0
+                    if lv>=500 then plus=plus+1 else minus=minus+1 end
+                end
+            end
+            age500plusL.Text=tostring(plus); age500minusL.Text=tostring(minus)
+            -- bahan age
+            if _bahanUuid then
+                local ba=getAgeFallback(_bahanUuid)
+                bahanAgeL.Text=tostring(ba)
+            else
+                bahanAgeL.Text="—"
+            end
+        end)
+        if sesiNum then
+            sesiStatL.Text=tostring(sesiNum)
+            if sesiNum==1 then
+                sesiBL.Text="SESI 1"; sesiInfoL.Text="leveling — kumpul nightmare"
+                sesiInfoL.TextColor3=C.accent
+            else
+                sesiBL.Text="SESI 2"; sesiInfoL.Text="nightmare habis — tunggu reset"
+                sesiInfoL.TextColor3=Color3.fromRGB(220,160,60)
+            end
+        end
+    end)
+end
+clrLogBtn.MouseButton1Click:Connect(function() logs={}; logBox.Text="— log dikosongkan —" end)
+
+-- ===================== AUTO-ACCEPT TRADE (background, selalu ON) =====================
+-- Nerima trade ticket/gift dari akun MARKET. Cuma di private server + garden.
+task.spawn(function()
+    local RS=game:GetService("ReplicatedStorage"); local WS=game:GetService("Workspace")
+    local function diGarden() return WS:FindFirstChild("TradeWorld")==nil end
+    local function getR()
+        local ge=RS:FindFirstChild("GameEvents"); local te=ge and ge:FindFirstChild("TradeEvents"); if not te then return nil end
+        return{sendReq=te:FindFirstChild("SendRequest"),respond=te:FindFirstChild("RespondRequest"),accept=te:FindFirstChild("Accept"),confirm=te:FindFirstChild("Confirm")}
+    end
+    local function fs2(sig) if not sig then return end
+        if getconnections then pcall(function() for _,c in ipairs(getconnections(sig)) do if c.Fire then pcall(function()c:Fire()end)elseif c.Function then pcall(function()c.Function()end)end end end) end
+        if firesignal then pcall(function()firesignal(sig)end) end
+    end
+    local function klik(b) if not b then return end pcall(function()fs2(b.MouseButton1Click)end); pcall(function()fs2(b.Activated)end) end
+    local function klikAccept()
+        local pg=plr:FindFirstChild("PlayerGui"); local tui=pg and pg:FindFirstChild("TradingUI")
+        local lt=tui and tui:FindFirstChild("LiveTrade"); local opts=lt and lt:FindFirstChild("Options")
+        klik(opts and opts:FindFirstChild("Accept"))
+    end
+    local function klikYes()
+        local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+        for _,nm in ipairs({"UnfairTrade","GenericConfirmationPrompt","GiveawayConfirmation_UI"}) do
+            local pp=pg:FindFirstChild(nm)
+            if pp then for _,bn in ipairs({"Yes","Confirm","Continue"}) do
+                local b=pp:FindFirstChild(bn,true)
+                if b and (b:IsA("ImageButton") or b:IsA("TextButton")) then
+                    local v=false; pcall(function()v=b.Visible end); if v then klik(b) end
+                end
+            end end
+        end
+    end
+    local conn=nil
+    while true do
+        pcall(function()
+            local R=getR()
+            if R and R.respond and R.sendReq and not conn then
+                conn=R.sendReq.OnClientEvent:Connect(function(...)
+                    local id; for _,a in ipairs({...}) do if type(a)=="string" and #a>20 and a:find("-") then id=a; break end end
+                    if id then pcall(function()R.respond:FireServer(id,true)end) end
+                end)
+            end
+            local pg=plr:FindFirstChild("PlayerGui"); local tui=pg and pg:FindFirstChild("TradingUI")
+            local lt=tui and tui:FindFirstChild("LiveTrade"); local vis=false
+            if lt then pcall(function()vis=lt.Visible end) end
+            if lt and vis then
+                klikAccept()
+                if R and R.accept then pcall(function()R.accept:FireServer()end) end
+                if R and R.confirm then pcall(function()R.confirm:FireServer()end) end
+                klikYes()
+            end
+        end)
+        task.wait(0.5)
+    end
+end)
+
+-- ===================== AUTO-ACCEPT GIFT (background, selalu ON) =====================
+task.spawn(function()
+    local RS=game:GetService("ReplicatedStorage")
+    local function fireBtn(btn)
+        if not btn then return false end
+        if firesignal then pcall(function()firesignal(btn.MouseButton1Down)end); pcall(function()firesignal(btn.MouseButton1Click)end); return true end
+        return false
+    end
+    local function acceptAllGiftPopups()
+        pcall(function()
+            local pg=plr:FindFirstChild("PlayerGui")
+            local gn=pg and pg:FindFirstChild("Gift_Notification"); if not gn then return end
+            local outer=gn:FindFirstChild("Frame"); local inner=outer and (outer:FindFirstChild("Gift_Notification") or outer) or nil
+            for _,holder in ipairs((inner or gn):GetChildren()) do
+                local accept; local fr=holder:FindFirstChild("Frame")
+                if fr then accept=fr:FindFirstChild("Accept") end
+                if not accept then for _,dd in ipairs(holder:GetDescendants()) do if dd.Name=="Accept" and dd:IsA("GuiButton") then accept=dd break end end end
+                if accept and accept:IsA("GuiButton") then local vis=true; pcall(function()vis=accept.Visible end); if vis then fireBtn(accept) end end
+            end
+        end)
+    end
+    local function autoAcceptTradeWindow()
+        pcall(function()
+            local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+            local tui=pg:FindFirstChild("TradingUI"); local lt=tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts=lt:FindFirstChild("Options")
+                for _,bn in ipairs({"Accept","Confirm"}) do
+                    local b=opts and opts:FindFirstChild(bn)
+                    if b then
+                        if firesignal then pcall(function()firesignal(b.Activated)end) end
+                        if getconnections then for _,c in ipairs(getconnections(b.Activated)) do pcall(function()c:Fire()end) end end
+                    end
+                end
+                for _,d in ipairs(lt:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t=((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                        if t=="yes" or t:find("confirm") or t=="continue" or t=="accept" then pcall(function()fireBtn(d)end) end
+                    end
+                end
+                for _,d in ipairs(pg:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t=((d:IsA("TextButton") and d.Text) or ""):lower()
+                        if t=="yes" or t:find("confirm") or t=="continue" or t=="lanjut" then
+                            pcall(function()fireBtn(d)end)
+                            if firesignal then pcall(function()firesignal(d.Activated)end) end
+                            if getconnections then for _,c in ipairs(getconnections(d.Activated)) do pcall(function()c:Fire()end) end end
+                        end
+                    end
+                end
+            end
+            local te=game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents"); te=te and te:FindFirstChild("TradeEvents")
+            if te then
+                local a=te:FindFirstChild("Accept"); local c=te:FindFirstChild("Confirm")
+                if c then pcall(function()c:FireServer()end) end
+                if a then pcall(function()a:FireServer()end) end
+            end
+        end)
+    end
+    local ge=RS:WaitForChild("GameEvents",30)
+    if ge then
+        local giftRE=ge:FindFirstChild("GiftPet"); local acceptGiftRE=ge:FindFirstChild("AcceptPetGift")
+        if giftRE then
+            giftRE.OnClientEvent:Connect(function(petUUID)
+                if acceptGiftRE and type(petUUID)=="string" and #petUUID>8 then
+                    pcall(function()acceptGiftRE:FireServer(true,petUUID)end)
+                end
+                task.spawn(function() for _=1,10 do if true then acceptAllGiftPopups() end task.wait(0.25) end end)
+            end)
+        end
+        local te=ge:FindFirstChild("TradeEvents")
+        if te then
+            local sendReqRE=te:FindFirstChild("SendRequest"); local respondRE=te:FindFirstChild("RespondRequest"); local lastTradeID=nil
+            if sendReqRE and respondRE then
+                for _,r in ipairs(te:GetChildren()) do
+                    if r:IsA("RemoteEvent") then
+                        local lname=r.Name:lower()
+                        if not (lname:find("history") or lname:find("inventory")) then
+                            r.OnClientEvent:Connect(function(...)
+                                local args={...}
+                                if type(args[1])=="string" and #args[1]>20 and args[1]:find("%-") then lastTradeID=args[1] end
+                                if lname:find("cancel") or lname:find("reject") or lname:find("decline") then return end
+                                if r==sendReqRE and lastTradeID then pcall(function()respondRE:FireServer(lastTradeID,true)end) end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    task.spawn(function() while true do task.wait(0.6); pcall(acceptAllGiftPopups) end end)
+    while true do task.wait(0.12); pcall(autoAcceptTradeWindow) end
+end)
+
+-- ===================== AUTO BUY SEED (Blueberry) + AUTO BUY TICKET =====================
+-- Jalan background terus, tidak tergantung tombol START
+if not _G.__ZenxAutoBuySeed then
+    _G.__ZenxAutoBuySeed = true
+    task.spawn(function()
+        -- tunggu GameEvents siap dulu
+        task.wait(3)
+        local ge = RS:FindFirstChild("GameEvents")
+        local reSeed = ge and ge:FindFirstChild("BuySeedStock")
+        addLog("[AutoBuy] Seed="..(reSeed and "ADA" or "NIL"))
+
+        -- BuySeedStock butuh 2 args: "Shop" dulu baru nama seed
+        local SEED_NAME = "Blueberry"
+
+        local buyCount = 0
+        while true do
+            task.wait(2)
+            if reSeed then
+                pcall(function()
+                    reSeed:FireServer("Shop", SEED_NAME)
+                end)
+            end
+            buyCount = buyCount + 1
+            if buyCount % 15 == 0 then
+                addLog("[AutoBuy] fired x"..tostring(buyCount).." ("..SEED_NAME..")")
+            end
+        end
+    end)
+end
+
+if not _G.__ZenxAutoTicket then
+    _G.__ZenxAutoTicket = true
+    task.spawn(function()
+        -- auto-detect nama tiket dari GearData (fallback "Trading Ticket")
+        local ticketName = "Trading Ticket"
+        pcall(function()
+            local dataF = RS:FindFirstChild("Data")
+            local mod = dataF and dataF:FindFirstChild("GearData")
+            if mod then
+                local ok,tbl = pcall(require,mod)
+                if ok and type(tbl)=="table" then
+                    for k,v in pairs(tbl) do
+                        local nm = type(k)=="string" and k or (type(v)=="table" and (v.Name or v.ItemName or v.DisplayName))
+                        if type(nm)=="string" then
+                            local low=nm:lower()
+                            if low:find("trading",1,true) and low:find("ticket",1,true) then ticketName=nm; break end
+                        end
+                    end
+                end
+            end
+        end)
+        local ge = RS:FindFirstChild("GameEvents")
+        local re = ge and ge:FindFirstChild("BuyGearStock")
+        if not re then addLog("[AutoTicket] BuyGearStock gak ketemu — skip"); return end
+        addLog("[AutoTicket] aktif, beli '"..ticketName.."' kalau < 2")
+        local function ticketCount()
+            local n=0
+            pcall(function()
+                local function scan(c) if not c then return end
+                    for _,t in ipairs(c:GetChildren()) do
+                        if t:IsA("Tool") then local low=t.Name:lower()
+                            if (low:find("trading") and low:find("ticket")) or low:find("trade ticket") then n=n+1 end
+                        end
+                    end
+                end
+                scan(plr:FindFirstChild("Backpack")); scan(plr.Character)
+            end)
+            return n
+        end
+        while true do
+            task.wait(5)
+            if ticketCount() < 2 then
+                pcall(function() re:FireServer(ticketName) end)
+                addLog("[AutoTicket] beli '"..ticketName.."' (tiket="..ticketCount()..")")
+            end
+        end
+    end)
+end
+
+-- ===================== FETCH PANEL: marketakun + uplevel-giftpet =====================
+-- Fetch sekali saat startup (retry tiap 20s sampai dapat), setelah dapat langsung stop.
+-- Data tetap di _G.ZenxMarketAkun / _G.ZenxUplevelGiftTipe sampai re-execute.
+task.spawn(function()
+    local _base = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local _req = request or http_request or (syn and syn.request)
+    local function _get(path)
+        local raw
+        pcall(function() raw = game:HttpGet(_base .. path) end)
+        if (not raw or raw == "") and _req then
+            local ok, r = pcall(function() return _req({ Url = _base .. path, Method = "GET" }) end)
+            if ok and r and r.Body then raw = r.Body end
+        end
+        return raw
+    end
+    while true do
+        local done1, done2 = false, false
+        pcall(function()
+            -- akun market: "akun=total:max,..."
+            local raw = _get("/marketakun")
+            if raw and raw ~= "" then
+                local m = {}
+                for pair in tostring(raw):gmatch("[^,]+") do
+                    local k, tot, mx = pair:match("^%s*(.-)%s*=%s*(%d+):(%d+)")
+                    if k and k ~= "" then m[k] = { total = tonumber(tot) or 0, max = tonumber(mx) or 0 } end
+                end
+                if next(m) then _G.ZenxMarketAkun = m; done1 = true
+                    -- refresh TRADE UI kalau sudah terbuka (supaya akun market langsung muncul)
+                    pcall(function() if tradeRefresh then tradeRefresh() end end)
+                end
+            end
+            -- tipe pet gift: "Tipe1,Tipe2,..." (kosong = semua)
+            local raw2 = _get("/uplevel-giftpet")
+            if raw2 ~= nil then
+                local t = {}
+                for tp in tostring(raw2):gmatch("[^,]+") do
+                    local x = tp:gsub("^%s+", ""):gsub("%s+$", "")
+                    if x ~= "" then t[x] = true end
+                end
+                _G.ZenxUplevelGiftTipe = t; done2 = true
+            end
+        end)
+        if done1 and done2 then break end  -- sudah dapat semua, stop
+        task.wait(20)
+    end
+end)
+
+-- ===================== DENYUT (kirim ke worker via writefile tiap 5s) =====================
+-- Worker baca zenx_denyut_<nama>.txt untuk deteksi client mati/putih -> auto rejoin
+if not _G.__ZenxFpsTrack then
+    _G.__ZenxFpsTrack = true
+    _G.__ZenxFps = 60  -- optimis (sebelum keukur, biar gak salah rejoin pas loading)
+    local cnt = 0
+    pcall(function()
+        game:GetService("RunService").RenderStepped:Connect(function() cnt = cnt + 1 end)
+    end)
+    local fpsLbl
+    pcall(function()
+        local plr2 = game:GetService("Players").LocalPlayer
+        local g = Instance.new("ScreenGui"); g.Name = "ZenxFpsHud"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true
+        pcall(function() g.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+        if not g.Parent then g.Parent = plr2:WaitForChild("PlayerGui") end
+        fpsLbl = Instance.new("TextLabel", g)
+        fpsLbl.Size = UDim2.new(0, 120, 0, 34)
+        fpsLbl.Position = UDim2.new(1, -128, 0, 8)
+        fpsLbl.BackgroundColor3 = Color3.fromRGB(15, 15, 22); fpsLbl.BackgroundTransparency = 0.25
+        fpsLbl.Font = Enum.Font.GothamBold; fpsLbl.TextSize = 18
+        fpsLbl.TextColor3 = Color3.fromRGB(120, 255, 140); fpsLbl.BorderSizePixel = 0
+        fpsLbl.Text = "FPS --"
+        Instance.new("UICorner", fpsLbl).CornerRadius = UDim.new(0, 8)
+    end)
+    task.spawn(function()
+        while true do
+            task.wait(1); _G.__ZenxFps = cnt; cnt = 0
+            if fpsLbl then
+                local f = _G.__ZenxFps or 0
+                fpsLbl.Text = "FPS " .. f .. (f <= 5 and " (putih)" or "")
+                fpsLbl.TextColor3 = (f <= 5) and Color3.fromRGB(255, 90, 90)
+                    or (f <= 20) and Color3.fromRGB(255, 210, 90)
+                    or Color3.fromRGB(120, 255, 140)
+            end
+        end
+    end)
+end
+if not _G.__ZenxDenyut then
+    _G.__ZenxDenyut = true
+    task.spawn(function()
+        local function parseSheck(raw)
+            raw = tostring(raw or ""):gsub("[%s,]", ""):gsub("\226\130\162", "")
+            local n2 = tonumber(raw:match("^(%-?[%d%.]+)"))
+            if not n2 then return 0 end
+            local suf = (raw:match("([KkMmBbTt])") or ""):lower()
+            local mult = ({ k=1e3, m=1e6, b=1e9, t=1e12 })[suf] or 1
+            return math.floor(n2 * mult)
+        end
+        local function zenxDcStrict()
+            local dc = false
+            pcall(function()
+                local cg = game:GetService("CoreGui")
+                for _, d in ipairs(cg:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible then
+                        local t = tostring(d.Text or ""):lower()
+                        if (t:find("disconnected") or t:find("koneksi terputus"))
+                           and not (t:find("headset") or t:find("controller") or t:find("audio")
+                                    or t:find("bluetooth") or t:find("mic") or t:find("earphone")
+                                    or t:find("headphone") or t:find("perangkat audio")) then
+                            dc = true; return
+                        end
+                    end
+                end
+            end)
+            return dc
+        end
+        while true do
+            pcall(function()
+                local plr2 = game:GetService("Players").LocalPlayer
+                if plr2 and plr2.Name and writefile and not zenxDcStrict() then
+                    local fps = math.floor(tonumber(_G.__ZenxFps) or 60)
+                    local skV = 0
+                    pcall(function()
+                        local ls = plr2:FindFirstChild("leaderstats")
+                        if ls then
+                            local sv = ls:FindFirstChild("Sheckles") or ls:FindFirstChild("Leaves")
+                                       or ls:FindFirstChild("Cash") or ls:FindFirstChild("Coins") or ls:FindFirstChild("Money")
+                            if sv and sv.Value then skV = parseSheck(sv.Value) end
+                            if skV == 0 then
+                                for _, v in ipairs(ls:GetChildren()) do
+                                    local nm = tostring(v.Name):lower()
+                                    if (nm:find("sheck") or nm:find("cash") or nm:find("coin") or nm:find("money") or nm:find("leaves")) and v:IsA("ValueBase") then
+                                        skV = parseSheck(v.Value); if skV > 0 then break end
+                                    end
+                                end
+                            end
+                        end
+                        if skV == 0 then
+                            local a = plr2:GetAttribute("Sheckles") or plr2:GetAttribute("Cash")
+                                      or plr2:GetAttribute("Money") or plr2:GetAttribute("Coins")
+                            if a then skV = parseSheck(a) end
+                        end
+                    end)
+                    -- format: ts;0;kg;fps;S<sheckles>;N0;P<totalPet>;<maxPet> (kompatibel sama worker)
+                    local _ptotal = 0; local _pmax = _G.__ZenxMaxPetCache or 0
+                    pcall(function()
+                        local _c = _kgContainer; if not _c then return end
+                        for _, e in pairs(_c) do if type(e)=="table" and e.PetData then _ptotal=_ptotal+1 end end
+                    end)
+                    writefile("zenx_denyut_" .. plr2.Name .. ".txt",
+                        os.time() .. ";0;kg;" .. fps .. ";S" .. skV .. ";N0;P" .. _ptotal .. ";" .. _pmax)
+                end
+            end)
+            task.wait(5)
+        end
+    end)
+end
+
+-- ===================== ENGINE (closure untuk hemat register _main) =====================
+local function _startEngine()
+-- ===================== PET MANAGEMENT =====================
+-- modelByUuid: track model pet yang sedang di-equip di workspace (seperti uplevel asli)
+-- Hanya model di workspace yang perlu di-unequip. Container includes backpack = jangan loop semua.
+local modelByUuid = {}
+local function isPetModel(m) return m:IsA("Model") and tostring(m.Name):sub(1,1) == "{" end
+local function regModel(m) if isPetModel(m) then modelByUuid[m.Name]=m end end
+pcall(function() for _,d in ipairs(workspace:GetDescendants()) do regModel(d) end end)
+workspace.DescendantAdded:Connect(function(d) task.defer(function() pcall(regModel,d) end) end)
+workspace.DescendantRemoving:Connect(function(d)
+    if isPetModel(d) and modelByUuid[d.Name]==d then modelByUuid[d.Name]=nil end
+end)
+
+-- ===================== COOLDOWN CACHE (untuk swap skill) =====================
+-- Cache dari event PetCooldownsUpdated — dipakai petReadyUpl() di ready-loop
+-- GAK InvokeServer di hot-loop (block). Cache di-refresh otomatis dari event server.
+local _cdCache = {}
+local function _readyDariData(data)
+    if type(data) ~= "table" then return nil end
+    local adaSkill = false
+    for _, v in ipairs(data) do
+        if type(v) == "table" and type(v.Time) == "number" then
+            local p = tostring(v.Passive or ""):lower()
+            if not p:find("mutation") then
+                adaSkill = true
+                if v.Time <= 0 then return true end
+            end
+        end
+    end
+    if adaSkill then return false end
+    return nil
+end
+-- forward refs utk TrexSwap (harus di luar do-block agar assignment di bawah ngisi yg sama)
+local unequipPet, equipPet
+local _swapLastSwap = {}
+do
+    local ge2 = RS:FindFirstChild("GameEvents")
+    local pcu2 = ge2 and ge2:FindFirstChild("PetCooldownsUpdated")
+    local req2 = ge2 and ge2:FindFirstChild("RequestPetCooldowns")
+    if pcu2 and pcu2:IsA("RemoteEvent") then
+        pcu2.OnClientEvent:Connect(function(uuid, data)
+            local key = tostring(uuid):gsub("[{}]","")
+            _cdCache[key] = { ready = _readyDariData(data) == true, at = tick() }
+        end)
+        addLog("SwapSkill: cooldown listener ON")
+    end
+    if req2 and req2:IsA("RemoteEvent") then
+        pcall(function() req2:FireServer() end)
+    end
+    -- T-Rex: swap via CustomAnimationState "Eat" (DataStream ActivePets)
+    task.spawn(function()
+        local function tsLog(msg) addLog(msg) end
+        -- ─────────────────────────────────────────────────────
+
+        -- cek ge2
+        if not ge2 then tsLog("ERR: ge2 nil"); return end
+        tsLog("ge2 OK, cari DataStream...")
+        local ds2 = ge2:WaitForChild("DataStream", 15)
+        if not ds2 then tsLog("ERR: DataStream nil"); return end
+        tsLog("ds2 OK, listener ON")
+
+        local _evTotal, _evActivePets = 0, 0
+        local _dbgAnimFound = 0
+
+        -- deep find + handle CustomAnimationState (depth 12)
+        local function deepFind(t, depth, path)
+            depth = depth or 0
+            path = path or "r"
+            if depth > 12 or type(t) ~= "table" then return end
+            for k, v in pairs(t) do
+                local ks = tostring(k):sub(1,20)
+                if type(v) == "table" then
+                    local v1 = tostring(v[1] or "")
+                    if v1:find("CustomAnimationState",1,true) then
+                        local animStr = tostring(v[2] or "")
+                        -- ekstrak uuid dari path: .../{uuid}/CustomAnimationState
+                        local uuid = v1:match("{([^}]+)}")  or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                        local raw = uuid:gsub("[{}]","")
+                        _dbgAnimFound = _dbgAnimFound + 1
+                        -- cek tipe pet — container key pakai format {uuid}
+                        local fmtU = "{" .. raw .. "}"
+                        local tipe = nil
+                        if _kgContainer then
+                            local e = _kgContainer[fmtU] or _kgContainer[raw]
+                            if type(e) == "table" then
+                                local pt = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+                                if pt ~= "" then tipe = pt end
+                            end
+                        end
+                        local tl = tipe and tostring(tipe):lower() or ""
+                        if animStr == "Eat" and (tl:find("t-rex",1,true) or tl:find("trex",1,true)) then
+                            if not running or stopRequested or _isCollecting or _isTransisi then
+                                -- guard aktif, skip swap
+                            else
+                                local inActive = _activeUuids ~= nil and (_activeUuids[raw] or _activeUuids["{"..raw.."}"])
+                                tsLog("SWAP! raw=" .. raw:sub(1,8) .. " equipRE=" .. tostring(equipRE~=nil) .. " active=" .. tostring(inActive))
+                                task.spawn(function()
+                                    local ok1,e1 = pcall(function() unequipPet(raw) end)
+                                    tsLog("UNEQUIP ok=" .. tostring(ok1) .. (ok1 and "" or " err="..tostring(e1)))
+                                    task.wait(0.03)
+                                    local ok2,e2 = pcall(function() equipPet(raw) end)
+                                    tsLog("EQUIP ok=" .. tostring(ok2) .. (ok2 and "" or " err="..tostring(e2)))
+                                    _swapLastSwap[raw] = tick()
+                                end)
+                            end
+                        end
+                    else
+                        deepFind(v, depth+1, path .. "." .. ks)
+                    end
+                end
+            end
+        end
+
+
+        ds2.OnClientEvent:Connect(function(...)
+            local args = {...}
+            _evTotal = _evTotal + 1
+            -- args[1]=_, args[2]=service, args[3]=data ATAU args[3]=subservice, args[4]=data
+            local svc = tostring(args[2] or "")
+            local data3 = args[3]
+            local data4 = args[4]
+            if svc:find("ActivePets", 1, true) then
+                _evActivePets = _evActivePets + 1
+                local data = type(data3)=="table" and data3 or (type(data4)=="table" and data4 or nil)
+                if data then
+                    local sz = 0; for _ in pairs(data) do sz=sz+1 end
+                    if sz > 0 then
+                        deepFind(data, 0, "AP")
+                    end
+                end
+            end
+        end)
+        tsLog("listener ON (counter+scan+deepfind)")
+    end)
+end
+local function petReadyUpl(uuid)
+    local key = tostring(uuid):gsub("[{}]","")
+    local e = _cdCache[key]
+    if e and (tick() - e.at) <= 8 then return e.ready end
+    return nil  -- cache stale/kosong -> fallback ke idle timeout
+end
+
+-- ===================== POSISI MIMIC =====================
+-- Tiap slot Mimic (nomor urut 1–7) punya koordinat tetap tersebar di 2 plot kebun
+-- Slot #1 = Mimic pertama di lineup, #2 = kedua, dst — tidak bergantung uuid
+-- Offset relatif dari farmCenter() — berlaku di server manapun
+local MIMIC_OFFSETS = {
+    Vector3.new( 34, 0, -15),  -- #1 plot kanan, atas
+    Vector3.new( 22, 0,   0),  -- #2 plot kanan, tengah
+    Vector3.new( 10, 0,  15),  -- #3 plot kanan, bawah
+    Vector3.new(-10, 0, -15),  -- #4 plot kiri, atas
+    Vector3.new(-22, 0,   0),  -- #5 plot kiri, tengah
+    Vector3.new(-34, 0,  15),  -- #6 plot kiri, bawah
+    Vector3.new(  0, 0,  27),  -- #7 tengah bawah
+}
+-- _mimicSlotByUuid: uuid -> nomor slot (1–7), diisi saat equipSesi
+-- Dipakai loop posisi untuk tau Mimic ini harusnya di titik mana
+local _mimicSlotByUuid = {}
+
+-- ===================== AUTO TENGAH =====================
+-- Peacock, Ghostly Spider, Baku → di-hold ke tengah kebun
+local AUTO_TENGAH_TYPES = { ["Peacock"]=true, ["Ghostly Spider"]=true }
+
+-- cek tipe pet dari container (stripped)
+local function getPetTipeFromUUID(uuid)
+    local c = _kgContainer; if not c then return nil end
+    local e = c[tostring(uuid)]
+    if type(e) == "table" then
+        local raw = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+        if raw ~= "" then return stripMutation(raw) end
+    end
+    return nil
+end
+
+local function getUUIDAlt(item)
+    -- coba PET_UUID dulu (attribute resmi), fallback ke UUID/uuid/Name
+    local u=item:GetAttribute("PET_UUID"); if u then return fmtUUID(u) end
+    local u2=item:GetAttribute("UUID"); if u2 then return fmtUUID(u2) end
+    local u3=item:GetAttribute("uuid"); if u3 then return fmtUUID(u3) end
+    local m=item.Name:match("%[(.-)%]"); if m then return fmtUUID(m) end
+    return nil
+end
+local function getAgeFallback(uuid)
+    -- dari container (paling akurat)
+    local a=getAgeFromContainer(uuid); if a then return a end
+    -- fallback attribute di Tool
+    local bp=plr:FindFirstChild("Backpack"); if not bp then return 0 end
+    local raw=tostring(uuid):gsub("[{}]","")
+    for _,t in ipairs(bp:GetChildren()) do
+        local u=t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+        if u and tostring(u):gsub("[{}]","")==raw then
+            local a2=t:GetAttribute("Age") or t:GetAttribute("age"); if type(a2)=="number" then return a2 end
+        end
+    end
+    return 0
+end
+-- farmCenter: cari posisi tengah kebun milik player (seperti uplevel asli)
+-- PENTING: server butuh CFrame posisi untuk spawn pet di kebun. Kalau nil -> pet gagal masuk.
+local function farmCenter()
+    local farms=workspace:FindFirstChild("Farm"); if not farms then return nil end
+    for _,f in ipairs(farms:GetChildren()) do
+        local imp=f:FindFirstChild("Important")
+        local data=imp and imp:FindFirstChild("Data")
+        local owner=data and data:FindFirstChild("Owner")
+        if owner and owner.Value==plr.Name then
+            local c=f:FindFirstChild("Center",true)
+            if c and c:IsA("BasePart") then return Vector3.new(c.Position.X,4,c.Position.Z) end
+        end
+    end
+    return nil
+end
+local _clusterPos = nil  -- cache posisi, di-refresh saat start
+
+equipPet = function(uuid)
+    if not equipRE then return end
+    local pos = _clusterPos or farmCenter()
+    if pos then
+        pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), CFrame.new(pos)) end)
+    else
+        pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), nil) end)
+    end
+end
+unequipPet = function(uuid)
+    if not equipRE then return end
+    pcall(function() equipRE:FireServer("UnequipPet", fmtUUID(uuid)) end)
+end
+
+-- _activeUuids: uuid yang seharusnya ada di kebun (diisi equipSesi, dibersihkan unequipAll)
+-- Healer loop pakai ini untuk re-equip pet yang modelnya hilang
+local _activeUuids = {}
+local _bahanUuid = nil  -- UUID Bahan yang sedang equip (biar tidak di-unequip saat ganti sesi)
+local _isCollecting = false  -- pause healer saat doCollect berjalan
+local _isTransisi   = false  -- pause healer+swapLoop saat ganti sesi / unequipAll
+local _geLogged = false      -- gameEvents log cukup sekali
+
+-- unequipAll: hanya unequip pet yg SEDANG di-equip (ada model di workspace)
+-- JANGAN loop seluruh container — bisa ratusan pet, bikin rate-limit + equip setelahnya drop
+-- Mirip pickupAll uplevel asli: scan modelByUuid + workspace fresh, retry 3x
+local function unequipAll()
+    -- pause healer + swap-loop selama transisi
+    _isTransisi = true
+    -- clear healer tracker dulu (jangan re-equip selama proses unequip)
+    for k in pairs(_activeUuids) do _activeUuids[k]=nil end
+    for tri = 1, 3 do
+        -- kumpul semua uuid yg ada model di workspace (equipped only)
+        local uuids = {}
+        for uuid in pairs(modelByUuid) do uuids[uuid] = true end
+        -- scan workspace fresh (tangkap model yang baru spawn / belum ke-register)
+        pcall(function()
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("Model") and tostring(d.Name):sub(1,1) == "{" then uuids[d.Name] = true end
+            end
+        end)
+        local any = false
+        for uuid in pairs(uuids) do
+            unequipPet(uuid); any = true; task.wait(0.05)
+        end
+        task.wait(0.5)  -- tunggu server konfirmasi unequip sebelum retry
+        if not any then break end
+    end
+    task.wait(0.8)  -- jeda tambahan sebelum equip (beri server waktu settle)
+    -- _isTransisi di-clear oleh equipSesi setelah semua pet ter-equip
+end
+
+local function unequipAllExceptBahan()
+    -- Sama seperti unequipAll tapi skip Bahan yang sedang aktif
+    for k in pairs(_activeUuids) do _activeUuids[k]=nil end
+    for tri = 1, 3 do
+        local uuids = {}
+        for uuid in pairs(modelByUuid) do uuids[uuid] = true end
+        pcall(function()
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("Model") and tostring(d.Name):sub(1,1) == "{" then uuids[d.Name] = true end
+            end
+        end)
+        local any = false
+        for uuid in pairs(uuids) do
+            if _bahanUuid and uuid == _bahanUuid then
+                -- skip Bahan, biarkan tetap equip
+            else
+                unequipPet(uuid); any = true; task.wait(0.05)
+            end
+        end
+        task.wait(0.5)
+        if not any then break end
+    end
+    task.wait(0.8)
+end
+
+-- equipSesi: equip pet sesuai defs
+-- Prioritas: slot manual dari sesiPool → auto dari container by tipe → fallback backpack
+local function equipSesi(sesiNum, defs)
+    -- clear active uuid tracker + mimic slot tracker
+    for k in pairs(_activeUuids) do _activeUuids[k]=nil end
+    for k in pairs(_mimicSlotByUuid) do _mimicSlotByUuid[k]=nil end
+    local pool=sesiPool[sesiNum] or {}
+    local uuidEquipped={}
+    local mimicSlotCounter = 0  -- counter slot Mimic (1,2,3...) untuk assign posisi
+    -- PASS 1: slot manual — validasi uuid masih ada di container (kalau sudah rejoin, uuid beda)
+    for _,sup in ipairs(defs) do
+        local slotPool=pool[sup.nama] or {}
+        for i=1,sup.jml do
+            local entry=slotPool[i]
+            if entry and entry.uuid then
+                -- cek uuid masih valid di container (tahan rejoin uuid lama)
+                local uuidStr=tostring(entry.uuid)
+                local validInContainer = _kgContainer and _kgContainer[uuidStr]~=nil
+                if not validInContainer and _kgContainer then
+                    addLog("Pool S"..sesiNum.." "..sup.nama.."#"..i.." uuid expired (rejoin?) — skip manual")
+                else
+                    equipPet(entry.uuid)
+                    uuidEquipped[uuidStr]=true
+                    _activeUuids[uuidStr]=true  -- healer track
+                    -- assign slot posisi Mimic
+                    if sup.nama == "Mimic Octopus" then
+                        mimicSlotCounter = mimicSlotCounter + 1
+                        _mimicSlotByUuid[uuidStr] = mimicSlotCounter
+                    end
+                    addLog("Equip "..sup.nama.." #"..i)
+                    task.wait(CFG.equipWait)
+                end
+            end
+        end
+    end
+    -- PASS 2: auto dari container by tipe (untuk slot yang belum terpenuhi PASS 1)
+    -- Hitung dari uuidEquipped per tipe (bukan dari pool slot) supaya slot expired/skip ikut dihitung
+    local equippedPerTipe={}
+    for uuid in pairs(uuidEquipped) do
+        -- cari tipe dari container
+        local c=_kgContainer
+        if c then
+            local e=c[uuid]
+            if type(e)=="table" and e.PetType then
+                local nm=stripMutation(tostring(e.PetType))
+                equippedPerTipe[nm]=(equippedPerTipe[nm] or 0)+1
+            end
+        end
+    end
+    local need={}
+    for _,sup in ipairs(defs) do
+        local alreadyDone=equippedPerTipe[sup.nama] or 0
+        if sup.jml-alreadyDone>0 then need[sup.nama]=sup.jml-alreadyDone end
+    end
+    if next(need) then
+        -- debug: tunjukkan berapa pet per tipe yang dibutuhkan
+        local needStr=""
+        for nm,n in pairs(need) do needStr=needStr..nm.."×"..n.." " end
+        addLog("Need: "..needStr)
+        -- sort by kg terbesar (ambil pet terbaik dulu)
+        local allPets=listPetsAll()
+        -- debug: count per tipe di container
+        local countPerTipe={}
+        for _,p in ipairs(allPets) do countPerTipe[p.tipe]=(countPerTipe[p.tipe] or 0)+1 end
+        local cStr=""
+        for nm,n in pairs(countPerTipe) do cStr=cStr..nm.."×"..n.." " end
+        addLog("Found pool: "..cStr.."(total "..#allPets..")")
+        table.sort(allPets,function(a,b) return (a.kg or 0)>(b.kg or 0) end)
+        local got={}
+        for _,p in ipairs(allPets) do
+            local nm=p.tipe
+            if need[nm] and (got[nm] or 0)<need[nm] and not uuidEquipped[tostring(p.uuid)] then
+                equipPet(p.uuid)
+                local uuidStr=tostring(p.uuid)
+                uuidEquipped[uuidStr]=true
+                _activeUuids[uuidStr]=true  -- healer track
+                -- assign slot posisi Mimic (lanjut counter dari PASS 1)
+                if nm == "Mimic Octopus" then
+                    mimicSlotCounter = mimicSlotCounter + 1
+                    _mimicSlotByUuid[uuidStr] = mimicSlotCounter
+                end
+                got[nm]=(got[nm] or 0)+1
+                addLog("Equip auto "..nm.." (kg "..string.format("%.1f",p.kg or 0)..")")
+                task.wait(CFG.equipWait)
+            end
+        end
+        -- cek apakah semua terpenuhi
+        for nm,n in pairs(need) do
+            local done=got[nm] or 0
+            if done<n then addLog("WARN: "..nm.." hanya "..done.."/"..n.." berhasil di-equip!") end
+        end
+    end
+    -- RETRY: tunggu model muncul, re-equip yang belum (server kadang butuh >0.1s untuk spawn model)
+    task.wait(1.5)
+    local stillMissing = false
+    for uuid in pairs(uuidEquipped) do
+        if not modelByUuid[uuid] then
+            stillMissing = true
+            addLog("Retry equip: model belum muncul "..tostring(uuid):sub(1,12))
+            equipPet(uuid); task.wait(0.15)
+        end
+    end
+    if stillMissing then
+        task.wait(1.5)  -- tunggu lagi setelah retry
+        local count = 0
+        for _ in pairs(modelByUuid) do count = count + 1 end
+        addLog("Model di kebun setelah retry: "..count)
+    end
+    _isTransisi = false  -- equip selesai, healer + swap-loop boleh jalan lagi
+end
+
+local function equipOneBahan()
+    -- Prioritas 0: lanjutkan Bahan yang sedang dikunci (_bahanUuid) sampai age 500
+    if _bahanUuid then
+        local age = getAgeFallback(_bahanUuid)
+        if age < CFG.bahanMaxAge then
+            equipPet(_bahanUuid)
+            addLog("Equip bahan (kunci) age="..age)
+            return
+        else
+            addLog("Bahan kunci age="..age.." >= "..CFG.bahanMaxAge.." — ganti bahan baru")
+            _bahanUuid = nil
+        end
+    end
+    -- Prioritas 1: pakai uuid dari pool sesi 2 slot "Bahan" (diset manual user)
+    local pool2 = sesiPool[2] or {}
+    local slotBahan = (pool2["Bahan"] or {})[1]
+    if slotBahan and slotBahan.uuid then
+        local age = getAgeFallback(slotBahan.uuid)
+        if age < CFG.bahanMaxAge then
+            equipPet(slotBahan.uuid)
+            _bahanUuid = tostring(slotBahan.uuid)
+            addLog("Equip bahan (pool) "..tostring(slotBahan.tipe or "?").." age="..age)
+            return
+        else
+            addLog("Bahan pool umur "..age.." >= "..CFG.bahanMaxAge.." — skip")
+        end
+    end
+    -- Prioritas 2: pet manapun dari backpack yang bukan bagian pool sesi 2 (Mimic/Baku)
+    local pooledUuids = {}
+    for tipe, slots in pairs(pool2) do
+        if tipe ~= "Bahan" then
+            for _, e in pairs(slots) do if e and e.uuid then pooledUuids[tostring(e.uuid)] = true end end
+        end
+    end
+    local bp = plr:FindFirstChild("Backpack"); if not bp then return end
+    local all = listPetsAll()
+    table.sort(all, function(a,b) return (a.kg or 0) < (b.kg or 0) end)  -- ambil kg terkecil dulu
+    for _, p in ipairs(all) do
+        local ustr = tostring(p.uuid)
+        if not pooledUuids[ustr] then
+            local age = getAgeFallback(p.uuid)
+            if age < CFG.bahanMaxAge then
+                equipPet(p.uuid)
+                _bahanUuid = tostring(p.uuid)
+                addLog("Equip bahan (auto) "..tostring(p.tipe).." age="..age.." kg="..string.format("%.1f", p.kg or 0))
+                return
+            end
+        end
+    end
+    addLog("Tidak ada bahan tersedia (umur < "..CFG.bahanMaxAge..")")
+end
+
+local function unequipBahanTua()
+    local bp=plr:FindFirstChild("Backpack"); if not bp then return end
+    for _,t in ipairs(bp:GetChildren()) do
+        if t:IsA("Tool") then
+            local rawTipe=t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name
+            if stripMutation(tostring(rawTipe))==CFG.bahanType then
+                local uuid=getUUIDAlt(t)
+                if uuid then
+                    local age=getAgeFallback(uuid)
+                    if age>=CFG.bahanMaxAge then unequipPet(uuid); _bahanUuid=nil; addLog("Unequip bahan tua age="..age); task.wait(CFG.equipWait) end
+                end
+            end
+        end
+    end
+end
+
+-- ===================== FRUIT MANAGEMENT =====================
+-- getPlayerFarm: cari folder farm milik player (pakai logic farmCenter)
+local function getPlayerFarm()
+    local farms=workspace:FindFirstChild("Farm"); if not farms then return nil end
+    for _,f in ipairs(farms:GetChildren()) do
+        local imp=f:FindFirstChild("Important")
+        local data=imp and imp:FindFirstChild("Data")
+        local owner=data and data:FindFirstChild("Owner")
+        if owner and owner.Value==plr.Name then return f end
+    end
+    return nil
+end
+
+
+-- countSeedInGarden: hitung plant di Plants_Physical yang cocok jenis ini
+-- seedName sekarang selalu seedType (mis "Watermelon") dari attr Seed — bukan tool name penuh
+-- GAG1 Plants_Physical: nama entry = "Blueberry", "Watermelon", "Strawberry" dll (cocok exact)
+countSeedInGarden = function(seedName)
+    local count = 0
+    pcall(function()
+        local farm = getPlayerFarm(); if not farm then return end
+        local imp = farm:FindFirstChild("Important"); if not imp then return end
+        local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
+        -- seedName sudah bersih (mis "Watermelon"), strip suffix jaga-jaga
+        local sn = seedName:lower():gsub("%s*seed%s*$",""):gsub("%s*plant%s*$","")
+        for _,pt in ipairs(plants:GetChildren()) do
+            -- nama plant di GAG1: "Blueberry", "Watermelon" (exact match dengan seedType)
+            local ptName = pt.Name:lower():gsub("%s*plant%s*$",""):gsub("%s*seed%s*$","")
+            -- cek exact match ATAU ptName contains sn (jaga-jaga suffix berbeda)
+            if ptName == sn or ptName:find(sn, 1, true) or sn:find(ptName, 1, true) then
+                count = count + 1
+            end
+        end
+    end)
+    return count
+end
+
+-- background: refresh kebun count tiap 3 detik
+task.spawn(function()
+    while true do
+        task.wait(3)
+        if _psSelectedSeed and psKebunLbl then
+            local c = countSeedInGarden(_psSelectedSeed)
+            pcall(function() psKebunLbl.Text="kebun: "..c end)
+        end
+    end
+end)
+
+-- auto plant loop
+task.spawn(function()
+    local _logTick = 0
+    while true do
+        task.wait(0.1)
+        if not _psRunning or not _psSelectedSeed then continue end
+        -- cek RE
+        if not plantRE then plantRE = gameEvents:FindFirstChild("Plant_RE") end
+        if not plantRE then
+            addLog("WARN Plant_RE nil — auto plant OFF")
+            _psRunning=false; pcall(updatePsToggleUI); continue
+        end
+        -- cek seed ada di backpack ATAU character (equipped)
+        local hasSeed = false
+        local function checkContainer(container)
+            if not container then return end
+            for _,t in ipairs(container:GetChildren()) do
+                if t:IsA("Tool") then
+                    local sa = t:GetAttribute("Seed") or t:GetAttribute("SeedType")
+                            or t:GetAttribute("PlantType") or t:GetAttribute("SeedTool")
+                    if sa and tostring(sa) == _psSelectedSeed then hasSeed=true; return end
+                    if t.Name:lower():find(_psSelectedSeed:lower(),1,true) then hasSeed=true; return end
+                end
+            end
+        end
+        checkContainer(plr:FindFirstChild("Backpack"))
+        if not hasSeed then checkContainer(plr.Character) end
+        if not hasSeed then
+            -- log sekali tiap 10 detik supaya tidak spam
+            _logTick = _logTick + 1
+            if _logTick % 10 == 1 then
+                addLog("Plant: '"..(_psSelectedSeed).."' tidak ada di backpack, tunggu...")
+            end
+            continue
+        end
+        _logTick = 0
+        -- cek jumlah di kebun
+        local inGarden = countSeedInGarden(_psSelectedSeed)
+        pcall(function() psKebunLbl.Text="kebun: "..inGarden end)
+        if inGarden >= _psTarget then
+            _logTick = _logTick + 1
+            if _logTick % 5 == 1 then
+                addLog("Target tercapai: ".._psSelectedSeed.." "..inGarden.."/".. _psTarget.." — naikkan target atau ganti seed")
+            end
+            continue
+        end
+        _logTick = 0
+        -- ambil posisi karakter
+        local pos = nil
+        pcall(function()
+            local hrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then pos = hrp.Position end
+        end)
+        if not pos then addLog("WARN: karakter tidak ada"); continue end
+        -- kumpulkan semua Can_Plant dari farm (bisa >1 plot)
+        local canPlants = {}
+        pcall(function()
+            local farm = getPlayerFarm(); if not farm then return end
+            for _,p in ipairs(farm:GetDescendants()) do
+                if p.Name == "Can_Plant" and p:IsA("BasePart") then
+                    table.insert(canPlants, p)
+                end
+            end
+        end)
+        local plantPos
+        if #canPlants > 0 then
+            -- pilih Can_Plant acak, lalu random di dalamnya
+            local cp = canPlants[math.random(1, #canPlants)]
+            local p, s = cp.Position, cp.Size
+            local rx = p.X - s.X/2 + 1 + math.random() * (s.X - 2)
+            local rz = p.Z - s.Z/2 + 1 + math.random() * (s.Z - 2)
+            plantPos = Vector3.new(rx, p.Y, rz)
+        else
+            -- fallback: posisi karakter
+            plantPos = pos
+        end
+        local ok2, err2 = pcall(function() plantRE:FireServer(plantPos, _psSelectedSeed) end)
+        if ok2 then
+            addLog("Plant ".._psSelectedSeed.." @ "..math.floor(plantPos.X)..","..math.floor(plantPos.Z).." kebun="..inGarden)
+        else
+            addLog("WARN plant fail: "..tostring(err2))
+        end
+        task.wait(0.05)
+    end
+end)
+
+-- attr non-mutasi yang diabaikan saat cek mutasi buah
+local FRUIT_NON_MUTATIONS = {
+    Nightmare=true, IsOutlined=true,
+    FruitSpawnIndex=true, FruitVersion=true, DoneGrowTime=true,
+    WeightMulti=true, MaxAge=true, GrowRateMulti=true,
+    MasteryGrowthMulti=true,
+}
+
+local function fruitHasMutation(fruit)
+    for k, v in pairs(fruit:GetAttributes()) do
+        if v == true and not FRUIT_NON_MUTATIONS[k] then
+            return true
+        end
+    end
+    return false
+end
+
+-- ===================== NIGHTMARE FAST POLLER =====================
+-- Poll nightmareCount tiap 0.5s di background, disimpan ke _nmCached
+-- Main loop baca _nmCached, gak perlu scan ulang tiap iterasi
+local _nmCached = 0
+local _nmCachedAt = 0
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            local farm = getPlayerFarm(); if not farm then return end
+            local imp = farm:FindFirstChild("Important"); if not imp then return end
+            local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
+            local count = 0
+            for _, pt in ipairs(plants:GetChildren()) do
+                local fruits = pt:FindFirstChild("Fruits"); if fruits then
+                    for _, fruit in ipairs(fruits:GetChildren()) do
+                        if fruit:GetAttribute("Nightmare") == true then
+                            count = count + 1
+                        end
+                    end
+                end
+            end
+            _nmCached = count
+            _nmCachedAt = tick()
+        end)
+    end
+end)
+
+local function scanFruits()
+    local res={nightmare={},shovel={},nightmareCount=0}
+    local ok,err=pcall(function()
+        local farm=getPlayerFarm()
+        if not farm then addLog("scanFruits: farm nil"); return end
+        local imp=farm:FindFirstChild("Important"); if not imp then addLog("scanFruits: no Important"); return end
+        local plants=imp:FindFirstChild("Plants_Physical"); if not plants then addLog("scanFruits: no Plants_Physical"); return end
+        local totalScanned=0
+        for _,pt in ipairs(plants:GetChildren()) do
+            local fruits=pt:FindFirstChild("Fruits"); if fruits then
+                for _,fruit in ipairs(fruits:GetChildren()) do
+                    totalScanned=totalScanned+1
+                    local isNightmare = fruit:GetAttribute("Nightmare")==true
+                    local hasMut = fruitHasMutation(fruit)
+                    if isNightmare and not hasMut then
+                        res.nightmareCount=res.nightmareCount+1
+                    elseif hasMut then
+                        table.insert(res.shovel,fruit)
+                        if isNightmare then res.nightmareCount=res.nightmareCount+1 end
+                    end
+                end
+            end
+        end
+        addLog("scanFruits OK: total="..totalScanned.." shovel="..#res.shovel.." nm="..res.nightmareCount.." collect="..#res.nightmare)
+    end)
+    if not ok then addLog("scanFruits ERR: "..tostring(err)) end
+    return res
+end
+
+-- ===================== COLLECT HELPERS =====================
+-- Ambil ProximityPrompt dari buah: ada di fruit["2"].ProximityPrompt
+local function getFruitPrompt(fruit)
+    -- struktur: fruit (Model) -> "2" (Part) -> ProximityPrompt
+    local part = fruit:FindFirstChild("2")
+    if part then
+        local pp = part:FindFirstChildOfClass("ProximityPrompt")
+        if pp then return pp end
+    end
+    -- fallback: cari semua descendant
+    for _, v in ipairs(fruit:GetDescendants()) do
+        if v:IsA("ProximityPrompt") then return v end
+    end
+    return nil
+end
+
+local function unequipCurrentTool()
+    local char = plr.Character; if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
+    hum:UnequipTools()
+    task.wait(0.1)
+end
+
+local function sellInventory()
+    if not sellInventoryRE then
+        sellInventoryRE = gameEvents:FindFirstChild("Sell_Inventory")
+    end
+    if not sellInventoryRE then addLog("WARN: Sell_Inventory RE tidak ditemukan"); return end
+    local ok, err = pcall(function() sellInventoryRE:FireServer() end)
+    if ok then addLog("Sell_Inventory fired OK")
+    else addLog("WARN sell: "..tostring(err)) end
+end
+
+-- background sell loop: jalan tiap 2 detik, tidak terikat collect
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if running then
+            pcall(sellInventory)
+        end
+    end
+end)
+
+local function doCollect(fruits)
+    _isCollecting = true
+
+    local collected = 0
+    dbgLog("doCollect: "..#fruits.." buah via Crops.Collect")
+
+    -- pastikan cropsRE tersedia (fallback cari ulang kalau nil)
+    local re = cropsRE
+    if not re then
+        local cropsFolder = gameEvents:FindFirstChild("Crops")
+        re = cropsFolder and cropsFolder:FindFirstChild("Collect")
+        cropsRE = re
+    end
+
+    if not re then
+        dbgLog("ERR: Crops.Collect RE tidak ditemukan!")
+        _isCollecting = false
+        return 0
+    end
+
+    -- kirim semua buah sekaligus dalam tabel (method yang terbukti jalan)
+    -- server menerima array of fruit instances, tanpa batas jarak
+    local BATCH = 10
+    local i = 1
+    while i <= #fruits do
+        local batch = {}
+        for j = i, math.min(i + BATCH - 1, #fruits) do
+            local f = fruits[j]
+            if f and f.Parent then  -- skip buah yang sudah hilang
+                table.insert(batch, f)
+            end
+        end
+        if #batch > 0 then
+            local ok, err = pcall(function() re:FireServer(batch) end)
+            if ok then
+                collected = collected + #batch
+                dbgLog("batch "..i.."-"..(i+#batch-1)..": "..#batch.." fired OK")
+            else
+                dbgLog("ERR batch "..i..": "..tostring(err))
+            end
+            task.wait(0.7)
+        end
+        i = i + BATCH
+    end
+
+    _isCollecting = false
+    local summary = "doCollect: "..collected.."/"..#fruits.." fired"
+    addLog(summary)
+    dbgLog(summary)
+    return collected
+end
+
+-- Unequip pet asing yang tidak ada di allowedDef dan bukan bahan
+-- allowedDef: tabel {nama, jml} seperti SESI_CADANGAN2_DEF
+local function enforceEquip(allowedDef)
+    local allowed = {}
+    for _, d in ipairs(allowedDef) do allowed[d.nama] = true end
+    for uuid in pairs(modelByUuid) do
+        if uuid == _bahanUuid then continue end
+        local tipe = getPetTipeFromUUID(uuid)
+        if tipe and not allowed[tipe] then
+            addLog("Enforce: unequip '"..tipe.."' (bukan bagian sesi ini)")
+            pcall(function() unequipPet(uuid) end)
+        end
+    end
+end
+
+local function processFruits()
+    local data=scanFruits()
+    _lastMutasiCount = #data.shovel
+    addLog("scan: mutasi="..#data.shovel.." nm="..data.nightmareCount)
+
+    -- prioritas: nightmare=0 -> langsung cadangan 2 (mutasi collect di dalam cad2)
+    -- mutasi ada tapi nightmare masih ada -> collect dulu, lanjut sesi
+    -- TEST v8.195: nightmare dianggap collect biasa, skip Cadangan 2
+    if data.nightmareCount == 0 and _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN2_DEF then
+        -- nightmare 0 -> masuk cadangan 2 DULU, mutasi (kalau ada) dihandle di dalam cad2
+        -- tunggu nightmare muncul lagi, lalu balik ke sesi aktif sebelumnya
+        addLog("Nightmare 0 + no mutasi — masuk Cadangan 2 (Peacock×7 + Baku×1)")
+        setStatus("Cadangan 2 — tunggu nightmare...", Color3.fromRGB(78,200,130))
+        local prevSesiNum = _activeSesiNum
+        local prevSesiDef = _activeSesiDef
+        unequipAll()
+        equipSesi(4, SESI_CADANGAN2_DEF)
+        -- fav 1 buah random dari backpack (biar cepat dideteksi dapat mutasi nightmare)
+        local _favFruitId = nil
+        task.spawn(function()
+            task.wait(2)  -- tunggu biar farm fruits load
+            local farmFruits = getFruitsFromFarm()
+            -- prioritas: pilih nightmare fruit (biar fav nightmare, gak ke-shovel)
+            -- kalau gak ada nightmare, pilih buah random
+            local pick = nil
+            for _,f in ipairs(farmFruits) do
+                if f.obj:GetAttribute("Nightmare") == true then pick = f; break end
+            end
+            if not pick and #farmFruits > 0 then
+                pick = farmFruits[math.random(1, #farmFruits)]
+            end
+            if pick then
+                _favFruitId = pick.id
+                setFruitFav(pick.id, true)
+                addLog("Cad2: fav buah id="..tostring(pick.id):sub(1,12))
+            else
+                addLog("Cad2: gak ada buah di farm untuk di-fav")
+            end
+        end)
+        -- loop scan sampai nightmare muncul DAN tidak ada mutasi lain
+        while not stopRequested do
+            task.wait(CFG.loopWait)
+            enforceEquip(SESI_CADANGAN2_DEF)
+            local d2 = scanFruits()
+            _lastMutasiCount = #d2.shovel
+            addLog("Cad2 scan: nm="..d2.nightmareCount.." mutasi="..#d2.shovel)
+            -- ada mutasi -> collect semua di dalam cad2, jangan keluar
+            if #d2.shovel > 0 then
+                addLog("Cad2: ada "..#d2.shovel.." mutasi — collect di cad2")
+                setStatus("Cad2 — collect "..#d2.shovel.." mutasi...", Color3.fromRGB(160,120,220))
+                local fruits = d2.shovel
+                while #fruits > 0 and not stopRequested do
+                    local collected = doCollect(fruits)
+                    totalShovel = totalShovel + collected
+                    addLog("Cad2 collect: "..collected.."/"..#fruits)
+                    task.wait(0.8)  -- tunggu server proses
+                    local nxt = scanFruits()
+                    _lastMutasiCount = #nxt.shovel
+                    fruits = nxt.shovel
+                    -- cek nightmare sambil collect
+                    if nxt.nightmareCount > 0 then
+                        addLog("Cad2: nightmare muncul saat collect mutasi — selesaikan collect dulu")
+                        d2 = nxt  -- update d2 biar check di bawah tau nightmare sudah ada
+                    end
+                end
+                setStatus("Cadangan 2 — tunggu nightmare...", Color3.fromRGB(78,200,130))
+                addLog("Cad2: mutasi beres, cek nightmare")
+            end
+            -- nightmare muncul -> balik sesi aktif (re-scan kalau d2 mungkin stale)
+            local nmNow = d2.nightmareCount
+            if nmNow == 0 then
+                local recheck = scanFruits(); nmNow = recheck.nightmareCount
+                d2 = recheck
+            end
+            if nmNow > 0 then
+                addLog("Nightmare muncul! Balik sesi "..prevSesiNum)
+                -- unfav buah yang tadi di-fav (sudah dapat mutasi nightmare-nya)
+                if _favFruitId then
+                    setFruitFav(_favFruitId, false)
+                    addLog("Cad2: unfav buah id="..tostring(_favFruitId):sub(1,12))
+                    _favFruitId = nil
+                end
+                break
+            end
+        end
+        -- pastikan unfav kalau keluar karena alasan lain (mutasi lain / stop)
+        if _favFruitId then
+            setFruitFav(_favFruitId, false)
+            addLog("Cad2: unfav buah (keluar loop) id="..tostring(_favFruitId):sub(1,12))
+            _favFruitId = nil
+        end
+        if not stopRequested then
+            setStatus("Sesi "..prevSesiNum.." — balik equip", C.accent)
+            unequipAll()
+            _activeSesiNum = prevSesiNum; _G._UPL_SESI_NUM = prevSesiNum
+            _activeSesiDef = prevSesiDef; _G._UPL_SESI_DEF = prevSesiDef
+            equipSesi(prevSesiNum, prevSesiDef)
+            setStatus("Sesi "..prevSesiNum.." — running", C.accent)
+        end
+    elseif #data.shovel > 0 then
+        -- nightmare masih ada, ada mutasi -> collect langsung tanpa ganti pet
+        addLog("Mutasi ditemukan — collect langsung")
+        setStatus("Collect mutasi...", Color3.fromRGB(160,120,220))
+        local fruits = data.shovel
+        while #fruits > 0 and not stopRequested do
+            local collected = doCollect(fruits)
+            totalShovel = totalShovel + collected
+            addLog("Collect: "..collected.."/"..#fruits)
+            task.wait(0.8)  -- tunggu server proses
+            local next = scanFruits()
+            _lastMutasiCount = #next.shovel
+            updateUI(next.nightmareCount, next.nightmareCount, _activeSesiNum)
+            fruits = next.shovel
+            if #fruits > 0 then addLog("Masih ada "..#fruits.." mutasi — lanjut collect") end
+        end
+        addLog("Mutasi habis — lanjut sesi ".._activeSesiNum)
+    end
+
+    return data.nightmareCount
+end
+
+-- ===================== SESI =====================
+local function runSesiUtama(sesiNum, def, label, col)
+    addLog("=== "..label.." ==="); setStatus(label.." — equip pet", col); updateUI(totalNightmareCollected,0,sesiNum)
+    _clusterPos = farmCenter()
+    addLog("Cluster: "..((_clusterPos) and string.format("%.0f,%.0f",_clusterPos.X,_clusterPos.Z) or "NIL — cek workspace.Farm"))
+    waitForContainer(10)
+    _activeSesiNum = sesiNum; _G._UPL_SESI_NUM = sesiNum
+    _activeSesiDef = def; _G._UPL_SESI_DEF = def
+    unequipAll(); equipSesi(sesiNum, def); setStatus(label.." — running", col)
+    local _targetReached = false
+    local _collectBusy = false
+    -- scan loop: jalan terus, update GUI + cek target
+    dbgLog("[DBG] masuk loop sesi"..sesiNum)
+    while not stopRequested and not _targetReached do
+        dbgLog("[DBG] iterasi sesi"..sesiNum)
+        enforceEquip(def)
+        local data = scanFruits()
+        local nm = _nmCached  -- baca dari fast poller (0.5s), lebih responsif
+        _lastMutasiCount = #data.shovel
+        totalNightmareCollected = nm
+        updateUI(nm, nm, sesiNum)
+        -- v8.160: debug setiap iterasi
+        dbgLog("[DBG] loop sesi"..sesiNum..": nm="..nm.." shovel="..#data.shovel.." busy="..(tostring(_collectBusy)).." target="..CFG.nightmareTarget)
+        -- cek target
+        if nm >= CFG.nightmareTarget then
+            addLog("Target! nm="..nm.." >= "..CFG.nightmareTarget.." — Pindah sesi 2.")
+            setStatus("Target tercapai!", C.accent)
+            _targetReached = true
+            break
+        end
+        -- cek cadangan 2 (nightmare = 0)
+        if nm == 0 and _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN2_DEF then
+            dbgLog("[DBG] nm=0 -> processFruits (cad2)")
+            -- delegate ke processFruits untuk handle cadangan 2
+            processFruits()
+        elseif #data.shovel > 0 and not _collectBusy then
+            -- ada mutasi, collect di background supaya scan tetap jalan
+            dbgLog("[DBG] spawn collect: "..#data.shovel.." buah")
+            _collectBusy = true
+            task.spawn(function()
+                local fruits = data.shovel
+                while #fruits > 0 and not stopRequested and not _targetReached do
+                    local collected = doCollect(fruits)
+                    totalShovel = totalShovel + collected
+                    addLog("Collect: "..collected.."/"..#fruits)
+                    task.wait(0.8)  -- tunggu server proses collect sebelum scan ulang
+                    local nxt = scanFruits()
+                    fruits = nxt.shovel
+                    dbgLog("[DBG] collect loop: sisa="..#fruits)
+                end
+                dbgLog("[DBG] collect selesai: stopReq="..(tostring(stopRequested)).." targetReached="..(tostring(_targetReached)))
+                _collectBusy = false
+            end)
+        elseif #data.shovel > 0 and _collectBusy then
+            dbgLog("[DBG] shovel="..#data.shovel.." skip (busy)")
+        elseif #data.shovel == 0 then
+            dbgLog("[DBG] shovel=0, nm="..nm.." -> tidak ada yang di-collect")
+        end
+        task.wait(3)
+    end
+    -- v8.155: sebelum keluar sesi 1, collect sisa shovel yang belum ke-collect
+    if not stopRequested then
+        local sisa = scanFruits()
+        if #sisa.shovel > 0 then
+            addLog("Sesi1 selesai: collect sisa "..#sisa.shovel.." mutasi sebelum pindah sesi 2")
+            local fruits = sisa.shovel
+            while #fruits > 0 and not stopRequested do
+                local collected = doCollect(fruits)
+                totalShovel = totalShovel + collected
+                addLog("Sesi1 sisa collect: "..collected.."/"..#fruits)
+                task.wait(1)  -- tunggu server proses
+                local nxt = scanFruits(); fruits = nxt.shovel
+            end
+            addLog("Sesi1: sisa mutasi beres, lanjut sesi 2")
+        end
+    end
+    unequipAll()
+end
+local function runSesi1()
+    dbgLog("[DBG] runSesi1: mulai")
+    SESI1_DEF = { {nama="T-Rex", jml=8} }
+    addLog("Sesi 1 def: 8 T-Rex (fixed)")
+    dbgLog("[DBG] runSesi1: SESI1_DEF fixed 8 T-Rex")
+    _activeSesiDef = SESI1_DEF; _G._UPL_SESI_DEF = false
+    runSesiUtama(1, SESI1_DEF, "SESI 1", C.accent)
+    dbgLog("[DBG] runSesi1: runSesiUtama selesai")
+end
+local function runSesi2()
+    addLog("=== SESI 2 ==="); setStatus("Sesi 2 — equip pet",Color3.fromRGB(220,160,60)); updateUI(totalNightmareCollected,0,2)
+    _clusterPos = farmCenter()
+    waitForContainer(5)
+    _activeSesiNum = 2; _activeSesiDef = SESI2_DEF; _G._UPL_SESI_NUM = 2; _G._UPL_SESI_DEF = SESI2_DEF
+    unequipAll(); equipSesi(2,SESI2_DEF); equipOneBahan()
+    setStatus("Sesi 2 — tunggu nightmare habis",Color3.fromRGB(220,160,60))
+    while not stopRequested do
+        enforceEquip(SESI2_DEF)
+        -- cek bahan age SEBELUM equip baru, biar tidak ganti bahan dulu
+        if _bahanUuid and getAgeFallback(_bahanUuid) >= CFG.bahanMaxAge then
+            addLog("Sesi2: bahan age>="..CFG.bahanMaxAge.." — unequip bahan, pindah sesi 1")
+            unequipPet(_bahanUuid); _bahanUuid = nil; task.wait(CFG.equipWait)
+            totalNightmareCollected=0; return
+        end
+        unequipBahanTua(); equipOneBahan()
+        -- nm: baca dari fast poller (0.5s), scan lengkap hanya untuk shovel
+        local nm = _nmCached
+        local sd=scanFruits(); _lastMutasiCount=#sd.shovel
+        updateUI(totalNightmareCollected,nm,2)
+        addLog("Nightmare kebun: "..nm.." (cached) shovel="..#sd.shovel)
+
+        if nm == 0 then
+            -- v8.154: nightmare habis -> LANGSUNG cadangan 2, skip collect mutasi
+            addLog("Sesi2: nightmare 0 — masuk cadangan 2")
+            setStatus("Cadangan 2 — tunggu nightmare...", Color3.fromRGB(78,200,130))
+            unequipAllExceptBahan(); equipSesi(4, SESI_CADANGAN2_DEF)
+            -- fav 1 buah random biar cepat dapat nightmare
+            task.spawn(function()
+                task.wait(2)
+                local farmFruits=getFruitsFromFarm()
+                local pick=farmFruits[1]
+                if pick then setFruitFav(pick.id,true); addLog("Cad2(S2): fav id="..tostring(pick.id):sub(1,12)) end
+            end)
+            while not stopRequested do
+                task.wait(CFG.loopWait)
+                enforceEquip(SESI_CADANGAN2_DEF)
+                local nmNow = _nmCached  -- baca dari fast poller
+                local d2=scanFruits()    -- scan lengkap untuk shovel saja
+                addLog("Cad2(S2): nm="..nmNow.." (cached) mutasi="..#d2.shovel)
+                if #d2.shovel > 0 then
+                    -- collect mutasi langsung di cadangan 2
+                    local fruits2 = d2.shovel
+                    while #fruits2 > 0 and not stopRequested do
+                        local collected = doCollect(fruits2)
+                        totalShovel = totalShovel + collected
+                        task.wait(0.8)
+                        local nx=scanFruits(); fruits2=nx.shovel
+                    end
+                end
+                if nmNow > 0 then
+                    addLog("Nightmare muncul — balik sesi 2")
+                    break
+                end
+            end
+            unequipAllExceptBahan(); equipSesi(2, SESI2_DEF)
+            -- Bahan tidak perlu di-equip ulang, sudah tetap dari sebelumnya
+            setStatus("Sesi 2 — tunggu nightmare habis", Color3.fromRGB(220,160,60))
+        elseif nm < 200 then
+            -- nightmare di bawah 200 -> pindah sesi 1
+            addLog("Sesi2: nm="..nm.." < 200 — pindah sesi 1")
+            totalNightmareCollected=0; return
+        elseif _bahanUuid and getAgeFallback(_bahanUuid) >= CFG.bahanMaxAge then
+            -- bahan sudah age >= 500 -> unequip dulu, langsung pindah sesi 1
+            addLog("Sesi2: bahan age>="..CFG.bahanMaxAge.." — unequip bahan, pindah sesi 1")
+            unequipPet(_bahanUuid); _bahanUuid = nil; task.wait(CFG.equipWait)
+            totalNightmareCollected=0; return
+        elseif #sd.shovel > 0 then
+            -- ada mutasi, nightmare masih ada -> collect langsung
+            addLog("Sesi2: mutasi ditemukan — collect langsung")
+            local fruits = sd.shovel
+            while #fruits > 0 and not stopRequested do
+                local collected = doCollect(fruits)
+                totalShovel = totalShovel + collected
+                task.wait(0.8)
+                local nx=scanFruits(); fruits=nx.shovel
+            end
+            addLog("Mutasi habis — lanjut sesi 2")
+        end
+
+        task.wait(CFG.loopWait)
+    end
+end
+
+pcall(function()
+    local pickupRE=gameEvents:FindFirstChild("PickupSound"); if pickupRE then
+        pickupRE.OnClientEvent:Connect(function()
+            local before=scanFruits().nightmareCount; task.wait(0.3); local after=scanFruits().nightmareCount
+            if before>after then totalNightmareCollected=totalNightmareCollected+(before-after) end
+        end)
+    end
+end)
+
+-- ===================== HEALER LOOP =====================
+-- Cek tiap 2s: pet yang seharusnya di-equip tapi modelnya tidak ada di workspace -> re-equip
+-- Mirip reference uplevel asli: tiap 1s cek supportKunci + bahanAktif, kalau model ilang -> paksa re-equip
+-- NOTE: _activeUuids sudah deklarasi di atas (sebelum unequipAll), jangan deklarasi lagi
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if running and not stopRequested and not _isCollecting and not _isTransisi then
+            local healed = 0
+            for uuid in pairs(_activeUuids) do
+                if not modelByUuid[uuid] then
+                    -- model belum muncul/hilang -> re-equip
+                    unequipPet(uuid); task.wait(0.15)
+                    equipPet(uuid); task.wait(0.12)
+                    healed = healed + 1
+                end
+            end
+            if healed > 0 then addLog("HEAL: "..healed.." pet model hilang -> re-equip") end
+        end
+    end
+end)
+
+-- ===================== SWAP SKILL READY-LOOP =====================
+-- Poll tiap 0.05s: pet di _activeUuids yg namanya ada di SWAP_SKILL_CFG
+-- Swap TEPAT saat transisi cooldown false->true (baru jadi ready), bukan saat udah lama ready
+local _swapBusy, _swapBusySince = {}, {}  -- _swapLastSwap dideklarasi di TrexSwap block
+local _swapWasReady = {}  -- track state cooldown sebelumnya per uuid
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        if not running or stopRequested or _isCollecting or _isTransisi then continue end
+        for uuid in pairs(_activeUuids) do
+            -- cek nama pet -> ada di SWAP_SKILL_CFG?
+            local tipe = getPetTipeFromUUID(uuid)
+            if not tipe then continue end
+            if not SWAP_SKILL_CFG[tipe] then continue end
+            local cfgVal  = SWAP_SKILL_CFG[tipe]
+            if cfgVal == "noguard" then continue end  -- legacy, skip
+            local isNocd  = (cfgVal == "nocd")       -- pet tanpa CD: swap kalau idle >3s
+            local noGuard = isNocd                    -- nocd: gak pakai busy guard
+            local pnpDelay = (type(cfgVal) == "number") and cfgVal or 4.2
+            -- guard untuk pet ber-CD
+            if not noGuard then
+                if _swapBusy[uuid] and _swapBusySince[uuid] and (tick()-_swapBusySince[uuid])>6 then
+                    _swapBusy[uuid]=nil
+                end
+                if _swapBusy[uuid] then continue end
+            end
+            local rdy  = petReadyUpl(uuid)
+            local was  = _swapWasReady[uuid]
+            local idle = _swapLastSwap[uuid] and (tick()-_swapLastSwap[uuid]) or 999
+            -- nocd: hanya trigger kalau rdy==nil & idle>3s (pet tanpa CD sama sekali)
+            -- normal: trigger saat false->true, atau nil & idle>5s
+            local triggerSwap
+            if isNocd then
+                triggerSwap = (rdy == nil and idle > 3)
+            else
+                triggerSwap = (rdy == true and was == false) or (rdy == nil and idle > 5)
+            end
+            _swapWasReady[uuid] = rdy
+            if triggerSwap then
+                if not noGuard then
+                    _swapBusy[uuid]     = true
+                    _swapBusySince[uuid]= tick()
+                end
+                task.spawn(function()
+                    pcall(function()
+                        if not isNocd then task.wait(pnpDelay) end  -- nocd: langsung swap, no PNP delay
+                        unequipPet(uuid); task.wait(0.03)
+                        equipPet(uuid)
+                        _swapLastSwap[uuid] = tick()
+                        -- tunggu model respawn (max 1.2s)
+                        for i=1,12 do
+                            task.wait(0.1)
+                            local m2 = modelByUuid[uuid]
+                            if m2 and m2.Parent then break end
+                            if i%4==0 then equipPet(uuid) end
+                        end
+                    end)
+                    if not noGuard then _swapBusy[uuid] = nil end
+                end)
+            end
+        end
+    end
+end)
+
+-- ===================== POSISI LOOP =====================
+-- Mimic  → paksa ke titik slot-nya (MIMIC_POSITIONS[slotNum])
+-- Peacock / Ghostly Spider / Baku → paksa ke tengah kebun
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        if not running or stopRequested then continue end
+        local center = _clusterPos or farmCenter()
+        for uuid in pairs(_activeUuids) do
+            local m = modelByUuid[uuid]
+            if not m or not m.Parent then continue end
+            local tipe = getPetTipeFromUUID(uuid)
+            if not tipe then continue end
+            local targetPos = nil
+            if AUTO_TENGAH_TYPES[tipe] and center then
+                targetPos = center
+            end
+            if targetPos then
+                pcall(function()
+                    local pos = m:GetPivot().Position
+                    if (pos - targetPos).Magnitude > 2 then
+                        m:PivotTo(CFrame.new(targetPos))
+                    end
+                end)
+            end
+        end
+    end
+end)
+
+-- ===================== SWITCH CONTROL =====================
+local sesiAktif=1
+swEv:Connect(function(nowOn)
+    if nowOn then
+        if running then return end
+        running=true; stopRequested=false
+        -- auto-start: dipanggil dari task.defer di bawah
+        if swLbl then swLbl.Text="AUTO LVL — RUNNING" end
+        task.spawn(function()
+            addLog("uplevel.lua "..VERSION.." start!")
+            setStatus("Running...",C.accent)
+            while not stopRequested do
+                if sesiAktif==1 then runSesi1(); if not stopRequested then sesiAktif=2 end
+                else runSesi2(); if not stopRequested then sesiAktif=1 end end
+            end
+            running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=SESI1_DEF; _G._UPL_SESI_NUM=1; _G._UPL_SESI_DEF=false; addLog("Loop stop."); setStatus("Stopped")
+            setSw(false); if swLbl then swLbl.Text="AUTO LVL — START" end
+        end)
+    else
+        stopRequested=true; setStatus("Menghentikan...",C.textDim); addLog("Stop diminta...")
+        if swLbl then swLbl.Text="AUTO LVL — STOPPING..." end
+    end
+end)
+
+-- auto-start: trigger switch ON saat script pertama jalan
+task.defer(function()
+    if not running then
+        setSw(true)
+        if swLbl then swLbl.Text="AUTO LVL — RUNNING" end
+        running=true; stopRequested=false
+        task.spawn(function()
+            addLog("uplevel.lua "..VERSION.." start!")
+            setStatus("Running...",C.accent)
+            while not stopRequested do
+                if sesiAktif==1 then runSesi1(); if not stopRequested then sesiAktif=2 end
+                else runSesi2(); if not stopRequested then sesiAktif=1 end end
+            end
+            running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=SESI1_DEF; _G._UPL_SESI_NUM=1; _G._UPL_SESI_DEF=false; addLog("Loop stop."); setStatus("Stopped")
+            setSw(false); if swLbl then swLbl.Text="AUTO LVL — START" end
+        end)
+    end
+end)
+
+-- log pool yang sudah tersimpan (dari re-execute sebelumnya)
+do
+    local poolInfo=""
+    for sesiNum=1,4 do
+        for nama,slots in pairs(sesiPool[sesiNum]) do
+            local cnt=0; for _ in pairs(slots) do cnt=cnt+1 end
+            if cnt>0 then poolInfo=poolInfo.."S"..sesiNum.." "..nama.."×"..cnt.." " end
+        end
+    end
+    if poolInfo~="" then
+        addLog("Pool restored: "..poolInfo)
+    end
+end
+addLog("uplevel.lua "..VERSION.." | equipRE:"..(equipRE and "OK ("..equipRE:GetFullName()..")" or "TIDAK DITEMUKAN!").." | getgc:"..(getgc and "OK" or "TIDAK ADA"))
+setStatus("Idle — aktifkan switch di atas")
+
+-- background: update MUTASI counter real-time (per buah, bukan per mutasi)
+task.spawn(function()
+    while true do
+        task.wait(3)
+        pcall(function()
+            local count = 0
+            local farm = getPlayerFarm()
+            if not farm then return end
+            local imp = farm:FindFirstChild("Important"); if not imp then return end
+            local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
+            for _,pt in ipairs(plants:GetChildren()) do
+                local fruits = pt:FindFirstChild("Fruits"); if not fruits then continue end
+                for _,fruit in ipairs(fruits:GetChildren()) do
+                    if fruitHasMutation(fruit) then count = count + 1 end
+                end
+            end
+            _lastMutasiCount = count
+            pcall(function() shovelL.Text = tostring(count) end)
+        end)
+    end
+end)
+
+-- ===================== TAB TRADE =====================
+do
+    local RS=game:GetService("ReplicatedStorage"); local HS=game:GetService("HttpService")
+    local GE=RS:FindFirstChild("GameEvents")
+    local _tok,_tpn=pcall(function()return game:GetService("Players").LocalPlayer.Name end)
+    if not _tok then _tpn="x" end
+    local TRADE_CFG="zenx_trade_cfg_".._tpn..".json"
+    local TR_ALL={}
+    for i=1,3 do TR_ALL[i]={targets={},tipe={},minKg=0,minAge=0,autoAcc=false,mode=(i==1 and "gift" or "off"),nama="Gift "..i} end
+    local activeTemplate=1; local TR=TR_ALL[1]
+    local function saveTr()
+        pcall(function()
+            if not writefile then return end
+            local data={active=activeTemplate,templates={}}
+            for i=1,3 do local t=TR_ALL[i]; data.templates[i]={targets=t.targets,tipe=t.tipe,minKg=t.minKg,minAge=t.minAge,autoAcc=t.autoAcc,mode=t.mode,nama=t.nama} end
+            writefile(TRADE_CFG,HS:JSONEncode(data))
+        end)
+    end
+    pcall(function()
+        if isfile and isfile(TRADE_CFG) and readfile then
+            local c=HS:JSONDecode(readfile(TRADE_CFG))
+            if type(c)=="table" and type(c.templates)=="table" then
+                for i=1,3 do
+                    local ct=c.templates[i]
+                    if type(ct)=="table" then
+                        local t=TR_ALL[i]
+                        if type(ct.targets)=="table" then local a={} for _,v in ipairs(ct.targets) do if type(v)=="string" then a[#a+1]=v end end t.targets=a end
+                        if type(ct.tipe)=="table" then local s={} for k,v in pairs(ct.tipe) do if type(k)=="string" and v then s[k]=true end end t.tipe=s end
+                        t.minKg=tonumber(ct.minKg) or 0; t.minAge=tonumber(ct.minAge) or 0; t.autoAcc=(ct.autoAcc==true)
+                        t.mode=(ct.mode=="trade" or ct.mode=="gift") and ct.mode or "off"
+                        if i==1 and t.mode=="trade" then t.mode="gift" end
+                        if type(ct.nama)=="string" and ct.nama~="" then t.nama=ct.nama end
+                    end
+                end
+                activeTemplate=tonumber(c.active) or 1
+                if activeTemplate<1 or activeTemplate>3 then activeTemplate=1 end
+                TR=TR_ALL[activeTemplate]
+            elseif type(c)=="table" then
+                local t=TR_ALL[1]
+                if type(c.targets)=="table" then local a={} for _,v in ipairs(c.targets) do if type(v)=="string" then a[#a+1]=v end end t.targets=a end
+                if type(c.tipe)=="table" then local s={} for k,v in pairs(c.tipe) do if type(k)=="string" and v then s[k]=true end end t.tipe=s end
+                t.minKg=tonumber(c.minKg) or 0; t.minAge=tonumber(c.minAge) or 0; t.autoAcc=(c.autoAcc==true)
+                t.mode=(c.mode=="trade" or c.mode=="gift") and c.mode or "off"
+                if t.mode=="trade" then t.mode="gift" end
+            end
+        end
+    end)
+
+    local TradeSys={}
+    do
+        local te=GE and GE:FindFirstChild("TradeEvents")
+        if te then
+            TradeSys.sendReqRE=te:FindFirstChild("SendRequest"); TradeSys.addItemRE=te:FindFirstChild("AddItem")
+            TradeSys.respondRE=te:FindFirstChild("RespondRequest"); TradeSys.acceptRE=te:FindFirstChild("Accept"); TradeSys.confirmRE=te:FindFirstChild("Confirm")
+        end
+    end
+    local GiftSys={}
+    do
+        GiftSys.giftRE=GE and GE:FindFirstChild("PetGiftingService")
+        if not GiftSys.giftRE then GiftSys.giftRE=RS:FindFirstChild("PetGiftingService",true) end
+        pcall(function()
+            local mods=RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("PetServices")
+            local gm=mods and mods:FindFirstChild("PetGiftingInputService")
+            if gm then local ok,mod=pcall(require,gm); if ok then GiftSys.pgs=mod end end
+        end)
+    end
+
+    local function fmtU(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.."}" end return s end
+    local trBusy=false; local trStatus
+
+    local function setStat(s) if trStatus then trStatus.Text=s end print("[Trade] "..tostring(s)) end
+
+    local function clickBtnByText(root,texts)
+        if not root then return end
+        pcall(function()
+            for _,d in ipairs(root:GetDescendants()) do
+                if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                    local txt=(d:IsA("TextButton") and d.Text or ""):lower()
+                    for _,want in ipairs(texts) do
+                        if txt==want or txt:find(want,1,true) then
+                            if firesignal then pcall(function()firesignal(d.Activated)end) end
+                            if getconnections then for _,c in ipairs(getconnections(d.Activated)) do pcall(function()c:Fire()end) end end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    local function autoAccTrade()
+        pcall(function()
+            local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+            local tui=pg:FindFirstChild("TradingUI"); local lt=tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts=lt:FindFirstChild("Options"); local acc=opts and opts:FindFirstChild("Accept")
+                if acc then if firesignal then pcall(function()firesignal(acc.Activated)end) end
+                    if getconnections then for _,c in ipairs(getconnections(acc.Activated)) do pcall(function()c:Fire()end) end end
+                end
+            end
+            clickBtnByText(pg,{"yes","confirm","continue","lanjut"})
+            if TradeSys.confirmRE then pcall(function()TradeSys.confirmRE:FireServer()end) end
+            if TradeSys.acceptRE then pcall(function()TradeSys.acceptRE:FireServer()end) end
+        end)
+    end
+    local function holdTicket()
+        local char=plr.Character; local hum=char and char:FindFirstChildOfClass("Humanoid"); local bp=plr:FindFirstChild("Backpack")
+        if not (char and hum and bp) then return false end
+        local function findTk(cont) if not cont then return nil end
+            for _,t in ipairs(cont:GetChildren()) do if t:IsA("Tool") then local n=t.Name:lower(); if (n:find("trading") and n:find("ticket")) or n:find("trade ticket") then return t end end end
+        end
+        if findTk(char) then return true end
+        local tk=findTk(bp); if not tk then return false end
+        pcall(function()hum:UnequipTools()end); task.wait(0.1); pcall(function()hum:EquipTool(tk)end); task.wait(0.15)
+        return findTk(char)~=nil
+    end
+
+    local function petsLolos()
+        local out={}; local bp=plr:FindFirstChild("Backpack"); local c=_kgContainer; if not bp then return out end
+        -- build set uuid dari sesiPool (semua sesi) -> support yang dipilih di picker
+        local _poolUuids={}
+        for _,pool in pairs(sesiPool) do
+            for _,slots in pairs(pool) do
+                for _,entry in pairs(slots) do
+                    if entry and entry.uuid then local u=tostring(entry.uuid); _poolUuids[u]=true; _poolUuids[fmtU(u)]=true end
+                end
+            end
+        end
+        local function isFavP(t,uuid)
+            if uuid and c then local e=c[fmtU(uuid)] or c[tostring(uuid)]; if type(e)=="table" and type(e.PetData)=="table" and e.PetData.IsFavorite==true then return true end end
+            for _,attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do if t:GetAttribute(attr)==true then return true end end
+            return false
+        end
+        local scan={}
+        for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end
+        if plr.Character then for _,t in ipairs(plr.Character:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
+        for _,t in ipairs(scan) do
+            local uuid=t:GetAttribute("PET_UUID")
+            local supAll=_G.ZenxSupportUuids or {}; local sk=_G.ZenxSupportKunci or {}; local pr=_G.__ZenxSupProtect or {}
+            if uuid then
+                -- _activeUuids = pet equip di kebun | sesiPool = uuid dipilih di picker (belum tentu ke-equip)
+                local isSup=(supAll[uuid] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[uuid] or pr[fmtU(uuid)] or _activeUuids[uuid] or _activeUuids[fmtU(uuid)] or _poolUuids[uuid] or _poolUuids[fmtU(uuid)])
+                if not isSup then
+                    local e=c and (c[fmtU(uuid)] or c[tostring(uuid)])
+                    local tipe=(type(e)=="table" and e.PetType) and stripMutation(tostring(e.PetType)) or stripMutation(tostring(t:GetAttribute("f") or ""))
+                    if next(TR.tipe)==nil or TR.tipe[tipe] then
+                        local kgBase,age=0,0
+                        if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end
+                        local function th(val,thr) thr=thr or 0; if thr<0 then return val<(-thr) end; return val>=thr end
+                        if th(kgBase,TR.minKg) and th(age,TR.minAge) and not isFavP(t,uuid) then
+                            out[#out+1]={uuid=uuid,tool=t,tipe=tipe,kg=kgBase,age=age}
+                        end
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    local function unfavIfNeeded(tool)
+        if not tool then return end
+        local uuid=tool:GetAttribute("PET_UUID")
+        local supAll=_G.ZenxSupportUuids or {}; local sk=_G.ZenxSupportKunci or {}; local pr=_G.__ZenxSupProtect or {}
+        -- cek sesiPool: uuid dipilih di picker = support -> jangan unfav
+        local _inPool=false
+        if uuid then local u=tostring(uuid); for _,pool in pairs(sesiPool) do for _,slots in pairs(pool) do for _,entry in pairs(slots) do if entry and (tostring(entry.uuid)==u or tostring(entry.uuid)==fmtU(u)) then _inPool=true end end end end end
+        if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[tostring(uuid)] or pr[fmtU(uuid)] or _activeUuids[uuid] or _activeUuids[fmtU(uuid)] or _inPool) then return end
+        local fav=false
+        if uuid and _kgContainer then
+            local e=_kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
+            if type(e)=="table" then local pd=e.PetData; if type(pd)=="table" and (pd.IsFavorite or pd.Favorite or pd.Favorited) then fav=true end; if not fav and (e.IsFavorite or e.Favorite) then fav=true end end
+        end
+        if not fav then for _,attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr)==true then fav=true; break end end end
+        if fav then
+            local ge=game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+            local fRE=ge and ge:FindFirstChild("Favorite_Item")
+            if fRE then pcall(function()fRE:FireServer(tool)end); task.wait(0.2) end
+        end
+    end
+    local function unfavSemua(pets) for _,p in ipairs(pets) do unfavIfNeeded(p.tool) end task.wait(0.25) end
+
+    task.spawn(function()
+        task.wait(12)
+        while true do
+            task.wait(2)
+            pcall(function()
+                local bp=plr:FindFirstChild("Backpack")
+                local supOk=(next(_G.ZenxSupportKunci or {})~=nil) or (next(_G.ZenxSupportUuids or {})~=nil)
+                if bp and supOk then for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then unfavIfNeeded(t) end end end
+            end)
+        end
+    end)
+
+    local function tradeToTarget(targetPlayer,pets)
+        if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
+        unfavSemua(pets); pcall(holdTicket)
+        pcall(function()TradeSys.sendReqRE:FireServer(targetPlayer)end); task.wait(0.5)
+        local added=0
+        local function cantAddMore()
+            local found=false; pcall(function()
+                local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+                for _,d in ipairs(pg:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible then local t=(d.Text or ""):lower(); if t:find("can't add more") or t:find("cant add more") then found=true break end end
+                end
+            end); return found
+        end
+        for _,p in ipairs(pets) do
+            if cantAddMore() then break end
+            pcall(function()TradeSys.addItemRE:FireServer("Pet",fmtU(p.uuid))end); added=added+1; task.wait(0.12)
+        end
+        for i=1,4 do autoAccTrade(); task.wait(0.3) end
+        return added
+    end
+    local function giftToTarget(targetPlayer,pets)
+        local char=plr.Character; local hum=char and char:FindFirstChildOfClass("Humanoid")
+        if not (hum and targetPlayer) then return 0 end
+        unfavSemua(pets); local sent=0
+        for _,p in ipairs(pets) do
+            local petTool=p.tool
+            pcall(function()hum:EquipTool(petTool)end); task.wait(0.2)
+            if petTool.Parent~=char then pcall(function()hum:EquipTool(petTool)end); task.wait(0.2) end
+            if GiftSys.pgs and GiftSys.pgs.GivePet then pcall(function()GiftSys.pgs.GivePet(targetPlayer)end); task.wait(0.25) end
+            if petTool.Parent and GiftSys.giftRE then pcall(function()GiftSys.giftRE:FireServer("GivePet",targetPlayer,fmtU(p.uuid))end); task.wait(0.25) end
+            if not petTool.Parent then sent=sent+1 end
+            task.wait(0.1)
+        end
+        return sent
+    end
+
+    local function jalankan(mode)
+        if trBusy then setStat("lagi jalan, tunggu...") return end
+        trBusy=true
+        task.spawn(function()
+            local Players=game:GetService("Players"); local pets=petsLolos()
+            if #pets==0 then setStat("gak ada pet lolos filter"); trBusy=false; return end
+            local nTgt=0
+            for _,nama in ipairs(TR.targets) do
+                local tp=Players:FindFirstChild(nama)
+                if tp then
+                    nTgt=nTgt+1; setStat((mode=="trade" and "TRADE" or "GIFT").." -> "..nama.." ("..#pets.." pet)")
+                    if mode=="trade" then tradeToTarget(tp,pets) else giftToTarget(tp,pets) end
+                    task.wait(1); pets=petsLolos(); if #pets==0 then break end
+                end
+            end
+            if nTgt==0 then setStat("gak ada target ONLINE") else setStat("selesai ("..nTgt.." target)") end
+            trBusy=false
+        end)
+    end
+
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            -- tunggu container loaded dulu sebelum gift jalan
+            if not _kgContainer then
+                addLog("[Gift] container belum ready, skip gift dulu")
+                continue
+            end
+            TR_ALL[1].mode="gift"
+            pcall(function()
+                local mk2=_G.ZenxMarketAkun
+                local Players=game:GetService("Players"); local tgt={}
+                if type(mk2)=="table" and next(mk2) then
+                    -- data sudah ada: pakai total/max dari panel
+                    for nm,d in pairs(mk2) do
+                        if Players:FindFirstChild(nm) then
+                            local full=d and d.max and d.max>0 and d.total and d.total>=d.max
+                            if not full then tgt[#tgt+1]=nm end
+                        end
+                    end
+                else
+                    -- v9.500: data belum fetch -> fallback default max=200, kirim ke semua akun market hadir
+                    for _,pl in ipairs(Players:GetPlayers()) do
+                        local sc=(pl.GetAttribute and pl:GetAttribute("sc") or "")
+                        if type(sc)=="string" and sc:find("MARKET") then tgt[#tgt+1]=pl.Name end
+                    end
+                end
+                TR_ALL[1].targets=tgt
+                if type(_G.ZenxUplevelGiftTipe)=="table" then TR_ALL[1].tipe=_G.ZenxUplevelGiftTipe end
+                TR_ALL[1].minKg=3.8; TR_ALL[1].minAge=500; TR_ALL[1].mode="gift"
+            end)
+            -- selalu jalankan dari TR_ALL[1] (market template), bukan TR (active template)
+            -- TR bisa beda kalau user switch ke template 2/3 -> target/filter beda -> gak kirim
+            local mkt=TR_ALL[1]
+            if (mkt.mode=="trade" or mkt.mode=="gift") and not trBusy then
+                -- petsLolos() baca TR jadi swap sementara
+                local _oldTR=TR; TR=mkt
+                local pets=petsLolos(); TR=_oldTR
+                if #pets>0 then
+                    trBusy=true
+                    task.spawn(function()
+                        local Players2=game:GetService("Players"); local nTgt=0
+                        for _,nama in ipairs(mkt.targets) do
+                            local tp=Players2:FindFirstChild(nama)
+                            if tp then
+                                nTgt=nTgt+1; setStat("GIFT -> "..nama.." ("..#pets.." pet)")
+                                giftToTarget(tp,pets); task.wait(1)
+                                TR=mkt; pets=petsLolos(); TR=_oldTR
+                                if #pets==0 then break end
+                            end
+                        end
+                        if nTgt==0 then setStat("gak ada market ONLINE") else setStat("selesai ("..nTgt.." target)") end
+                        trBusy=false
+                    end)
+                end
+            end
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            if TR.autoAcc then
+                pcall(function()
+                    local pg=plr:FindFirstChild("PlayerGui"); local gn=pg and pg:FindFirstChild("Gift_Notification"); if not gn then return end
+                    for _,d in ipairs(gn:GetDescendants()) do
+                        if d.Name=="Accept" and d:IsA("GuiButton") and d.Visible then
+                            if firesignal then pcall(function()firesignal(d.MouseButton1Click)end) end
+                            if getconnections then for _,c in ipairs(getconnections(d.MouseButton1Click)) do pcall(function()c:Fire()end) end end
+                        end
+                    end
+                end)
+                pcall(autoAccTrade)
+            end
+        end
+    end)
+
+    -- ===== UI TAB TRADE =====
+    local function trHeader(txt,lo)
+        local h=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=lo,Parent=tradeScroll})
+        local bar=mk("Frame",{Size=UDim2.new(0,3,0,14),Position=UDim2.new(0,2,0.5,-7),BackgroundColor3=C.accent2 or C.accent,BorderSizePixel=0,Parent=h}); corner(bar,2)
+        local t=lbl(h,txt,11.5,C.accent2 or C.accent); t.Font=FONT_B; t.Position=UDim2.new(0,12,0,0); t.Size=UDim2.new(1,-12,1,0)
+    end
+    local tradeRefresh
+    local tplBtns={}
+    local tplRow=mk("Frame",{Size=UDim2.new(1,0,0,46),BackgroundTransparency=1,LayoutOrder=0,Parent=tradeScroll})
+    mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,7),Parent=tplRow})
+    local function updTplVisual()
+        for i,d in ipairs(tplBtns) do
+            local on=(i==activeTemplate)
+            d.btn.BackgroundColor3=on and C.cardSel or C.card; d.st.Color=on and C.accent or C.border
+            d.lbl.TextColor3=on and C.accent or C.textDim; d.sub.Text=TR_ALL[i].nama
+        end
+    end
+    local function switchTo(n)
+        activeTemplate=n; TR=TR_ALL[n]; saveTr(); updTplVisual(); if tradeRefresh then tradeRefresh() end
+    end
+    for i=1,3 do
+        local b=mk("TextButton",{Size=UDim2.new(1/3,-5,1,0),BackgroundColor3=C.card,Text="",AutoButtonColor=false,Parent=tplRow}); corner(b,9)
+        local st=stroke(b,C.border,1)
+        local l=lbl(b,"GIFT "..i,12,C.textDim); l.Font=FONT_B; l.Position=UDim2.new(0,0,0,7); l.Size=UDim2.new(1,0,0,16); l.TextXAlignment=Enum.TextXAlignment.Center
+        local sub=lbl(b,TR_ALL[i].nama,9,C.textMute); sub.Position=UDim2.new(0,0,0,25); sub.Size=UDim2.new(1,0,0,12); sub.TextXAlignment=Enum.TextXAlignment.Center
+        tplBtns[i]={btn=b,st=st,lbl=l,sub=sub}
+        local n=i; b.MouseButton1Click:Connect(function()switchTo(n)end)
+    end
+
+    trHeader("PENGATURAN",1)
+
+    -- Mode (OFF / GIFT / TRADE)
+    local modeRow=mk("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=C.card,BorderSizePixel=0,LayoutOrder=2,Parent=tradeScroll}); corner(modeRow,9); stroke(modeRow,C.border,1)
+    lbl(modeRow,"Mode",12,C.textDim).Position=UDim2.new(0,12,0,0)
+    local modeVal=lbl(modeRow,"OFF",13,C.text,Enum.TextXAlignment.Right); modeVal.Font=FONT_B; modeVal.Position=UDim2.new(0.5,0,0,0); modeVal.Size=UDim2.new(0.5,-10,1,0)
+    modeRow.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then
+        if TR.mode=="off" then TR.mode="gift" elseif TR.mode=="gift" then TR.mode="trade" else TR.mode="off" end
+        modeVal.Text=TR.mode:upper(); saveTr()
+    end end)
+
+    -- Target (input username)
+    local tgtRow=mk("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=C.card,BorderSizePixel=0,LayoutOrder=3,Parent=tradeScroll}); corner(tgtRow,9); stroke(tgtRow,C.border,1)
+    lbl(tgtRow,"Target",12,C.textDim).Position=UDim2.new(0,12,0,0)
+    local tgtBox=mk("TextBox",{Size=UDim2.new(0.55,0,0.7,0),Position=UDim2.new(0.43,0,0.15,0),BackgroundTransparency=1,
+        PlaceholderText="username",Text="",Font=FONT_B,TextSize=12,TextColor3=C.text,TextXAlignment=Enum.TextXAlignment.Right,Parent=tgtRow})
+    local tgtAddBtn=mk("TextButton",{Size=UDim2.new(0,32,0,24),Position=UDim2.new(1,-38,0.5,-12),BackgroundColor3=C.accent,
+        Text="+",Font=FONT_B,TextSize=14,TextColor3=Color3.new(1,1,1),Parent=tgtRow}); corner(tgtAddBtn,6)
+    tgtAddBtn.MouseButton1Click:Connect(function()
+        local nm=tgtBox.Text:match("^%s*(.-)%s*$"); if nm=="" then return end
+        local exists=false; for _,v in ipairs(TR.targets) do if v==nm then exists=true break end end
+        if not exists then TR.targets[#TR.targets+1]=nm; saveTr() end
+        tgtBox.Text=""
+        if tradeRefresh then tradeRefresh() end
+    end)
+
+    -- Min KG + Min Age
+    local function numRow(label,getter,setter,lo)
+        local f=mk("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=C.card,BorderSizePixel=0,LayoutOrder=lo,Parent=tradeScroll}); corner(f,9); stroke(f,C.border,1)
+        lbl(f,label,12,C.textDim).Position=UDim2.new(0,12,0,0)
+        local box=mk("TextBox",{Size=UDim2.new(0.55,0,0.7,0),Position=UDim2.new(0.43,0,0.15,0),BackgroundTransparency=1,
+            Text=tostring(getter()),Font=FONT_B,TextSize=12,TextColor3=C.text,TextXAlignment=Enum.TextXAlignment.Right,Parent=f})
+        box.FocusLost:Connect(function() local n=tonumber(box.Text); if n then setter(n) end; box.Text=tostring(getter()); saveTr() end)
+        return box
+    end
+    local minKgBox=numRow("Min KG (0=semua)",function()return TR.minKg end,function(n)TR.minKg=n end,4)
+    local minAgeBox=numRow("Min Age (0=semua)",function()return TR.minAge end,function(n)TR.minAge=n end,5)
+
+    -- Jenis Pet (kosong = semua)
+    local tipeRow=mk("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=C.card,BorderSizePixel=0,LayoutOrder=55,Parent=tradeScroll}); corner(tipeRow,9); stroke(tipeRow,C.border,1)
+    lbl(tipeRow,"Jenis Pet",12,C.textDim).Position=UDim2.new(0,12,0,0)
+    local tipeBox=mk("TextBox",{Size=UDim2.new(0.52,0,0.7,0),Position=UDim2.new(0.43,0,0.15,0),BackgroundTransparency=1,
+        PlaceholderText="nama tipe",Text="",Font=FONT_B,TextSize=12,TextColor3=C.text,TextXAlignment=Enum.TextXAlignment.Right,Parent=tipeRow})
+    local tipeAddBtn=mk("TextButton",{Size=UDim2.new(0,32,0,24),Position=UDim2.new(1,-38,0.5,-12),BackgroundColor3=C.accent,
+        Text="+",Font=FONT_B,TextSize=14,TextColor3=Color3.new(1,1,1),Parent=tipeRow}); corner(tipeAddBtn,6)
+    local tipeListFrame=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=56,Parent=tradeScroll})
+    mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Wraps=true,Padding=UDim.new(0,4),Parent=tipeListFrame})
+    local function rebuildTipeList()
+        for _,c in ipairs(tipeListFrame:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
+        for tpName,_ in pairs(TR.tipe) do
+            local chip=mk("TextButton",{Size=UDim2.new(0,0,0,24),AutomaticSize=Enum.AutomaticSize.X,BackgroundColor3=C.cardSel or C.card,
+                Text=" "..tpName.." ✕ ",Font=FONT_B,TextSize=11,TextColor3=C.accent,AutoButtonColor=false,Parent=tipeListFrame}); corner(chip,6); stroke(chip,C.accent,1)
+            chip.MouseButton1Click:Connect(function() TR.tipe[tpName]=nil; saveTr(); rebuildTipeList() end)
+        end
+        if not next(TR.tipe) then
+            local all=lbl(tipeListFrame,"(semua tipe)",11,C.textMute); all.Size=UDim2.new(1,0,0,20); all.LayoutOrder=0
+        end
+    end
+    tipeAddBtn.MouseButton1Click:Connect(function()
+        local nm=tipeBox.Text:match("^%s*(.-)%s*$"); if nm=="" then return end
+        TR.tipe[nm]=true; saveTr(); tipeBox.Text=""; rebuildTipeList()
+    end)
+
+    trHeader("TARGET LIST",6)
+    -- chips target yang dipilih (horizontal wraps)
+    local tgtListFrame=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=7,Parent=tradeScroll})
+    local tgtListLay=mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder,Parent=tgtListFrame})
+    pcall(function() tgtListLay.Wraps=true end)
+
+    -- akun market available (belum di targets) untuk di-tap tambah
+    trHeader("AKUN MARKET",57)
+    local mktFrame=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=58,Parent=tradeScroll})
+    local mktLay=mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder,Parent=mktFrame})
+    pcall(function() mktLay.Wraps=true end)
+
+    local function rebuildTgtList()
+        -- clear chips target
+        for _,c in ipairs(tgtListFrame:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
+        -- show empty hint
+        if #TR.targets==0 then
+            local hint=lbl(tgtListFrame,"(belum ada target)",11,C.textMute); hint.Size=UDim2.new(1,0,0,22)
+        end
+        for idx,nm in ipairs(TR.targets) do
+            local mk2=(_G.ZenxMarketAkun or {})[nm]
+            local info = mk2 and (" ("..mk2.total.."/"..mk2.max..")") or ""
+            local chip=mk("Frame",{Size=UDim2.new(0,0,0,28),AutomaticSize=Enum.AutomaticSize.X,BackgroundColor3=C.cardSel or C.card,BorderSizePixel=0,Parent=tgtListFrame}); corner(chip,14); stroke(chip,C.accent,1)
+            local ltxt=lbl(chip,nm..info,11,C.accent); ltxt.Font=FONT_B; ltxt.AutomaticSize=Enum.AutomaticSize.X; ltxt.Size=UDim2.new(0,0,1,0); ltxt.Position=UDim2.new(0,10,0,0)
+            local pad2=mk("UIPadding",{PaddingLeft=UDim.new(0,0),PaddingRight=UDim.new(0,26),Parent=ltxt})
+            local xb=mk("TextButton",{Size=UDim2.new(0,18,0,18),Position=UDim2.new(1,-22,0.5,-9),BackgroundColor3=Color3.fromRGB(80,30,30),Text="✕",Font=FONT_B,TextSize=10,TextColor3=Color3.fromRGB(240,120,120),Parent=chip}); corner(xb,9)
+            local i=idx; xb.MouseButton1Click:Connect(function() table.remove(TR.targets,i); saveTr(); if tradeRefresh then tradeRefresh() end end)
+        end
+        -- rebuild market chips (akun yang belum dipilih)
+        for _,c in ipairs(mktFrame:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
+        local mkt=_G.ZenxMarketAkun or {}
+        local sorted={}; for nm in pairs(mkt) do sorted[#sorted+1]=nm end; table.sort(sorted)
+        local anyMkt=false
+        for _,nm in ipairs(sorted) do
+            local already=false; for _,v in ipairs(TR.targets) do if v==nm then already=true; break end end
+            if not already then
+                anyMkt=true
+                local d=mkt[nm]
+                local chip=mk("TextButton",{Size=UDim2.new(0,0,0,26),AutomaticSize=Enum.AutomaticSize.X,BackgroundColor3=C.card,BorderSizePixel=0,
+                    Text="",AutoButtonColor=false,Parent=mktFrame}); corner(chip,13); stroke(chip,C.border,1)
+                local ltxt=lbl(chip,nm.." ("..d.total.."/"..d.max..")",11,C.textDim); ltxt.Font=FONT_B; ltxt.AutomaticSize=Enum.AutomaticSize.X; ltxt.Size=UDim2.new(0,0,1,0)
+                ltxt.Position=UDim2.new(0,10,0,0)
+                mk("UIPadding",{PaddingLeft=UDim.new(0,0),PaddingRight=UDim.new(0,10),Parent=ltxt})
+                local nm2=nm; chip.MouseButton1Click:Connect(function()
+                    local ex=false; for _,v in ipairs(TR.targets) do if v==nm2 then ex=true; break end end
+                    if not ex then TR.targets[#TR.targets+1]=nm2; saveTr() end
+                    if tradeRefresh then tradeRefresh() end
+                end)
+            end
+        end
+        if not anyMkt then
+            local hint=lbl(mktFrame,"(semua sudah dipilih / belum ada data)",11,C.textMute); hint.Size=UDim2.new(1,0,0,22)
+        end
+    end
+
+    trHeader("AKSI",60)
+    local trStatusLbl=mk("TextLabel",{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,Text="—",Font=FONT_B,TextSize=12,TextColor3=C.textMute,LayoutOrder=61,Parent=tradeScroll})
+    trStatus=trStatusLbl
+
+    local sendBtn=mk("TextButton",{Size=UDim2.new(1,0,0,40),BackgroundColor3=C.accent,Text="KIRIM SEKARANG",Font=FONT_B,TextSize=13,TextColor3=Color3.new(1,1,1),LayoutOrder=62,Parent=tradeScroll}); corner(sendBtn,10)
+    sendBtn.MouseButton1Click:Connect(function() jalankan(TR.mode~="off" and TR.mode or "gift") end)
+
+    -- ===================== DESTROY LAG (pet orang lain + animasi kebun) =====================
+    trHeader("DESTROY LAG",70)
+
+    local _dlOn = false
+    local _dlListeners = {}
+    local _dlListenerConns = {}
+    local function dlCleanupListeners()
+        for _, conn in ipairs(_dlListenerConns) do pcall(function() conn:Disconnect() end) end
+        _dlListenerConns = {}; _dlListeners = {}
+    end
+
+    -- Toggle button
+    local dlBtn = mk("TextButton",{
+        Size=UDim2.new(1,0,0,38), BackgroundColor3=C.card,
+        Text="○  Destroy Pet & Animasi Kebun Orang — OFF",
+        Font=FONT_B, TextSize=12, TextColor3=C.textMute,
+        LayoutOrder=71, Parent=tradeScroll
+    }); corner(dlBtn,9); stroke(dlBtn,C.border,1.5)
+
+    -- Log box
+    local dlLogFrame = mk("Frame",{
+        Size=UDim2.new(1,0,0,110), BackgroundColor3=Color3.fromRGB(12,12,18),
+        BorderSizePixel=0, LayoutOrder=72, Parent=tradeScroll
+    }); corner(dlLogFrame,8); stroke(dlLogFrame,C.border,1)
+    local dlLogScroll = mk("ScrollingFrame",{
+        Size=UDim2.new(1,-6,1,-6), Position=UDim2.new(0,3,0,3),
+        BackgroundTransparency=1, BorderSizePixel=0,
+        ScrollBarThickness=3, ScrollBarImageColor3=C.line,
+        CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
+        Parent=dlLogFrame
+    })
+    mk("UIListLayout",{Padding=UDim.new(0,2), SortOrder=Enum.SortOrder.LayoutOrder, Parent=dlLogScroll})
+    local dlLogIdx = 0
+    local function dlLog(s)
+        dlLogIdx = dlLogIdx + 1
+        mk("TextLabel",{
+            Size=UDim2.new(1,-4,0,16), BackgroundTransparency=1,
+            Text="["..os.date("%H:%M:%S").."] "..tostring(s),
+            Font=Enum.Font.Code, TextSize=10, TextColor3=Color3.fromRGB(180,230,180),
+            TextXAlignment=Enum.TextXAlignment.Left, LayoutOrder=dlLogIdx,
+            Parent=dlLogScroll
+        })
+        task.defer(function()
+            pcall(function()
+                dlLogScroll.CanvasPosition = Vector2.new(0, math.max(0, dlLogScroll.AbsoluteCanvasSize.Y - dlLogScroll.AbsoluteSize.Y))
+            end)
+        end)
+        local kids = dlLogScroll:GetChildren()
+        if #kids > 62 then
+            for _, k in ipairs(kids) do
+                if k:IsA("TextLabel") then pcall(function() k:Destroy() end); break end
+            end
+        end
+    end
+
+    -- v10.199: P1b — destroy Models di subfarm orang lain, sekali saat ON
+    local function dlRunOnce(plrName, farm, mySubfarms)
+        if not farm then return end
+        local mySubfarmCount = 0; for _ in pairs(mySubfarms) do mySubfarmCount = mySubfarmCount + 1 end
+        if mySubfarmCount == 0 then dlLog("[DL-P1b] SKIP — mySubfarms kosong"); return end
+        local petDel = 0
+        local function isElephant2(obj)
+            local n = obj.Name:lower()
+            if n:find("elephant") then return true end
+            local ok0, v0 = pcall(function() return obj:GetAttribute("f") end)
+            if ok0 and v0 and tostring(v0):lower():find("elephant") then return true end
+            local ok1, v1 = pcall(function()
+                return obj:GetAttribute("_petType") or obj:GetAttribute("petType")
+                    or obj:GetAttribute("type") or obj:GetAttribute("PetType")
+            end)
+            if ok1 and v1 and tostring(v1):lower():find("elephant") then return true end
+            for _, d in ipairs(obj:GetDescendants()) do
+                if d.Name:lower():find("elephant") then return true end
+                local ok2, v2 = pcall(function() return d:GetAttribute("f") end)
+                if ok2 and v2 and tostring(v2):lower():find("elephant") then return true end
+            end
+            return false
+        end
+        for _, sf in ipairs(farm:GetChildren()) do
+            local sfIsMine = false
+            pcall(function()
+                if mySubfarms[sf] then sfIsMine = true; return end
+                local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                local owner = sign and sign:GetAttribute("_owner")
+                if owner == plrName then sfIsMine = true end
+            end)
+            if not sfIsMine then
+                local sfOwner = "?"
+                pcall(function()
+                    local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                    sfOwner = (sign and sign:GetAttribute("_owner")) or sf.Name
+                end)
+                local p1bCount = 0
+                for _, obj in ipairs(sf:GetDescendants()) do
+                    if not obj or not obj.Parent then continue end
+                    if obj:IsA("Model") and not isElephant2(obj) then
+                        pcall(function() obj:Destroy() end)
+                        petDel = petDel + 1; p1bCount = p1bCount + 1
+                    end
+                end
+                if p1bCount > 0 then dlLog("[DL-P1b] destroy "..p1bCount.." @ sf("..sfOwner..")") end
+            end
+        end
+        dlLog("[DL-P1b] selesai total="..petDel)
+    end
+
+    -- v10.199: P6PP — listener realtime PetsPhysical, wajib UUID
+    local function dlSetupP6PP(myPetUUIDs, myUUIDCount, sharedPP)
+        if myUUIDCount == 0 then
+            dlLog("[DL-P6PP] BATAL — UUID kosong! coba lagi setelah container ready")
+            return
+        end
+        if not sharedPP then dlLog("[DL-P6PP] PetsPhysical tidak ada"); return end
+        local function isElephantPP(obj)
+            local n = obj.Name:lower()
+            if n:find("elephant") then return true end
+            local ok0, v0 = pcall(function() return obj:GetAttribute("f") end)
+            if ok0 and v0 and tostring(v0):lower():find("elephant") then return true end
+            return false
+        end
+        local ppConn = sharedPP.ChildAdded:Connect(function(newObj)
+            if not _dlOn then return end
+            if newObj:IsA("Model") and not myPetUUIDs[newObj.Name] and not isElephantPP(newObj) then
+                task.wait(0.08)
+                pcall(function()
+                    if newObj and newObj.Parent and not myPetUUIDs[newObj.Name] then
+                        dlLog("[DL-P6PP] destroy: "..newObj.Name:sub(1,36))
+                        newObj:Destroy()
+                    end
+                end)
+            end
+        end)
+        table.insert(_dlListenerConns, ppConn)
+        dlLog("[DL-P6PP] listener aktif, UUID="..myUUIDCount)
+    end
+
+    -- v10.199: P5 — skill FX allowlist di workspace root, tiap 2s
+    local function dlRun()
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        local fxDel = 0
+        local ok, err = pcall(function()
+            local farm = workspace:FindFirstChild("Farm")
+            local mySubfarms = {}
+            local myBBmin, myBBmax = nil, nil
+            if farm then
+                for _, sf in ipairs(farm:GetChildren()) do
+                    local isMine = false
+                    pcall(function()
+                        local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                        local owner = sign and sign:GetAttribute("_owner")
+                        if owner == plrName then isMine = true end
+                    end)
+                    if isMine then
+                        mySubfarms[sf] = true
+                        pcall(function()
+                            for _, part in ipairs(sf:GetDescendants()) do
+                                if part:IsA("BasePart") then
+                                    local pos = part.Position
+                                    if myBBmin == nil then
+                                        myBBmin = Vector3.new(pos.X, pos.Y, pos.Z)
+                                        myBBmax = Vector3.new(pos.X, pos.Y, pos.Z)
+                                    else
+                                        myBBmin = Vector3.new(math.min(myBBmin.X,pos.X), math.min(myBBmin.Y,pos.Y), math.min(myBBmin.Z,pos.Z))
+                                        myBBmax = Vector3.new(math.max(myBBmax.X,pos.X), math.max(myBBmax.Y,pos.Y), math.max(myBBmax.Z,pos.Z))
+                                    end
+                                end
+                            end
+                        end)
+                    end
+                end
+            end
+            local bbMargin = 60
+            if myBBmin then
+                myBBmin = myBBmin - Vector3.new(bbMargin, 100, bbMargin)
+                myBBmax = myBBmax + Vector3.new(bbMargin, 100, bbMargin)
+            end
+            local mySubfarmCount = 0; for _ in pairs(mySubfarms) do mySubfarmCount = mySubfarmCount + 1 end
+            local wsP5Allowlist = { WindBlastTemplate=true, SpottedEffect=true, Puddle=true }
+            if mySubfarmCount > 0 then
+                local p5Del, p5Skip = 0, 0
+                for _, obj in ipairs(workspace:GetChildren()) do
+                    if wsP5Allowlist[obj.Name] then
+                        local cls = obj.ClassName
+                        if cls == "Model" or cls == "Part" or cls == "MeshPart"
+                           or cls == "UnionOperation" or cls == "SpecialMesh" then
+                            local inMyArea = false
+                            if myBBmin and myBBmax then
+                                pcall(function()
+                                    local pos = nil
+                                    if obj:IsA("BasePart") then pos = obj.Position
+                                    else
+                                        local pp = obj.PrimaryPart
+                                        if pp then pos = pp.Position
+                                        else
+                                            for _, c in ipairs(obj:GetChildren()) do
+                                                if c:IsA("BasePart") then pos = c.Position; break end
+                                            end
+                                        end
+                                    end
+                                    if pos then
+                                        if pos.X >= myBBmin.X and pos.X <= myBBmax.X
+                                           and pos.Z >= myBBmin.Z and pos.Z <= myBBmax.Z then
+                                            inMyArea = true
+                                        end
+                                    end
+                                end)
+                            end
+                            if inMyArea then p5Skip = p5Skip + 1
+                            else pcall(function() obj:Destroy() end); fxDel = fxDel + 1; p5Del = p5Del + 1 end
+                        end
+                    end
+                end
+                if p5Del > 0 then dlLog("[DL-P5] destroy="..p5Del.." skip(mine)="..p5Skip) end
+            else
+                dlLog("[DL-P5] SKIP — mySubfarms kosong")
+            end
+        end)
+        if not ok then dlLog("[DL] ERROR: "..(tostring(err):sub(1,120))) end
+        if fxDel > 0 then dlLog("[DL] fx="..fxDel) end
+    end
+
+    -- v10.199: dlStartup — P1b sekali + setup P6PP
+    local function dlStartup()
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        local farm = workspace:FindFirstChild("Farm")
+        local mySubfarms = {}
+        if farm then
+            for _, sf in ipairs(farm:GetChildren()) do
+                local isMine = false
+                pcall(function()
+                    local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                    local owner = sign and sign:GetAttribute("_owner")
+                    if owner == plrName then isMine = true end
+                end)
+                if isMine then mySubfarms[sf] = true end
+            end
+        end
+        task.spawn(function() pcall(dlRunOnce, plrName, farm, mySubfarms) end)
+        task.spawn(function()
+            local myPetUUIDs = {}; local myUUIDCount = 0
+            pcall(function()
+                local c = ambilContainer()
+                if type(c) == "table" then
+                    for uuid, e in pairs(c) do
+                        if type(e) == "table" then
+                            local raw = tostring(uuid):gsub("[{}]","")
+                            if #raw > 20 then
+                                myPetUUIDs[raw] = true
+                                myPetUUIDs["{"..raw.."}"] = true
+                                myUUIDCount = myUUIDCount + 1
+                            end
+                        end
+                    end
+                end
+            end)
+            local sharedPP = workspace:FindFirstChild("PetsPhysical")
+            dlSetupP6PP(myPetUUIDs, myUUIDCount, sharedPP)
+        end)
+        dlLog("[DL] ON — P1b sekali, P5 tiap 2s, P6PP listener")
+    end
+
+    -- Toggle logic
+    dlBtn.MouseButton1Click:Connect(function()
+        _dlOn = not _dlOn
+        if _dlOn then
+            dlBtn.Text = "●  Destroy Pet & Animasi Kebun Orang — ON"
+            dlBtn.TextColor3 = Color3.fromRGB(100,230,100)
+            dlBtn.BackgroundColor3 = Color3.fromRGB(20,50,20)
+            stroke(dlBtn, Color3.fromRGB(80,200,80), 1.5)
+            dlCleanupListeners()
+            dlStartup()
+            task.spawn(function()
+                while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
+            end)
+        else
+            dlBtn.Text = "○  Destroy Pet & Animasi Kebun Orang — OFF"
+            dlBtn.TextColor3 = C.textMute
+            dlBtn.BackgroundColor3 = C.card
+            stroke(dlBtn, C.border, 1.5)
+            dlCleanupListeners()
+            dlLog("[DL] OFF")
+        end
+    end)
+
+    -- v10.199: ALWAYS ON — auto-start saat script load
+    task.spawn(function()
+        task.wait(3)
+        _dlOn = true
+        dlBtn.Text = "●  Destroy Pet & Animasi Kebun Orang — ON"
+        dlBtn.TextColor3 = Color3.fromRGB(100,230,100)
+        dlBtn.BackgroundColor3 = Color3.fromRGB(20,50,20)
+        stroke(dlBtn, Color3.fromRGB(80,200,80), 1.5)
+        dlStartup()
+        task.spawn(function()
+            while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
+        end)
+    end)
+
+    tradeRefresh=function()
+        updTplVisual()
+        modeVal.Text=TR.mode:upper()
+        minKgBox.Text=tostring(TR.minKg); minAgeBox.Text=tostring(TR.minAge)
+        tgtBox.Text=""; tipeBox.Text=""
+        rebuildTgtList(); rebuildTipeList()
+    end
+    tradeRefresh()
+end -- end TAB TRADE
+
+-- ===================== TAB TRADE ALL =====================
+-- Trade semua pet inventory ke satu target player (pilih dari server list)
+-- Method: TradeEvents SendRequest → target auto-accept (jika juga pakai uplevelnew)
+do
+    local taHeader=function(txt,lo)
+        local h=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=lo,Parent=tradeAllScroll})
+        local bar=mk("Frame",{Size=UDim2.new(0,3,0,14),Position=UDim2.new(0,2,0.5,-7),BackgroundColor3=C.accent,BorderSizePixel=0,Parent=h}); corner(bar,2)
+        local t=lbl(h,txt,11.5,C.accent); t.Font=FONT_B; t.Position=UDim2.new(0,12,0,0); t.Size=UDim2.new(1,-12,1,0)
+    end
+
+    -- ---- STATUS LABEL ----
+    taHeader("TARGET PLAYER",1)
+    local taStatusLbl=mk("TextLabel",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,
+        Text="pilih player dari list bawah",Font=FONT_B,TextSize=11,TextColor3=C.textMute,
+        TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=2,Parent=tradeAllScroll})
+
+    -- ---- SELECTED TARGET ----
+    local taTargetRow=mk("Frame",{Size=UDim2.new(1,0,0,40),BackgroundColor3=C.card,
+        BorderSizePixel=0,LayoutOrder=3,Parent=tradeAllScroll}); corner(taTargetRow,9); stroke(taTargetRow,C.border,1)
+    lbl(taTargetRow,"Target",12,C.textDim).Position=UDim2.new(0,12,0,0)
+    local taTargetLbl=lbl(taTargetRow,"— belum dipilih —",13,C.textMute)
+    taTargetLbl.Font=FONT_B; taTargetLbl.Position=UDim2.new(0,80,0,0); taTargetLbl.Size=UDim2.new(1,-90,1,0)
+    taTargetLbl.TextXAlignment=Enum.TextXAlignment.Right
+
+    local _taTarget = nil  -- nama player yang dipilih
+
+    -- ---- SERVER PLAYER LIST ----
+    taHeader("PLAYERS DI SERVER",4)
+    local taPlrListFrame=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
+        BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=5,Parent=tradeAllScroll})
+    mk("UIListLayout",{Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder,Parent=taPlrListFrame})
+
+    local taRefreshPlrBtn=mk("TextButton",{Size=UDim2.new(1,0,0,32),BackgroundColor3=C.card,
+        Text="🔄  Refresh List Player",Font=FONT_B,TextSize=12,TextColor3=C.textDim,
+        LayoutOrder=6,Parent=tradeAllScroll}); corner(taRefreshPlrBtn,8); stroke(taRefreshPlrBtn,C.border,1)
+
+    local function buildPlayerList()
+        for _,c in ipairs(taPlrListFrame:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
+        local me = game:GetService("Players").LocalPlayer
+        local players = game:GetService("Players"):GetPlayers()
+        local idx = 0
+        for _,p in ipairs(players) do
+            if p ~= me then
+                idx = idx + 1
+                local isSelected = (_taTarget == p.Name)
+                local row=mk("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=isSelected and C.cardSel or C.card,
+                    Text="",AutoButtonColor=false,BorderSizePixel=0,LayoutOrder=idx,Parent=taPlrListFrame})
+                corner(row,8); stroke(row, isSelected and C.accent or C.border, isSelected and 1.5 or 1)
+                local nameLbl=lbl(row,p.Name,13,isSelected and C.accent or C.text)
+                nameLbl.Font=FONT_B; nameLbl.Position=UDim2.new(0,14,0,0); nameLbl.Size=UDim2.new(0.6,0,1,0)
+                local selLbl=lbl(row,isSelected and "✓ DIPILIH" or "pilih",11,isSelected and C.accent or C.textMute)
+                selLbl.Position=UDim2.new(1,-70,0,0); selLbl.Size=UDim2.new(0,66,1,0)
+                selLbl.TextXAlignment=Enum.TextXAlignment.Right
+                local pName=p.Name
+                row.MouseButton1Click:Connect(function()
+                    _taTarget = pName
+                    taTargetLbl.Text = pName
+                    taTargetLbl.TextColor3 = C.accent
+                    taStatusLbl.Text = "target: "..pName
+                    buildPlayerList()
+                end)
+            end
+        end
+        if idx == 0 then
+            local empty=lbl(taPlrListFrame,"(tidak ada player lain di server)",11,C.textMute)
+            empty.Size=UDim2.new(1,0,0,26); empty.LayoutOrder=1
+        end
+    end
+    taRefreshPlrBtn.MouseButton1Click:Connect(buildPlayerList)
+    buildPlayerList()
+
+    -- ---- DELAY ANTAR TRADE ----
+    taHeader("PENGATURAN",7)
+    local taDelayRow=mk("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=C.card,
+        BorderSizePixel=0,LayoutOrder=8,Parent=tradeAllScroll}); corner(taDelayRow,9); stroke(taDelayRow,C.border,1)
+    lbl(taDelayRow,"Delay antar trade (detik)",12,C.textDim).Position=UDim2.new(0,12,0,0)
+    local taDelayBox=mk("TextBox",{Size=UDim2.new(0.35,0,0.7,0),Position=UDim2.new(0.63,0,0.15,0),
+        BackgroundTransparency=1,Text="2",Font=FONT_B,TextSize=13,TextColor3=C.text,
+        TextXAlignment=Enum.TextXAlignment.Right,Parent=taDelayRow})
+
+    -- ---- PROGRESS ----
+    taHeader("AKSI",9)
+    local taProgLbl=mk("TextLabel",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,
+        Text="—",Font=FONT_B,TextSize=11,TextColor3=C.textMute,
+        TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=10,Parent=tradeAllScroll})
+
+    -- ---- START / STOP ----
+    local _taRunning = false
+    local taStartBtn=mk("TextButton",{Size=UDim2.new(1,0,0,42),BackgroundColor3=C.accent,
+        Text="▶  START TRADE ALL",Font=FONT_B,TextSize=14,TextColor3=Color3.new(1,1,1),
+        LayoutOrder=11,Parent=tradeAllScroll}); corner(taStartBtn,10)
+
+    local taStopBtn=mk("TextButton",{Size=UDim2.new(1,0,0,42),BackgroundColor3=Color3.fromRGB(180,40,40),
+        Text="■  STOP",Font=FONT_B,TextSize=14,TextColor3=Color3.new(1,1,1),
+        Visible=false,LayoutOrder=12,Parent=tradeAllScroll}); corner(taStopBtn,10)
+
+    -- ---- LOG BOX ----
+    local taLogFrame=mk("Frame",{Size=UDim2.new(1,0,0,120),BackgroundColor3=Color3.fromRGB(12,12,18),
+        BorderSizePixel=0,LayoutOrder=13,Parent=tradeAllScroll}); corner(taLogFrame,8); stroke(taLogFrame,C.border,1)
+    local taLogScroll=mk("ScrollingFrame",{Size=UDim2.new(1,-6,1,-6),Position=UDim2.new(0,3,0,3),
+        BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollBarImageColor3=C.line,
+        CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=taLogFrame})
+    mk("UIListLayout",{Padding=UDim.new(0,2),SortOrder=Enum.SortOrder.LayoutOrder,Parent=taLogScroll})
+    local taLogIdx=0
+    local function taLog(s)
+        taLogIdx=taLogIdx+1
+        mk("TextLabel",{Size=UDim2.new(1,-4,0,16),BackgroundTransparency=1,
+            Text="["..os.date("%H:%M:%S").."] "..tostring(s),
+            Font=Enum.Font.Code,TextSize=10,TextColor3=Color3.fromRGB(180,220,255),
+            TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=taLogIdx,Parent=taLogScroll})
+        task.defer(function()
+            pcall(function()
+                taLogScroll.CanvasPosition=Vector2.new(0,math.max(0,taLogScroll.AbsoluteCanvasSize.Y-taLogScroll.AbsoluteSize.Y))
+            end)
+        end)
+        local kids=taLogScroll:GetChildren()
+        if #kids>80 then for _,k in ipairs(kids) do if k:IsA("TextLabel") then pcall(function()k:Destroy()end); break end end end
+    end
+
+    -- ---- HELPER: kumpulkan semua pet di inventory ----
+    local function getAllPetUUIDs()
+        local list = {}
+        pcall(function()
+            local bp = plr:FindFirstChild("Backpack")
+            if bp then
+                for _,t in ipairs(bp:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                        if u then list[#list+1] = fmtUUID(u) end
+                    end
+                end
+            end
+            -- juga scan character (pet yang sedang di-equip)
+            if plr.Character then
+                for _,t in ipairs(plr.Character:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                        if u then
+                            -- cek duplikat
+                            local dup=false; for _,ex in ipairs(list) do if ex==fmtUUID(u) then dup=true break end end
+                            if not dup then list[#list+1]=fmtUUID(u) end
+                        end
+                    end
+                end
+            end
+        end)
+        return list
+    end
+
+    -- ---- HELPER: cari Trading Ticket di backpack ----
+    local function hasTicket()
+        local found=false
+        pcall(function()
+            local function scan(c) if not c then return end
+                for _,t in ipairs(c:GetChildren()) do
+                    if t:IsA("Tool") then local low=t.Name:lower()
+                        if (low:find("trading") and low:find("ticket")) or low:find("trade ticket") then found=true end
+                    end
+                end
+            end
+            scan(plr:FindFirstChild("Backpack")); scan(plr.Character)
+        end)
+        return found
+    end
+
+    -- ---- HELPER: tunggu Trading Ticket tersedia (auto-buy via BuyGearStock) ----
+    local function waitForTicket(maxWait)
+        local ge=RS:FindFirstChild("GameEvents")
+        local buyRE=ge and ge:FindFirstChild("BuyGearStock")
+        local ticketName="Trading Ticket"
+        local t0=os.clock()
+        while not hasTicket() do
+            if os.clock()-t0 > (maxWait or 15) then return false end
+            if buyRE then pcall(function()buyRE:FireServer(ticketName)end) end
+            task.wait(1)
+        end
+        return true
+    end
+
+    -- ---- HELPER: auto accept+confirm window trade (spam 0.12s kayak up6kg) ----
+    local function taAutoAcceptWindow(te)
+        pcall(function()
+            local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+            local tui=pg:FindFirstChild("TradingUI")
+            local lt=tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts=lt:FindFirstChild("Options")
+                for _,bn in ipairs({"Accept","Confirm"}) do
+                    local b=opts and opts:FindFirstChild(bn)
+                    if b then
+                        if firesignal then pcall(function()firesignal(b.Activated)end) end
+                        if getconnections then for _,c in ipairs(getconnections(b.Activated)) do pcall(function()c:Fire()end) end end
+                        pcall(function()
+                            if firesignal then firesignal(b.MouseButton1Click)
+                            else local cs=getconnections and getconnections(b.MouseButton1Click)
+                                if cs then for _,c in ipairs(cs) do pcall(function()c:Fire()end) end end
+                            end
+                        end)
+                    end
+                end
+                -- scan seluruh LiveTrade descendants
+                for _,d in ipairs(lt:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t=((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                        if t=="yes" or t:find("confirm") or t=="continue" or t=="accept" then
+                            pcall(function()
+                                if firesignal then firesignal(d.MouseButton1Click) end
+                                local cs=getconnections and getconnections(d.MouseButton1Click)
+                                if cs then for _,c in ipairs(cs) do pcall(function()c:Fire()end) end end
+                            end)
+                        end
+                    end
+                end
+                -- v1.11 style: scan SELURUH PlayerGui (unfair trade popup di luar LiveTrade)
+                for _,d in ipairs(pg:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t=((d:IsA("TextButton") and d.Text) or ""):lower()
+                        if t=="yes" or t:find("confirm") or t=="continue" or t=="lanjut" then
+                            pcall(function()
+                                if firesignal then firesignal(d.MouseButton1Click) end
+                                local cs=getconnections and getconnections(d.MouseButton1Click)
+                                if cs then for _,c in ipairs(cs) do pcall(function()c:Fire()end) end end
+                                if firesignal then firesignal(d.Activated) end
+                            end)
+                        end
+                    end
+                end
+            end
+            -- backup remote langsung
+            if te then
+                local a=te:FindFirstChild("Accept"); local c=te:FindFirstChild("Confirm")
+                if c then pcall(function()c:FireServer()end) end
+                if a then pcall(function()a:FireServer()end) end
+            end
+        end)
+    end
+
+    -- ---- HELPER: pegang Trading Ticket di tangan (equip) ----
+    local function holdTradingTicket()
+        local char=plr.Character; local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local bp=plr:FindFirstChild("Backpack")
+        if not (char and hum and bp) then return false end
+        local function findTicket(cont)
+            if not cont then return nil end
+            for _,t in ipairs(cont:GetChildren()) do
+                if t:IsA("Tool") then local n=t.Name:lower()
+                    if (n:find("trading") and n:find("ticket")) or n:find("trade ticket") then return t end
+                end
+            end
+        end
+        if findTicket(char) then return true end  -- sudah di tangan
+        local tk=findTicket(bp); if not tk then return false end
+        pcall(function()hum:UnequipTools()end); task.wait(0.1)
+        pcall(function()hum:EquipTool(tk)end); task.wait(0.15)
+        return findTicket(char) ~= nil
+    end
+
+    -- ---- HELPER: send trade request ke target (cara up6kg: SendRequest -> AddItem loop -> Accept) ----
+    local function sendTradeToTarget(targetName, petUUIDs)
+        local ge=RS:FindFirstChild("GameEvents")
+        local te=ge and ge:FindFirstChild("TradeEvents")
+        if not te then taLog("ERR: TradeEvents gak ada"); return false end
+
+        local sendReqRE=te:FindFirstChild("SendRequest")
+        local addItemRE=te:FindFirstChild("AddItem")
+        if not sendReqRE then taLog("ERR: SendRequest RE gak ada"); return false end
+        if not addItemRE then taLog("ERR: AddItem RE gak ada"); return false end
+
+        local targetPlr=game:GetService("Players"):FindFirstChild(targetName)
+        if not targetPlr then taLog("ERR: "..targetName.." gak ada di server"); return false end
+
+        -- equip tiket dulu
+        pcall(holdTradingTicket)
+
+        -- kirim trade request (player object langsung, kayak up6kg)
+        pcall(function() sendReqRE:FireServer(targetPlr) end)
+        task.wait(0.5)
+
+        -- tambah pet satu per satu ke slot trade (AddItem per uuid)
+        local added=0
+        for _,uuid in ipairs(petUUIDs) do
+            pcall(function() addItemRE:FireServer("Pet", uuid) end)
+            added=added+1; task.wait(0.12)
+        end
+        taLog("AddItem: "..added.." pet ditambah ke trade window")
+
+        -- spam accept+confirm 4x (kayak up6kg)
+        for _=1,4 do taAutoAcceptWindow(te); task.wait(0.3) end
+
+        return true
+    end
+
+    -- ---- HELPER: unequip semua pet dari kebun (equipRE UnequipPet per uuid) ----
+    local function unequipSemuaPet()
+        if not equipRE then taLog("[WARN] equipRE nil — gak bisa unequip"); return end
+        local uuids={}
+        pcall(function()
+            -- scan workspace pet model (uuid = nama model {uuid})
+            for _,m in pairs(workspace:GetDescendants()) do
+                if m:IsA("Model") then
+                    local n=tostring(m.Name)
+                    if n:sub(1,1)=="{" and #n>10 then uuids[n]=true end
+                end
+            end
+            -- scan backpack+character juga (yang belum ke-equip ke kebun)
+            local function scan(c) if not c then return end
+                for _,t in ipairs(c:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local u=t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                        if u then uuids[fmtUUID(u)]=true end
+                    end
+                end
+            end
+            scan(plr:FindFirstChild("Backpack")); scan(plr.Character)
+        end)
+        local n=0
+        for uuid in pairs(uuids) do
+            pcall(function() equipRE:FireServer("UnequipPet", uuid) end)
+            n=n+1; task.wait(0.04)
+        end
+        taLog("unequip "..n.." pet dari kebun")
+    end
+
+    -- ---- TRADE ALL LOOP ----
+    local function runTradeAll()
+        if not _taTarget then taProgLbl.Text="pilih target dulu!"; taProgLbl.TextColor3=Color3.fromRGB(255,120,80); return end
+        _taRunning=true
+        taStartBtn.Visible=false; taStopBtn.Visible=true
+        taProgLbl.TextColor3=Color3.fromRGB(120,220,255)
+
+        task.spawn(function()
+            taLog("=== TRADE ALL START -> "..(_taTarget or "?").." ===")
+
+            -- stop AUTO LVL engine dulu
+            taProgLbl.Text="stop AUTO LVL..."
+            taLog("stop AUTO LVL engine...")
+            stopRequested=true
+            -- tunggu engine berhenti (max 5s)
+            local t0=os.clock()
+            while running and os.clock()-t0<5 do task.wait(0.3) end
+            taLog("AUTO LVL "..(running and "masih jalan (lanjut)" or "sudah stop"))
+
+            -- ambil semua pet dari kebun
+            taProgLbl.Text="ambil pet dari kebun..."
+            taLog("unequip semua pet...")
+            unequipSemuaPet()
+            task.wait(1)  -- kasih waktu pet masuk backpack
+
+            -- pastikan tiket ada
+            taProgLbl.Text="nunggu Trading Ticket..."
+            taLog("cek tiket...")
+            local gotTicket=waitForTicket(20)
+            if not gotTicket then
+                taLog("GAGAL: Trading Ticket gak tersedia setelah 20s")
+                taProgLbl.Text="GAGAL: gak ada Trading Ticket"; taProgLbl.TextColor3=Color3.fromRGB(255,80,80)
+                _taRunning=false; taStartBtn.Visible=true; taStopBtn.Visible=false
+                return
+            end
+            taLog("tiket ada, mulai kumpulkan pet...")
+
+            -- kumpulkan semua UUID pet
+            local allUUIDs=getAllPetUUIDs()
+            if #allUUIDs==0 then
+                taLog("GAGAL: inventory kosong (0 pet)")
+                taProgLbl.Text="inventory kosong!"; taProgLbl.TextColor3=Color3.fromRGB(255,180,80)
+                _taRunning=false; taStartBtn.Visible=true; taStopBtn.Visible=false
+                return
+            end
+            taLog("total pet: "..#allUUIDs.." — kirim ke "..(_taTarget or "?"))
+
+            -- cek target masih di server
+            local tPlr=game:GetService("Players"):FindFirstChild(_taTarget or "")
+            if not tPlr then
+                taLog("ERR: "..(_taTarget or "?").." gak ada di server — stop")
+                taProgLbl.Text="target gak ada di server!"; taProgLbl.TextColor3=Color3.fromRGB(255,80,80)
+                _taRunning=false; taStartBtn.Visible=true; taStopBtn.Visible=false
+                return
+            end
+
+            -- spam SendRequest+AddItem per pet, accept/confirm jalan di background (gak nunggu)
+            local ge=RS:FindFirstChild("GameEvents")
+            local te=ge and ge:FindFirstChild("TradeEvents")
+            local sendReqRE=te and te:FindFirstChild("SendRequest")
+            local addItemRE=te and te:FindFirstChild("AddItem")
+            local tPlr=game:GetService("Players"):FindFirstChild(_taTarget or "")
+            local sent=0; local total=#allUUIDs
+
+            -- background spam accept+confirm terus selama trade jalan
+            local bgRunning=true
+            task.spawn(function()
+                while bgRunning do
+                    pcall(function() taAutoAcceptWindow(te) end)
+                    task.wait(0.12)
+                end
+            end)
+
+            for idx,uuid in ipairs(allUUIDs) do
+                if not _taRunning then break end
+                taProgLbl.Text="trade "..idx.."/"..total.."..."
+                pcall(holdTradingTicket)
+                if sendReqRE and tPlr then
+                    pcall(function() sendReqRE:FireServer(tPlr) end)
+                    task.wait(0.1)
+                    if addItemRE then
+                        pcall(function() addItemRE:FireServer("Pet", uuid) end)
+                    end
+                    sent=sent+1
+                end
+                task.wait(0.15)
+            end
+            bgRunning=false
+
+            taLog("=== SELESAI: sent="..sent.." failed="..failed.." total="..total.." ===")
+            taProgLbl.Text="selesai: "..sent.."/"..total.." pet dikirim"
+            taProgLbl.TextColor3=Color3.fromRGB(100,230,100)
+            _taRunning=false; taStartBtn.Visible=true; taStopBtn.Visible=false
+        end)
+    end
+
+    taStartBtn.MouseButton1Click:Connect(runTradeAll)
+    taStopBtn.MouseButton1Click:Connect(function()
+        _taRunning=false
+        taProgLbl.Text="stop oleh user"; taProgLbl.TextColor3=C.textMute
+        taLog("STOP oleh user")
+        taStartBtn.Visible=true; taStopBtn.Visible=false
+    end)
+
+    -- auto-refresh player list saat tab dibuka
+    task.spawn(function()
+        while true do
+            task.wait(10)
+            pcall(function()
+                if tradeAllContent.Visible then buildPlayerList() end
+            end)
+        end
+    end)
+end -- end TAB TRADE ALL
+
+end -- closes _startEngine
+_startEngine()
+
+-- ===================== SCALE GUI (tombol "range" + popup ukuran, persist) =====================
+do
+    local scaleWrap = mk("Frame",{Name="ZenxScaleWrap",Size=UDim2.new(1,0,1,0),
+        BackgroundTransparency=1,BorderSizePixel=0,Parent=gui})
+    main.Parent = scaleWrap
+    local uiScale = Instance.new("UIScale"); uiScale.Scale=1; uiScale.Parent=scaleWrap
+    local SCALES = {0.5,0.75,1,1.25,1.5,1.75}
+    local _ok,_plrName = pcall(function() return game:GetService("Players").LocalPlayer.Name end)
+    if not _ok then _plrName="x" end
+    local SFILE = "zenx_uplevelnew_scale_".._plrName..".txt"
+    local function saveScale(sc) pcall(function() if writefile then writefile(SFILE,tostring(sc)) end end) end
+    local function loadScale()
+        local ok,v=pcall(function()
+            if isfile and isfile(SFILE) and readfile then return readfile(SFILE) end return nil end)
+        local n=ok and v and tonumber(v) or 1
+        for _,sc in ipairs(SCALES) do if math.abs(n-sc)<0.001 then return sc end end
+        return 1
+    end
+    -- popup pilihan ukuran (di gui, tidak ke-scale)
+    local pop=mk("Frame",{Name="ZenxRangePop",Size=UDim2.new(0,200,0,0),
+        AutomaticSize=Enum.AutomaticSize.Y,Position=UDim2.new(0.5,-100,0.3,0),
+        BackgroundColor3=C.panel,BorderSizePixel=0,Visible=false,ZIndex=800,Parent=gui})
+    corner(pop,10); stroke(pop,C.border,1.5)
+    local popPad=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
+        BackgroundTransparency=1,ZIndex=801,Parent=pop})
+    mk("UIListLayout",{Padding=UDim.new(0,6),HorizontalAlignment=Enum.HorizontalAlignment.Center,
+        SortOrder=Enum.SortOrder.LayoutOrder,Parent=popPad})
+    mk("UIPadding",{PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10),
+        PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),Parent=popPad})
+    local popT=lbl(popPad,"Ukuran GUI",14,C.accent)
+    popT.Size=UDim2.new(1,0,0,22); popT.Font=FONT_B; popT.ZIndex=802; popT.LayoutOrder=0
+    local scaleBtns={}; local rangeBtn
+    local function applyScale(sc)
+        uiScale.Scale=sc; saveScale(sc)
+        main.Position=UDim2.new(0.5/sc,-330,0.5/sc,-210)
+        for sv,b in pairs(scaleBtns) do b.BackgroundColor3=(math.abs(sv-sc)<0.001) and C.accent or C.card end
+        if rangeBtn then rangeBtn.Text="range x"..tostring(sc):gsub("%.",",") end
+    end
+    local lo=1
+    for _,sc in ipairs(SCALES) do
+        local txt="x"..tostring(sc):gsub("%.",",")
+        local b=mk("TextButton",{Size=UDim2.new(1,0,0,32),BackgroundColor3=C.card,Text=txt,
+            Font=FONT_B,TextSize=15,TextColor3=Color3.fromRGB(255,255,255),ZIndex=802,LayoutOrder=lo,Parent=popPad})
+        corner(b,7); scaleBtns[sc]=b; lo=lo+1
+        b.MouseButton1Click:Connect(function() applyScale(sc); pop.Visible=false end)
+    end
+    -- tombol range di titleBar
+    rangeBtn=mk("TextButton",{Size=UDim2.new(0,92,0,24),Position=UDim2.new(0.5,-46,0.5,-12),
+        BackgroundColor3=C.card,Text="range",Font=FONT_B,TextSize=12,
+        TextColor3=C.textDim,Parent=titleBar})
+    corner(rangeBtn,7); stroke(rangeBtn,C.border,1)
+    rangeBtn.MouseButton1Click:Connect(function() pop.Visible=not pop.Visible end)
+    applyScale(loadScale())
+end
+
+end
+local _ok, _err = pcall(_main)
+if not _ok then
+    -- tampilkan error di GUI sederhana
+    pcall(function()
+        local sg = Instance.new("ScreenGui"); sg.Name="ZenxErr"; sg.ResetOnSpawn=false
+        pcall(function() sg.Parent=game:GetService("CoreGui") end)
+        if not sg.Parent then sg.Parent=game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
+        local f=Instance.new("Frame",sg); f.Size=UDim2.new(0,440,0,180); f.Position=UDim2.new(0.5,-220,0.5,-90)
+        f.BackgroundColor3=Color3.fromRGB(20,5,5); f.BorderSizePixel=0; Instance.new("UICorner",f).CornerRadius=UDim.new(0,8)
+        local t=Instance.new("TextLabel",f); t.Size=UDim2.new(1,0,0,30); t.BackgroundColor3=Color3.fromRGB(180,30,30)
+        t.BorderSizePixel=0; t.Text="  uplevelnew ERROR"; t.TextColor3=Color3.new(1,1,1)
+        t.Font=Enum.Font.GothamBold; t.TextSize=13; t.TextXAlignment=Enum.TextXAlignment.Left
+        Instance.new("UICorner",t).CornerRadius=UDim.new(0,8)
+        local m=Instance.new("TextLabel",f); m.Size=UDim2.new(1,-16,1,-46); m.Position=UDim2.new(0,8,0,36)
+        m.BackgroundColor3=Color3.fromRGB(10,5,5); m.BorderSizePixel=0; m.Text=tostring(_err)
+        m.TextColor3=Color3.fromRGB(255,120,120); m.Font=Enum.Font.Code; m.TextSize=11
+        m.TextWrapped=true; m.TextXAlignment=Enum.TextXAlignment.Left; m.TextYAlignment=Enum.TextYAlignment.Top
+        Instance.new("UICorner",m).CornerRadius=UDim.new(0,6); Instance.new("UIPadding",m).PaddingLeft=UDim.new(0,6)
+        local cb=Instance.new("TextButton",f); cb.Size=UDim2.new(0,60,0,24); cb.Position=UDim2.new(1,-68,0,3)
+        cb.BackgroundColor3=Color3.fromRGB(80,20,20); cb.BorderSizePixel=0; cb.Text="TUTUP"
+        cb.TextColor3=Color3.new(1,1,1); cb.Font=Enum.Font.Gotham; cb.TextSize=11
+        Instance.new("UICorner",cb).CornerRadius=UDim.new(0,4)
+        cb.MouseButton1Click:Connect(function() sg:Destroy() end)
+    end)
+    warn("[uplevelnew] CRASH: " .. tostring(_err))
+end
+
+-- ============================================================
+-- STARTUP: lewatin loading screen (keyboard Space + touch tap + mouse click)
+-- Port dari up6kg v1.08 -- cloud phone butuh TOUCH tap buat dismiss "tap to continue"
+-- Mouse click CUMA pas loading (sebelum ada karakter), keyboard terus 5s (lompat = harmless)
+-- ============================================================
+task.spawn(function()
+    local UIS = game:GetService("UserInputService")
+    local Players = game:GetService("Players")
+    local VIM, VU
+    pcall(function() VIM = game:GetService("VirtualInputManager") end)
+    pcall(function() VU = game:GetService("VirtualUser") end)
+    local t0 = tick()
+    while tick() - t0 < 5 do
+        local plr2 = Players.LocalPlayer
+        local hum = plr2 and plr2.Character and plr2.Character:FindFirstChildOfClass("Humanoid")
+        -- keyboard Space (lompat, aman)
+        pcall(function()
+            if firesignal and UIS then
+                firesignal(UIS.InputBegan, {UserInputType=Enum.UserInputType.Keyboard,
+                    KeyCode=Enum.KeyCode.Space, UserInputState=Enum.UserInputState.Begin}, false)
+            end
+        end)
+        pcall(function()
+            if VIM then
+                VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03)
+                VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end
+        end)
+        -- mouse + touch CUMA pas belum ada karakter (loading screen)
+        if not hum then
+            pcall(function() if VU then VU:CaptureController(); VU:ClickButton1(Vector2.new()); VU:ClickButton2(Vector2.new()) end end)
+            pcall(function()
+                if VIM then
+                    local x, y = 200, 300
+                    local cam = workspace.CurrentCamera
+                    if cam and cam.ViewportSize and cam.ViewportSize.X > 0 then
+                        x, y = cam.ViewportSize.X/2, cam.ViewportSize.Y/2
+                    end
+                    VIM:SendTouchEvent(1, 0, x, y); task.wait(0.03)
+                    VIM:SendTouchEvent(1, 2, x, y)
+                end
+            end)
+        end
+        task.wait(1)
+    end
+    print("[uplevelnew] startup kelar (keyboard 5s, touch/mouse cuma pas loading)")
+end)
+
+-- ============================================================
+-- AUTO DESTROY POHON ORANG LAIN (SELALU ON)
+-- Skip kebun sendiri via Sign:GetAttribute("_owner")
+-- ============================================================
+do
+    local WS = workspace
+    local plrName = game.Players.LocalPlayer.Name
+    local function getSubfarmOwner(subfarm)
+        -- cara 1: Important > Data > Owner (StringValue) — sama kayak getPlayerFarm
+        local imp  = subfarm:FindFirstChild("Important")
+        local data = imp and imp:FindFirstChild("Data")
+        local own  = data and data:FindFirstChild("Owner")
+        if own and own.Value and own.Value ~= "" then return own.Value end
+        -- cara 2: fallback Sign attribute _owner
+        local sign = subfarm:FindFirstChild("Sign") or subfarm:FindFirstChild("Sign", true)
+        if sign then return sign:GetAttribute("_owner") end
+        return nil
+    end
+    local function semuaFarm()
+        local roots = {}
+        local farm = WS:FindFirstChild("Farm")
+        if not farm then return roots end
+        for _, subfarm in ipairs(farm:GetChildren()) do
+            local owner = getSubfarmOwner(subfarm)
+            if owner ~= nil and owner ~= plrName then
+                for _, f in ipairs(subfarm:GetDescendants()) do
+                    if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
+                        table.insert(roots, f)
+                    end
+                end
+            end
+        end
+        return roots
+    end
+    local function destroyPohonSemua()
+        local roots = semuaFarm(); local n = 0
+        for _, root in ipairs(roots) do
+            for _, c in ipairs(root:GetChildren()) do
+                if c:IsA("Model") then pcall(function() c:Destroy() end); n = n + 1 end
+            end
+        end
+        return n
+    end
+    task.spawn(function() task.wait(3); destroyPohonSemua() end)
+    task.spawn(function()
+        local farm = WS:WaitForChild("Farm", 15)
+        if not farm then return end
+        farm.DescendantAdded:Connect(function(c)
+            if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+                local pp = c.Parent and c.Parent.Parent
+                local subfarm = pp and pp.Parent
+                if subfarm then
+                    local owner = getSubfarmOwner(subfarm)
+                    if owner == nil or owner == plrName then return end
+                end
+                task.wait(0.05); pcall(function() c:Destroy() end)
+            end
+        end)
+    end)
+    task.spawn(function() while true do task.wait(30); destroyPohonSemua() end end)
+end
+
+-- ===================== REDUCLAG AUTO-ON =====================
+-- particles, weather, lighting FX, shadows, fog, terrain decor — selalu on, cleanup tiap 10s
+do
+    local Lighting = game:GetService("Lighting")
+
+    local function destroyParticlesIn(obj)
+        pcall(function()
+            for _, d in ipairs(obj:GetDescendants()) do
+                if d:IsA("ParticleEmitter") or d:IsA("Trail")
+                or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                    d:Destroy()
+                end
+            end
+        end)
+    end
+
+    local WEATHER_WS_NAMES = {
+        "WeatherVisuals","WeatherObjects","WindBlastTemplate",
+        "Whale","Clam","Kelp","Water_Effect","SpottedEffect",
+        "SpiderWebFX","Rainbows","Dirt_VFX","BirthdayDecor",
+        "BeanstalkEvent","AcornChaosLocal","Visuals","FishRainClient",
+        "TornadoFX","CycloneFX","MeteorFX","LavaPools",
+        "IcicleSpawner","SnowFX","FrostFX","LightningFX",
+    }
+
+    local function applyWeather()
+        pcall(function()
+            local found = {}
+            local unknown = {}
+            -- scan semua children workspace
+            for _, obj in ipairs(workspace:GetChildren()) do
+                local isKnown = false
+                for _, name in ipairs(WEATHER_WS_NAMES) do
+                    if obj.Name == name then
+                        table.insert(found, name.."("..obj.ClassName..")")
+                        isKnown = true
+                        obj:Destroy(); break
+                    end
+                end
+                -- log partikel unknown (belum ada di WEATHER_WS_NAMES)
+                if not isKnown then
+                    if obj:IsA("ParticleEmitter") or obj:IsA("Smoke")
+                    or obj:IsA("Fire") or obj:IsA("Sparkles") or obj:IsA("Trail")
+                    or obj:IsA("SpecialMesh") or obj:IsA("SelectionBox") then
+                        table.insert(unknown, obj.Name.."("..obj.ClassName..")")
+                    end
+                end
+            end
+            -- log ke DEBUG LOG (yang sudah dihapus)
+            if #found > 0 then
+                weatherLog("[HAPUS] "..table.concat(found,", "))
+            else
+                weatherLog("[SCAN] tidak ada weather object")
+            end
+            -- log unknown ke DEBUG WEATHER
+            if #unknown > 0 then
+                weatherLog("[UNKNOWN] "..table.concat(unknown,", "))
+            end
+            -- scan workspace-level FX
+            local fx = {}
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj:IsA("ColorCorrectionEffect") or obj:IsA("BlurEffect")
+                or obj:IsA("BloomEffect") or obj:IsA("SunRaysEffect")
+                or obj:IsA("ParticleEmitter") then
+                    table.insert(fx, obj.Name.."("..obj.ClassName..")")
+                    obj:Destroy()
+                end
+            end
+            if #fx > 0 then weatherLog("[FX] "..table.concat(fx,", ")) end
+        end)
+    end
+
+    local function applyColorFX()
+        pcall(function()
+            for _, v in ipairs(Lighting:GetChildren()) do
+                if v:IsA("Folder") then v:Destroy()
+                elseif v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect")
+                or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect")
+                or v:IsA("BloomEffect") then v:Destroy() end
+            end
+        end)
+    end
+
+    local function applyLightingFX()
+        pcall(function() Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0 end)
+        pcall(function() Lighting.FogEnd = 100000; Lighting.FogStart = 99999 end)
+        pcall(function()
+            for _, v in ipairs(Lighting:GetDescendants()) do
+                if v:IsA("BloomEffect") or v:IsA("Sky") or v:IsA("Atmosphere") then v:Destroy() end
+            end
+        end)
+        pcall(function() local t = workspace:FindFirstChildOfClass("Terrain"); if t then t.Decoration = false end end)
+    end
+
+    -- apply sekarang
+    applyLightingFX(); destroyParticlesIn(workspace); applyWeather(); applyColorFX()
+
+    -- cleanup loop tiap 10s
+    task.spawn(function()
+        while true do
+            task.wait(10)
+            destroyParticlesIn(workspace); applyWeather(); applyColorFX(); applyLightingFX()
+        end
+    end)
+
+    -- destroy BoltPart di Camera tiap 3 menit (garis putih lightning effect)
+    task.spawn(function()
+        while true do
+            task.wait(180)
+            pcall(function()
+                local cam = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera")
+                if cam then
+                    for _, obj in ipairs(cam:GetDescendants()) do
+                        local low = obj.Name:lower()
+                        if low:find("bolt",1,true) or low:find("lightning",1,true) or low:find("ray",1,true) then
+                            obj:Destroy()
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+
+    -- destroy partikel buah tiap 2s (partikel respawn cepat dari game engine)
+    -- scan: farm sendiri (Plants_Physical) + seluruh GardenCoinShop + semua farm lain di workspace.Farm
+    task.spawn(function()
+        local function destroyFruitParticles(fruitsFolder)
+            for _,fruit in ipairs(fruitsFolder:GetChildren()) do
+                for _,d in ipairs(fruit:GetDescendants()) do
+                    if d:IsA("ParticleEmitter") or d:IsA("Trail")
+                    or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                        pcall(function() d:Destroy() end)
+                    end
+                end
+            end
+        end
+        while true do
+            task.wait(2)
+            pcall(function()
+                -- scan farm milik player (Plants_Physical)
+                local farm = getPlayerFarm()
+                if farm then
+                    local imp = farm:FindFirstChild("Important")
+                    local plants = imp and imp:FindFirstChild("Plants_Physical")
+                    if plants then
+                        for _,pt in ipairs(plants:GetChildren()) do
+                            local fruits = pt:FindFirstChild("Fruits")
+                            if fruits then destroyFruitParticles(fruits) end
+                        end
+                    end
+                end
+                -- scan workspace.Farm seluruhnya (termasuk kebun orang lain yg visible)
+                local farmFolder = workspace:FindFirstChild("Farm")
+                if farmFolder then
+                    for _,f in ipairs(farmFolder:GetChildren()) do
+                        -- cari semua Fruits folder secara rekursif di tiap farm
+                        for _,desc in ipairs(f:GetDescendants()) do
+                            if desc.Name == "Fruits" and desc:IsA("Folder") then
+                                destroyFruitParticles(desc)
+                            end
+                        end
+                    end
+                end
+                -- scan GardenCoinShop (buah collectible di area shop)
+                local gcs = workspace:FindFirstChild("GardenCoinShop")
+                if gcs then
+                    for _,d in ipairs(gcs:GetDescendants()) do
+                        if d:IsA("ParticleEmitter") or d:IsA("Trail")
+                        or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                            pcall(function() d:Destroy() end)
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+end
