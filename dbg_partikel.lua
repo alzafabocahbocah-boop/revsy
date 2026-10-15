@@ -415,9 +415,21 @@ end)
 
 -- tombol SCAN+COPY: scan lalu copy 1x
 scanBtn.MouseButton1Click:Connect(function() scanAll(true) end)
--- auto-loop tiap 5 detik: scan aja, gak copy
+-- auto-loop tiap 5 detik: scan + auto-destroy BoltPart di Camera
 task.spawn(function()
     while sg and sg.Parent do
+        -- auto-destroy BoltPart di Camera
+        pcall(function()
+            local cam = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera")
+            if cam then
+                for _, obj in ipairs(cam:GetDescendants()) do
+                    local low = obj.Name:lower()
+                    if low:find("bolt",1,true) or low:find("lightning",1,true) or low:find("ray",1,true) then
+                        obj:Destroy()
+                    end
+                end
+            end
+        end)
         scanAll(false)
         task.wait(5)
     end
