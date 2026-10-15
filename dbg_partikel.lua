@@ -130,6 +130,29 @@ local function scanAll()
     if #wsP==0 then addLog("  (tidak ada)", Color3.fromRGB(120,120,120))
     else for _,s in ipairs(wsP) do addLog("  "..s, Color3.fromRGB(255,150,100)) end end
 
+    addLog("── VFX FOLDERS ──", Color3.fromRGB(100,200,255))
+    local VFX_FOLDERS = {"PetZoneAbilityVFX","FlowerRushFX","SpottedFX","SoundEffects","WeatherFX","LightningFX","StormFX"}
+    pcall(function()
+        for _, folderName in ipairs(VFX_FOLDERS) do
+            local f = ws:FindFirstChild(folderName, true)
+            if f then
+                local kids = {}
+                for _, d in ipairs(f:GetDescendants()) do
+                    if d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") or d:IsA("BillboardGui") or d:IsA("SpecialMesh") then
+                        table.insert(kids, "  "..d.ClassName.."["..d.Name.."] en="..tostring(d.Enabled).." @"..d.Parent.Name)
+                        found=found+1
+                    end
+                end
+                if #kids > 0 then
+                    addLog("📁 "..folderName.." ("..#kids.." emitter):", Color3.fromRGB(255,220,80))
+                    for _,s in ipairs(kids) do addLog(s, Color3.fromRGB(255,180,80)) end
+                else
+                    addLog("📁 "..folderName.." (kosong/no emitter)", Color3.fromRGB(120,120,120))
+                end
+            end
+        end
+    end)
+
     addLog("── LOCALSCRIPT AKTIF ──", Color3.fromRGB(100,200,255))
     local lsFound = {}
     pcall(function()
