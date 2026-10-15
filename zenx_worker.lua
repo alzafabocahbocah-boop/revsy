@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.545-cf"
+local VERSION = "9.546-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1237,6 +1237,48 @@ local function jstr(s)
     s = s:gsub('\n','\n'):gsub('\r','\\r'):gsub('\t','\\t')
     s = s:gsub('%c', ' ')   -- sisa karakter kontrol lain -> spasi
     return '"'..s..'"'
+end
+
+-- v9.546: isi autoexec zenx.lua di semua clone saat worker start
+-- supaya clone baru / yang kelewat tetap punya script
+local _AUTOEXEC_DONE = false
+function sync_autoexec_clones(cfg)
+    if _AUTOEXEC_DONE then return end
+    _AUTOEXEC_DONE = true
+    local LS = cfg and cfg.script_label or ""
+    -- ambil loadstring yang sesuai label (MARKET/HACT/UPLEVEL/dll)
+    -- default: pakai yang ada di clone001 sebagai referensi
+    local refContent = sh("su -c 'cat \"/sdcard/RobloxClone001/Arceus X/autoexec/zenx.lua\" 2>/dev/null'") or ""
+    if refContent == "" then
+        -- fallback: scan semua clone, ambil yang ada isinya
+        local cloneOut = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec -path \"*/RobloxClone*/Arceus X/*\" 2>/dev/null | sort'") or ""
+        for dir in cloneOut:gmatch("[^\n]+") do
+            local c = sh("su -c 'cat \"" .. dir .. "/zenx.lua\" 2>/dev/null'") or ""
+            if c ~= "" then refContent = c; break end
+        end
+    end
+    if refContent == "" then
+        info("[autoexec-sync] referensi kosong, skip")
+        return
+    end
+    -- tulis ke semua clone yang autoexec-nya kosong
+    local cloneDirs = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec -path \"*/RobloxClone*/Arceus X/*\" 2>/dev/null | sort'") or ""
+    local filled, skipped = 0, 0
+    local tmp = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/.zautoexec.tmp"
+    local f = io.open(tmp, "w"); if f then f:write(refContent); f:close() end
+    for dir in cloneDirs:gmatch("[^\n]+") do
+        local cur = sh("su -c 'cat \"" .. dir .. "/zenx.lua\" 2>/dev/null'") or ""
+        if cur == "" then
+            sh_silent("su -c 'cat " .. tmp .. " > \"" .. dir .. "/zenx.lua\"' 2>/dev/null")
+            info("[autoexec-sync] isi " .. dir .. "/zenx.lua")
+            filled = filled + 1
+        else
+            skipped = skipped + 1
+        end
+    end
+    if filled > 0 then
+        info(("[autoexec-sync] selesai: %d diisi, %d udah ada"):format(filled, skipped))
+    end
 end
 
 function ada_perintah_baru(cfg, isiLagiJalan)
@@ -5050,6 +5092,8 @@ local function run(cfg)
     end
 
     local lastBanner = 0
+
+    pcall(function() sync_autoexec_clones(cfg) end)  -- v9.546: isi autoexec clone yang kosong
 
     TMB.readerStart()   -- v9.489: mulai baca URL tembak dari terminal
     while true do
