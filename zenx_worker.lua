@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.540-cf"
+local VERSION = "9.541-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -425,12 +425,12 @@ function denyut_fresh_sec(cfg)
 end
 function denyut_dirs(cfg)
     local seen, dirs = {}, {}
-    local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace" }
+    local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace", "/storage/emulated/0/Delta/Workspace", "/storage/emulated/0/Arceus X/Workspace" }
     for _, d in ipairs(kandidat) do
         if d and d ~= "" and not seen[d] then seen[d] = true; dirs[#dirs + 1] = d end
     end
-    -- tambah semua RobloxClone*/Arceus X/Workspace (pakai find biar path spasi gak di-escape)
-    local cloneOut = sh("su -c 'find /sdcard -maxdepth 3 -type d -name Workspace -path \"*/RobloxClone*\" 2>/dev/null'") or ""
+    -- tambah semua RobloxClone*/Arceus X/Workspace (pakai /storage/emulated/0, /sdcard gak follow symlink di find)
+    local cloneOut = sh("su -c 'find /storage/emulated/0 -maxdepth 3 -type d -name Workspace -path \"*/RobloxClone*\" 2>/dev/null'") or ""
     for line in cloneOut:gmatch("[^\n]+") do
         line = line:match("^%s*(.-)%s*$")
         if line ~= "" and not seen[line] then seen[line] = true; dirs[#dirs + 1] = line end
