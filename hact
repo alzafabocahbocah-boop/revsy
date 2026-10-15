@@ -2780,6 +2780,54 @@ do
     end)
     print("[HactTelur] HACT OTO auto-gift aktif (baca target dari worker)")
 end
+-- v27.84: LAPOR hactstat (pet keep + eggN) ke worker tiap 30s via writefile
+-- Worker baca zenx_hactstat_<nama>.json -> POST /hactstat-batch -> D1 -> panel baca
+do
+    task.spawn(function()
+        local HS = game:GetService("HttpService")
+        local Players = game:GetService("Players")
+        while true do
+            pcall(function()
+                local plr = Players.LocalPlayer
+                if not (plr and writefile and isfile) then return end
+                -- hitung keep per jenis dari backpack
+                local keepMap = {}
+                local ok1 = pcall(function()
+                    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
+                        if petFate(p) == "keep" then
+                            local nm = p.name or p.base or "?"
+                            keepMap[nm] = keepMap[nm] or {total=0}
+                            keepMap[nm].total = keepMap[nm].total + 1
+                        end
+                    end
+                end)
+                -- hitung total egg di backpack
+                local eggTotal = 0
+                pcall(function()
+                    for _, c in pairs(EggDetect.counts or {}) do
+                        eggTotal = eggTotal + (tonumber(c) or 0)
+                    end
+                end)
+                -- nama egg yg dipilih (ambil satu dari config.eggSelected)
+                local eggNama = ""
+                pcall(function()
+                    for k, v in pairs(config.eggSelected or {}) do
+                        if v then eggNama = k; break end
+                    end
+                end)
+                local stat = {
+                    keep   = keepMap,
+                    eggN   = eggTotal,
+                    egg    = eggNama,
+                }
+                local js = HS:JSONEncode(stat)
+                writefile("zenx_hactstat_" .. plr.Name .. ".json", js)
+            end)
+            task.wait(300)
+        end
+    end)
+    print("[HactTelur] hactstat reporter aktif (writefile tiap 5 menit)")
+end
 local function giftPetsByType(targetName, petTypeSet)
     local Players = game:GetService("Players")
     local target = Players:FindFirstChild(targetName)
