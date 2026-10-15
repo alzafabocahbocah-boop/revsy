@@ -38,7 +38,7 @@ Instance.new("UICorner",killBtn).CornerRadius=UDim.new(0,6)
 
 -- ======== SCAN ========
 local PARTICLE_CLASSES = {
-    "ParticleEmitter","Trail","Smoke","Fire","Sparkles",
+    "ParticleEmitter","Trail","Beam","Smoke","Fire","Sparkles",
     "BlurEffect","ColorCorrectionEffect","BloomEffect","SunRaysEffect","DepthOfFieldEffect",
 }
 local function isParticleClass(obj)
