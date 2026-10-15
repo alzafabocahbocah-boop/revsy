@@ -59,12 +59,22 @@ local WEATHER_NAMES = {
     "IcicleSpawner","SnowFX","FrostFX","LightningFX",
 }
 
+local LIGHTNING_KEYWORDS = {"lightning","thunder","storm","electric","petir","flash","bolt","zap","spark","rain","snow","frost","wind","tornado","cyclone","meteor","lava","fog","cloud","sky","weather","visual","fx","effect","vfx"}
+
+local function hasKeyword(name)
+    local low = name:lower()
+    for _,kw in ipairs(LIGHTNING_KEYWORDS) do
+        if low:find(kw,1,true) then return kw end
+    end
+    return nil
+end
+
 local function scanAll()
     for _,c in ipairs(scroll:GetChildren()) do if c:IsA("TextLabel") then c:Destroy() end end
     allLines = {}
     local ws = workspace; local found = 0
 
-    addLog("── WS CHILDREN ──", Color3.fromRGB(100,200,255))
+    addLog("── WS CHILDREN (semua suspect) ──", Color3.fromRGB(100,200,255))
     for _, obj in ipairs(ws:GetChildren()) do
         local isKnown = false
         for _, name in ipairs(WEATHER_NAMES) do
@@ -73,9 +83,15 @@ local function scanAll()
                 found=found+1; isKnown=true; break
             end
         end
-        if not isKnown and isParticleClass(obj) then
-            addLog("❓ "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,120,120))
-            found=found+1
+        if not isKnown then
+            local kw = hasKeyword(obj.Name)
+            if kw then
+                addLog("🌩 "..obj.Name.." ["..obj.ClassName.."] (kw:"..kw..")", Color3.fromRGB(255,140,200))
+                found=found+1
+            elseif isParticleClass(obj) then
+                addLog("❓ "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,120,120))
+                found=found+1
+            end
         end
     end
 
