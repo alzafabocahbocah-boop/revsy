@@ -7,11 +7,28 @@ local gui = lp:WaitForChild("PlayerGui")
 -- ======== GUI ========
 local sg = Instance.new("ScreenGui"); sg.Name="DbgPartikelGui"; sg.ResetOnSpawn=false; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; sg.Parent=gui
 -- tinggi frame +34 buat row button ke-2
-local frame = Instance.new("Frame"); frame.Size=UDim2.new(0,220,0,374); frame.Position=UDim2.new(0,10,0,60); frame.BackgroundColor3=Color3.fromRGB(18,18,24); frame.BorderSizePixel=0; frame.Active=true; frame.Draggable=true; frame.Parent=sg
+local frame = Instance.new("Frame"); frame.Size=UDim2.new(0,220,0,374); frame.Position=UDim2.new(0,10,0,60); frame.BackgroundColor3=Color3.fromRGB(18,18,24); frame.BorderSizePixel=0; frame.Active=false; frame.Draggable=false; frame.Parent=sg
 Instance.new("UICorner",frame).CornerRadius=UDim.new(0,8)
 
+-- drag via title bar
+local UIS = game:GetService("UserInputService")
+local dragging, dragStart, startPos
 local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,-28,0,28); title.BackgroundColor3=Color3.fromRGB(30,180,120); title.Text="🔍 SCAN PARTIKEL"; title.TextColor3=Color3.new(1,1,1); title.Font=Enum.Font.GothamBold; title.TextSize=12; title.Parent=frame
 Instance.new("UICorner",title).CornerRadius=UDim.new(0,8)
+title.Active=true
+title.InputBegan:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+        dragging=true; dragStart=inp.Position
+        startPos=frame.Position
+        inp.Changed:Connect(function() if inp.UserInputState==Enum.UserInputState.End then dragging=false end end)
+    end
+end)
+title.InputChanged:Connect(function(inp)
+    if dragging and (inp.UserInputType==Enum.UserInputType.MouseMovement or inp.UserInputType==Enum.UserInputType.Touch) then
+        local delta = inp.Position - dragStart
+        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+delta.X, startPos.Y.Scale, startPos.Y.Offset+delta.Y)
+    end
+end)
 
 local closeBtn=Instance.new("TextButton"); closeBtn.Size=UDim2.new(0,26,0,26); closeBtn.Position=UDim2.new(1,-27,0,1); closeBtn.BackgroundColor3=Color3.fromRGB(180,40,40); closeBtn.Text="✕"; closeBtn.TextColor3=Color3.new(1,1,1); closeBtn.Font=Enum.Font.GothamBold; closeBtn.TextSize=12; closeBtn.Parent=frame
 Instance.new("UICorner",closeBtn).CornerRadius=UDim.new(0,6)
