@@ -33,23 +33,6 @@ end)
 local closeBtn=Instance.new("TextButton"); closeBtn.Size=UDim2.new(0,26,0,26); closeBtn.Position=UDim2.new(1,-27,0,1); closeBtn.BackgroundColor3=Color3.fromRGB(180,40,40); closeBtn.Text="✕"; closeBtn.TextColor3=Color3.new(1,1,1); closeBtn.Font=Enum.Font.GothamBold; closeBtn.TextSize=12; closeBtn.Parent=frame
 Instance.new("UICorner",closeBtn).CornerRadius=UDim.new(0,6)
 closeBtn.MouseButton1Click:Connect(function()
-    -- cleanup: destroy gui + hapus semua yang kita buat balik ke normal
-    pcall(function()
-        -- kembalikan LocalScript weather ke state asli (enabled)
-        local sources = {lp:FindFirstChild("PlayerScripts"), lp:FindFirstChild("PlayerGui"), workspace}
-        for _, src in ipairs(sources) do
-            if src then
-                for _, obj in ipairs(src:GetDescendants()) do
-                    if (obj:IsA("LocalScript") or obj:IsA("Script")) then
-                        local low = obj.Name:lower()
-                        for _,k in ipairs({"weather","lightning","thunder","storm","electric","petir","cuaca","kilat"}) do
-                            if low:find(k,1,true) then pcall(function() obj.Enabled = true end); break end
-                        end
-                    end
-                end
-            end
-        end
-    end)
     sg:Destroy()
 end)
 
