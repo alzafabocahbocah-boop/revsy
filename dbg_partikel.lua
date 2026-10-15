@@ -1,12 +1,10 @@
 -- DBG PARTIKEL — scan semua partikel/weather/FX yang ada di game
--- Kirim langsung, jangan push GitHub
--- Ada floating GUI Rejoin buat keluar
 
 local Players = game:GetService("Players")
 local lp = Players.LocalPlayer
 local gui = lp:WaitForChild("PlayerGui")
 
--- ======== FLOATING REJOIN GUI ========
+-- ======== GUI ========
 local sg = Instance.new("ScreenGui"); sg.Name="DbgPartikelGui"; sg.ResetOnSpawn=false; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; sg.Parent=gui
 local frame = Instance.new("Frame"); frame.Size=UDim2.new(0,220,0,340); frame.Position=UDim2.new(0,10,0,60); frame.BackgroundColor3=Color3.fromRGB(18,18,24); frame.BorderSizePixel=0; frame.Active=true; frame.Draggable=true; frame.Parent=sg
 Instance.new("UICorner",frame).CornerRadius=UDim.new(0,8)
@@ -19,20 +17,25 @@ Instance.new("UIListLayout",scroll).Padding=UDim.new(0,2)
 
 local logL=Instance.new("TextLabel"); logL.Size=UDim2.new(1,-4,0,16); logL.BackgroundTransparency=1; logL.TextColor3=Color3.fromRGB(180,180,180); logL.Font=Enum.Font.Code; logL.TextSize=10; logL.TextXAlignment=Enum.TextXAlignment.Left; logL.TextWrapped=true; logL.AutomaticSize=Enum.AutomaticSize.Y
 
+local allLines = {}
 local function addLog(s, col)
+    table.insert(allLines, s)
     local l=logL:Clone(); l.Text=s; l.TextColor3=col or Color3.fromRGB(180,220,180); l.Parent=scroll
 end
 
--- tombol scan
+-- tombol SCAN
 local scanBtn=Instance.new("TextButton"); scanBtn.Size=UDim2.new(0.5,-6,0,28); scanBtn.Position=UDim2.new(0,4,1,-32); scanBtn.BackgroundColor3=Color3.fromRGB(30,120,220); scanBtn.Text="SCAN"; scanBtn.TextColor3=Color3.new(1,1,1); scanBtn.Font=Enum.Font.GothamBold; scanBtn.TextSize=11; scanBtn.Parent=frame
 Instance.new("UICorner",scanBtn).CornerRadius=UDim.new(0,6)
 
--- tombol rejoin
-local rejBtn=Instance.new("TextButton"); rejBtn.Size=UDim2.new(0.5,-6,0,28); rejBtn.Position=UDim2.new(0.5,2,1,-32); rejBtn.BackgroundColor3=Color3.fromRGB(200,50,50); rejBtn.Text="REJOIN"; rejBtn.TextColor3=Color3.new(1,1,1); rejBtn.Font=Enum.Font.GothamBold; rejBtn.TextSize=11; rejBtn.Parent=frame
-Instance.new("UICorner",rejBtn).CornerRadius=UDim.new(0,6)
+-- tombol COPY ALL
+local copyBtn=Instance.new("TextButton"); copyBtn.Size=UDim2.new(0.5,-6,0,28); copyBtn.Position=UDim2.new(0.5,2,1,-32); copyBtn.BackgroundColor3=Color3.fromRGB(80,60,160); copyBtn.Text="COPY ALL"; copyBtn.TextColor3=Color3.new(1,1,1); copyBtn.Font=Enum.Font.GothamBold; copyBtn.TextSize=11; copyBtn.Parent=frame
+Instance.new("UICorner",copyBtn).CornerRadius=UDim.new(0,6)
 
-rejBtn.MouseButton1Click:Connect(function()
-    game:GetService("TeleportService"):Teleport(game.PlaceId, lp)
+copyBtn.MouseButton1Click:Connect(function()
+    local txt = table.concat(allLines, "\n")
+    setclipboard(txt)
+    copyBtn.Text = "✓ COPIED"
+    task.delay(1.5, function() copyBtn.Text = "COPY ALL" end)
 end)
 
 -- ======== SCAN FUNCTION ========
@@ -58,16 +61,15 @@ local function isParticleClass(obj)
 end
 
 local function scanAll()
-    -- clear log lama
     for _,c in ipairs(scroll:GetChildren()) do
         if c:IsA("TextLabel") then c:Destroy() end
     end
+    allLines = {}
 
     local Lighting = game:GetService("Lighting")
     local ws = workspace
     local found = 0
 
-    -- 1. Workspace children — known weather names
     addLog("── WORKSPACE CHILDREN ──", Color3.fromRGB(100,200,255))
     for _, obj in ipairs(ws:GetChildren()) do
         local isKnown = false
@@ -83,7 +85,6 @@ local function scanAll()
         end
     end
 
-    -- 2. Lighting children — FX effects
     addLog("── LIGHTING ──", Color3.fromRGB(100,200,255))
     for _, obj in ipairs(Lighting:GetChildren()) do
         if isParticleClass(obj) then
@@ -91,8 +92,6 @@ local function scanAll()
             found = found + 1
         end
     end
-
-    -- 3. Lighting descendants — Atmosphere, Sky, post-FX
     for _, obj in ipairs(Lighting:GetDescendants()) do
         if obj:IsA("Atmosphere") or obj:IsA("Sky") then
             addLog("🌤 "..obj.ClassName..": "..obj.Name, Color3.fromRGB(160,220,255))
@@ -103,7 +102,6 @@ local function scanAll()
         end
     end
 
-    -- 4. Scan partikel DI DALAM workspace descendants (nyangkut di terrain/model)
     addLog("── WS DESCENDANTS (partikel) ──", Color3.fromRGB(100,200,255))
     local wsPartikel = {}
     pcall(function()
@@ -112,12 +110,12 @@ local function scanAll()
                 local path = obj.Name.."["..obj.ClassName.."] @"..obj.Parent.Name
                 table.insert(wsPartikel, path)
                 found = found + 1
-                if #wsPartikel > 30 then break end -- cap 30
+                if #wsPartikel > 30 then break end
             end
         end
     end)
     if #wsPartikel == 0 then
-        addLog("  (tidak ada partikel di descendants)", Color3.fromRGB(120,120,120))
+        addLog("  (tidak ada)", Color3.fromRGB(120,120,120))
     else
         for _,s in ipairs(wsPartikel) do
             addLog("  "..s, Color3.fromRGB(255,150,100))
@@ -128,5 +126,4 @@ local function scanAll()
 end
 
 scanBtn.MouseButton1Click:Connect(scanAll)
--- auto scan sekali pas buka
 task.spawn(scanAll)
