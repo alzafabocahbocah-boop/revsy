@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.543-cf"
+local VERSION = "9.544-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5295,11 +5295,18 @@ local function run(cfg)
             if (os.time() - (KICK_DIURUS["_laporTop"] or 0)) >= 30 then
                 KICK_DIURUS["_laporTop"] = os.time()
                 do
-                    local rawU = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_upkgstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    -- v9.481: scan upkgstat dari semua clone dir
+                    local rawU = ""
+                    for _, _dd in ipairs(denyut_dirs(cfg)) do
+                        local _rU = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_upkgstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                        if _rU ~= "" then rawU = rawU .. _rU .. "\n" end
+                    end
                     local items = {}
+                    local seen = {}
                     for line in rawU:gmatch("[^\n]+") do
                         local nama, js = line:match("zenx_upkgstat_(.-)%.json|(.+)")
-                        if nama and js and #js > 5 then
+                        if nama and js and #js > 5 and not seen[nama] then
+                            seen[nama] = true
                             items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
                         end
                     end
@@ -6212,7 +6219,12 @@ local function run(cfg)
                 if uTs > 0 then cfg.server_utama = ambil_str(ru, "link") or "" end
             end
             do
-                local goRaw = sh("su -c 'cd \"" .. (cfg.workspace_dir or "") .. "\" 2>/dev/null && for f in zenx_gohome_*.txt; do [ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                -- v9.481: scan gohome dari semua clone dir
+                local goRaw = ""
+                for _, _dd in ipairs(denyut_dirs(cfg)) do
+                    local _rG = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_gohome_*.txt; do [ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    if _rG ~= "" then goRaw = goRaw .. _rG .. "\n" end
+                end
                 local goFresh = false
                 local goAkuns = {}
                 for line in goRaw:gmatch("[^\n]+") do
