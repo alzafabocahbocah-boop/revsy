@@ -194,9 +194,11 @@ local function scanAll()
     addLog("  OutdoorAmbient="..tostring(L.OutdoorAmbient), Color3.fromRGB(200,200,200))
 
     addLog("── TOTAL: "..found.." objek ──", Color3.fromRGB(180,255,180))
-    -- auto copy setelah scan
-    pcall(function() setclipboard(table.concat(allLines, "\n")) end)
-    copyBtn.Text = "✓ AUTO-COPIED"; task.delay(2, function() copyBtn.Text = "COPY" end)
+    -- auto copy setelah scan selesai (defer biar log keisi semua dulu)
+    task.defer(function()
+        pcall(function() setclipboard(table.concat(allLines, "\n")) end)
+        copyBtn.Text = "✓ COPIED"; task.delay(2, function() copyBtn.Text = "COPY" end)
+    end)
 end
 
 -- ======== DESTROY WS FX ========
