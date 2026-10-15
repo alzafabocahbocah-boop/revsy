@@ -124,6 +124,51 @@ local function scanAll()
     if #wsP==0 then addLog("  (tidak ada)", Color3.fromRGB(120,120,120))
     else for _,s in ipairs(wsP) do addLog("  "..s, Color3.fromRGB(255,150,100)) end end
 
+    -- scan LocalScript aktif (cuaca biasanya di PlayerGui atau game.Players.LocalPlayer)
+    addLog("── LOCALSCRIPT AKTIF ──", Color3.fromRGB(100,200,255))
+    local lkw = {"weather","lightning","thunder","storm","electric","petir","bolt","flash","cuaca","kilat"}
+    local function hasLKW(name)
+        local low = name:lower()
+        for _,k in ipairs(lkw) do if low:find(k,1,true) then return k end end
+        return nil
+    end
+    local lsFound = {}
+    pcall(function()
+        local lp2 = game:GetService("Players").LocalPlayer
+        local sources = {
+            game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui",1),
+            game:GetService("Players").LocalPlayer:WaitForChild("PlayerScripts",1),
+            workspace,
+        }
+        for _, src in ipairs(sources) do
+            if src then
+                for _, obj in ipairs(src:GetDescendants()) do
+                    if obj:IsA("LocalScript") or obj:IsA("Script") then
+                        local kw = hasLKW(obj.Name)
+                        if kw then
+                            table.insert(lsFound, obj.Name.." @"..obj.Parent.Name.." [kw:"..kw.."] enabled="..tostring(obj.Enabled))
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if #lsFound == 0 then
+        addLog("  (tidak ada LocalScript cuaca)", Color3.fromRGB(120,120,120))
+    else
+        for _,s in ipairs(lsFound) do
+            addLog("  ⚡ "..s, Color3.fromRGB(255,160,60)); found=found+1
+        end
+    end
+
+    -- Lighting properties
+    addLog("── LIGHTING PROPS ──", Color3.fromRGB(100,200,255))
+    local Lighting2 = game:GetService("Lighting")
+    addLog("  Brightness="..tostring(Lighting2.Brightness), Color3.fromRGB(200,200,200))
+    addLog("  ClockTime="..tostring(Lighting2.ClockTime), Color3.fromRGB(200,200,200))
+    addLog("  Ambient="..tostring(Lighting2.Ambient), Color3.fromRGB(200,200,200))
+    addLog("  OutdoorAmbient="..tostring(Lighting2.OutdoorAmbient), Color3.fromRGB(200,200,200))
+
     addLog("── TOTAL: "..found.." objek ──", Color3.fromRGB(180,255,180))
 end
 
