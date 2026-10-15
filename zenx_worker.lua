@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.544-cf"
+local VERSION = "9.545-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -429,11 +429,20 @@ function denyut_dirs(cfg)
     for _, d in ipairs(kandidat) do
         if d and d ~= "" and not seen[d] then seen[d] = true; dirs[#dirs + 1] = d end
     end
-    -- tambah semua RobloxClone*/Arceus X/Workspace (pakai /storage/emulated/0, /sdcard gak follow symlink di find)
-    local cloneOut = sh("su -c 'find /storage/emulated/0 -maxdepth 3 -type d -name Workspace -path \"*/RobloxClone*\" 2>/dev/null'") or ""
+    -- tambah semua RobloxClone*/executor/Workspace — coba /storage/emulated/0 dulu, fallback /sdcard
+    -- /sdcard adalah symlink, find -L supaya follow symlink
+    local cloneOut = sh("su -c 'find -L /storage/emulated/0 /sdcard -maxdepth 4 -type d -name Workspace 2>/dev/null | grep -i RobloxClone | sort -u'") or ""
     for line in cloneOut:gmatch("[^\n]+") do
         line = line:match("^%s*(.-)%s*$")
         if line ~= "" and not seen[line] then seen[line] = true; dirs[#dirs + 1] = line end
+    end
+    -- v9.545: fallback manual glob kalau find gak nemu (find -L lambat/blocked di beberapa device)
+    if #dirs <= 5 then
+        local globOut = sh("su -c 'for d in /sdcard/RobloxClone*/\"Arceus X\"/Workspace /sdcard/RobloxClone*/Delta/Workspace /storage/emulated/0/RobloxClone*/\"Arceus X\"/Workspace /storage/emulated/0/RobloxClone*/Delta/Workspace; do [ -d \"$d\" ] && echo \"$d\"; done 2>/dev/null'") or ""
+        for line in globOut:gmatch("[^\n]+") do
+            line = line:match("^%s*(.-)%s*$")
+            if line ~= "" and not seen[line] then seen[line] = true; dirs[#dirs + 1] = line end
+        end
     end
     return dirs
 end
