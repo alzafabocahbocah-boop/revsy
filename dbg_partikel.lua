@@ -10,8 +10,31 @@ local sg = Instance.new("ScreenGui"); sg.Name="DbgPartikelGui"; sg.ResetOnSpawn=
 local frame = Instance.new("Frame"); frame.Size=UDim2.new(0,220,0,374); frame.Position=UDim2.new(0,10,0,60); frame.BackgroundColor3=Color3.fromRGB(18,18,24); frame.BorderSizePixel=0; frame.Active=true; frame.Draggable=true; frame.Parent=sg
 Instance.new("UICorner",frame).CornerRadius=UDim.new(0,8)
 
-local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,28); title.BackgroundColor3=Color3.fromRGB(30,180,120); title.Text="🔍 SCAN PARTIKEL"; title.TextColor3=Color3.new(1,1,1); title.Font=Enum.Font.GothamBold; title.TextSize=12; title.Parent=frame
+local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,-28,0,28); title.BackgroundColor3=Color3.fromRGB(30,180,120); title.Text="🔍 SCAN PARTIKEL"; title.TextColor3=Color3.new(1,1,1); title.Font=Enum.Font.GothamBold; title.TextSize=12; title.Parent=frame
 Instance.new("UICorner",title).CornerRadius=UDim.new(0,8)
+
+local closeBtn=Instance.new("TextButton"); closeBtn.Size=UDim2.new(0,26,0,26); closeBtn.Position=UDim2.new(1,-27,0,1); closeBtn.BackgroundColor3=Color3.fromRGB(180,40,40); closeBtn.Text="✕"; closeBtn.TextColor3=Color3.new(1,1,1); closeBtn.Font=Enum.Font.GothamBold; closeBtn.TextSize=12; closeBtn.Parent=frame
+Instance.new("UICorner",closeBtn).CornerRadius=UDim.new(0,6)
+closeBtn.MouseButton1Click:Connect(function()
+    -- cleanup: destroy gui + hapus semua yang kita buat balik ke normal
+    pcall(function()
+        -- kembalikan LocalScript weather ke state asli (enabled)
+        local sources = {lp:FindFirstChild("PlayerScripts"), lp:FindFirstChild("PlayerGui"), workspace}
+        for _, src in ipairs(sources) do
+            if src then
+                for _, obj in ipairs(src:GetDescendants()) do
+                    if (obj:IsA("LocalScript") or obj:IsA("Script")) then
+                        local low = obj.Name:lower()
+                        for _,k in ipairs({"weather","lightning","thunder","storm","electric","petir","cuaca","kilat"}) do
+                            if low:find(k,1,true) then pcall(function() obj.Enabled = true end); break end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    sg:Destroy()
+end)
 
 -- scroll area — sisakan 68px buat 2 row button
 local scroll=Instance.new("ScrollingFrame"); scroll.Size=UDim2.new(1,-8,1,-106); scroll.Position=UDim2.new(0,4,0,32); scroll.BackgroundTransparency=1; scroll.ScrollBarThickness=4; scroll.CanvasSize=UDim2.new(0,0,0,0); scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; scroll.Parent=frame
