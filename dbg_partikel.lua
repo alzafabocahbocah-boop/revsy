@@ -57,6 +57,18 @@ local WEATHER_NAMES = {
 
 local LIGHTNING_KEYWORDS = {"lightning","thunder","storm","electric","petir","flash","bolt","zap","spark","rain","snow","frost","wind","tornado","cyclone","meteor","lava","fog","cloud","sky","weather","visual","fx","effect","vfx"}
 
+-- objek normal di workspace (bukan cuaca)
+local NORMAL_WS = {
+    Terrain=true, Camera=true, Baseplate=true, Map=true,
+    TradeWorld=true, GardenServer=true, LevelingServer=true,
+    Players=true, Workspace=true, ReplicatedStorage=true,
+    -- folder game
+    ["Arceus X"]=true, Delta=true, Ugc=true,
+    -- nama umum
+    SoundEffects=true, PetZoneAbilityVFX=true, FlowerRushFX=true,
+    HapticEffect=true,
+}
+
 local function hasKeyword(name)
     local low = name:lower()
     for _,kw in ipairs(LIGHTNING_KEYWORDS) do
@@ -130,6 +142,27 @@ local function scanAll(doCopy)
     end)
     if #wsP==0 then addLog("  (tidak ada)", Color3.fromRGB(120,120,120))
     else for _,s in ipairs(wsP) do addLog("  "..s, Color3.fromRGB(255,150,100)) end end
+
+    addLog("── WS UNKNOWN (objek asing) ──", Color3.fromRGB(100,200,255))
+    local unknownCount = 0
+    pcall(function()
+        for _, obj in ipairs(ws:GetChildren()) do
+            if not NORMAL_WS[obj.Name] then
+                local kw = hasKeyword(obj.Name)
+                if not kw and not isParticleClass(obj) then
+                    -- cek anak-anaknya ada partikel/beam gak
+                    local hasVfx = false
+                    for _, d in ipairs(obj:GetDescendants()) do
+                        if isParticleClass(d) then hasVfx = true; break end
+                    end
+                    local tag = hasVfx and " ⚡VFX" or ""
+                    addLog("  🔎 "..obj.Name.." ["..obj.ClassName.."]"..tag, hasVfx and Color3.fromRGB(255,200,60) or Color3.fromRGB(200,200,200))
+                    unknownCount = unknownCount + 1
+                end
+            end
+        end
+    end)
+    if unknownCount == 0 then addLog("  (semua objek dikenal)", Color3.fromRGB(120,120,120)) end
 
     addLog("── VFX FOLDERS ──", Color3.fromRGB(100,200,255))
     local VFX_FOLDERS = {"PetZoneAbilityVFX","FlowerRushFX","SpottedFX","SoundEffects","WeatherFX","LightningFX","StormFX"}
