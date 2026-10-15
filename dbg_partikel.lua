@@ -166,6 +166,27 @@ local function scanAll(doCopy)
     if #wsP==0 then addLog("  (tidak ada)", Color3.fromRGB(120,120,120))
     else for _,s in ipairs(wsP) do addLog("  "..s, Color3.fromRGB(255,150,100)) end end
 
+    addLog("── WS BOLT/RAY SCAN ──", Color3.fromRGB(100,200,255))
+    local boltKW = {"light","bolt","strike","ray","flash","beam","lightning","petir","electric","zap","plasma","arc","spark"}
+    local boltFound = {}
+    pcall(function()
+        for _, obj in ipairs(ws:GetDescendants()) do
+            if obj:IsA("Model") or obj:IsA("Part") or obj:IsA("MeshPart") or obj:IsA("UnionOperation") then
+                local low = obj.Name:lower()
+                for _, kw in ipairs(boltKW) do
+                    if low:find(kw,1,true) then
+                        local p = obj.Parent
+                        table.insert(boltFound, obj.Name.."["..obj.ClassName.."] @"..(p and p.Name or "?"))
+                        break
+                    end
+                end
+            end
+            if #boltFound >= 50 then break end
+        end
+    end)
+    if #boltFound == 0 then addLog("  (tidak ada)", Color3.fromRGB(120,120,120))
+    else for _,s in ipairs(boltFound) do addLog("  ⚡ "..s, Color3.fromRGB(255,255,100)) end end
+
     addLog("── WS UNKNOWN (objek asing) ──", Color3.fromRGB(100,200,255))
     local unknownCount = 0
     pcall(function()
