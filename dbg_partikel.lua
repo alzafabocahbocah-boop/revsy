@@ -159,7 +159,7 @@ local function scanAll(doCopy)
                 local loc = p and p.Name or "?"
                 if pp and pp ~= ws then loc = pp.Name.."/"..loc end
                 table.insert(wsP, obj.Name.."["..obj.ClassName.."] @"..loc)
-                found=found+1; if #wsP>=30 then break end
+                found=found+1; if #wsP>=200 then break end
             end
         end
     end)
