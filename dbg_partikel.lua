@@ -7,7 +7,7 @@ local gui = lp:WaitForChild("PlayerGui")
 -- ======== GUI ========
 local sg = Instance.new("ScreenGui"); sg.Name="DbgPartikelGui"; sg.ResetOnSpawn=false; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; sg.Parent=gui
 -- tinggi frame +34 buat row button ke-2
-local frame = Instance.new("Frame"); frame.Size=UDim2.new(0,220,0,374); frame.Position=UDim2.new(0,10,0,60); frame.BackgroundColor3=Color3.fromRGB(18,18,24); frame.BorderSizePixel=0; frame.Active=false; frame.Draggable=false; frame.Parent=sg
+local frame = Instance.new("Frame"); frame.Size=UDim2.new(0,220,0,408); frame.Position=UDim2.new(0,10,0,60); frame.BackgroundColor3=Color3.fromRGB(18,18,24); frame.BorderSizePixel=0; frame.Active=false; frame.Draggable=false; frame.Parent=sg
 Instance.new("UICorner",frame).CornerRadius=UDim.new(0,8)
 
 -- drag via title bar
@@ -36,8 +36,8 @@ closeBtn.MouseButton1Click:Connect(function()
     sg:Destroy()
 end)
 
--- scroll area — sisakan 68px buat 2 row button
-local scroll=Instance.new("ScrollingFrame"); scroll.Size=UDim2.new(1,-8,1,-106); scroll.Position=UDim2.new(0,4,0,32); scroll.BackgroundTransparency=1; scroll.ScrollBarThickness=4; scroll.CanvasSize=UDim2.new(0,0,0,0); scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; scroll.Parent=frame
+-- scroll area — sisakan 102px buat 3 row button
+local scroll=Instance.new("ScrollingFrame"); scroll.Size=UDim2.new(1,-8,1,-140); scroll.Position=UDim2.new(0,4,0,32); scroll.BackgroundTransparency=1; scroll.ScrollBarThickness=4; scroll.CanvasSize=UDim2.new(0,0,0,0); scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; scroll.Parent=frame
 Instance.new("UIListLayout",scroll).Padding=UDim.new(0,2)
 
 local logL=Instance.new("TextLabel"); logL.Size=UDim2.new(1,-4,0,16); logL.BackgroundTransparency=1; logL.TextColor3=Color3.fromRGB(180,180,180); logL.Font=Enum.Font.Code; logL.TextSize=10; logL.TextXAlignment=Enum.TextXAlignment.Left; logL.TextWrapped=true; logL.AutomaticSize=Enum.AutomaticSize.Y
@@ -49,14 +49,18 @@ local function addLog(s, col)
 end
 
 -- ── ROW 1: SCAN+COPY | DEL FX ──
-local scanBtn=Instance.new("TextButton"); scanBtn.Size=UDim2.new(0.5,-6,0,28); scanBtn.Position=UDim2.new(0,4,1,-66); scanBtn.BackgroundColor3=Color3.fromRGB(30,120,220); scanBtn.Text="SCAN+COPY"; scanBtn.TextColor3=Color3.new(1,1,1); scanBtn.Font=Enum.Font.GothamBold; scanBtn.TextSize=11; scanBtn.Parent=frame
+local scanBtn=Instance.new("TextButton"); scanBtn.Size=UDim2.new(0.5,-6,0,28); scanBtn.Position=UDim2.new(0,4,1,-100); scanBtn.BackgroundColor3=Color3.fromRGB(30,120,220); scanBtn.Text="SCAN+COPY"; scanBtn.TextColor3=Color3.new(1,1,1); scanBtn.Font=Enum.Font.GothamBold; scanBtn.TextSize=11; scanBtn.Parent=frame
 Instance.new("UICorner",scanBtn).CornerRadius=UDim.new(0,6)
 
-local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0.5,-6,0,28); delBtn.Position=UDim2.new(0.5,2,1,-66); delBtn.BackgroundColor3=Color3.fromRGB(200,80,30); delBtn.Text="DEL FX"; delBtn.TextColor3=Color3.new(1,1,1); delBtn.Font=Enum.Font.GothamBold; delBtn.TextSize=11; delBtn.Parent=frame
+local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0.5,-6,0,28); delBtn.Position=UDim2.new(0.5,2,1,-100); delBtn.BackgroundColor3=Color3.fromRGB(200,80,30); delBtn.Text="DEL FX"; delBtn.TextColor3=Color3.new(1,1,1); delBtn.Font=Enum.Font.GothamBold; delBtn.TextSize=11; delBtn.Parent=frame
 Instance.new("UICorner",delBtn).CornerRadius=UDim.new(0,6)
 
--- ── ROW 2: KILL WEATHER (full width) ──
-local killBtn=Instance.new("TextButton"); killBtn.Size=UDim2.new(1,-8,0,28); killBtn.Position=UDim2.new(0,4,1,-34); killBtn.BackgroundColor3=Color3.fromRGB(160,30,160); killBtn.Text="⚡ KILL WEATHER SCRIPTS"; killBtn.TextColor3=Color3.new(1,1,1); killBtn.Font=Enum.Font.GothamBold; killBtn.TextSize=11; killBtn.Parent=frame
+-- ── ROW 2: DEL BOLT (full width) ──
+local boltBtn=Instance.new("TextButton"); boltBtn.Size=UDim2.new(1,-8,0,28); boltBtn.Position=UDim2.new(0,4,1,-68); boltBtn.BackgroundColor3=Color3.fromRGB(220,160,0); boltBtn.Text="⚡ DEL BOLT (Camera)"; boltBtn.TextColor3=Color3.new(0,0,0); boltBtn.Font=Enum.Font.GothamBold; boltBtn.TextSize=11; boltBtn.Parent=frame
+Instance.new("UICorner",boltBtn).CornerRadius=UDim.new(0,6)
+
+-- ── ROW 3: KILL WEATHER (full width) ──
+local killBtn=Instance.new("TextButton"); killBtn.Size=UDim2.new(1,-8,0,28); killBtn.Position=UDim2.new(0,4,1,-36); killBtn.BackgroundColor3=Color3.fromRGB(160,30,160); killBtn.Text="⚡ KILL WEATHER SCRIPTS"; killBtn.TextColor3=Color3.new(1,1,1); killBtn.Font=Enum.Font.GothamBold; killBtn.TextSize=11; killBtn.Parent=frame
 Instance.new("UICorner",killBtn).CornerRadius=UDim.new(0,6)
 
 -- ======== SCAN ========
@@ -312,6 +316,43 @@ delBtn.MouseButton1Click:Connect(function()
         addLog("✓ tidak ada FX di workspace/lighting", Color3.fromRGB(120,200,120))
     end
     task.wait(0.5)
+    scanAll(false)
+end)
+
+-- ======== DEL BOLT ========
+boltBtn.MouseButton1Click:Connect(function()
+    local destroyed = 0
+    local cam = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera")
+    pcall(function()
+        if cam then
+            for _, obj in ipairs(cam:GetDescendants()) do
+                local low = obj.Name:lower()
+                if low:find("bolt",1,true) or low:find("lightning",1,true) or low:find("ray",1,true) then
+                    obj:Destroy()
+                    destroyed = destroyed + 1
+                end
+            end
+        end
+    end)
+    -- juga scan workspace langsung
+    pcall(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            local low = obj.Name:lower()
+            if low:find("bolt",1,true) or low:find("lightning",1,true) then
+                local p = obj.Parent
+                if p and (p.Name == "Camera" or p:IsA("Camera")) then
+                    obj:Destroy()
+                    destroyed = destroyed + 1
+                end
+            end
+        end
+    end)
+    if destroyed > 0 then
+        addLog("🗑 DEL BOLT: "..destroyed.." objek dihapus dari Camera", Color3.fromRGB(255,200,60))
+    else
+        addLog("  (tidak ada BoltPart di Camera)", Color3.fromRGB(120,120,120))
+    end
+    task.wait(0.3)
     scanAll(false)
 end)
 
