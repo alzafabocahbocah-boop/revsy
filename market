@@ -1,4 +1,4 @@
--- ZENX MARKET v8 — NodeHub style
+-- ZENX MARKET v8.435 — NodeHub style
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -2817,6 +2817,66 @@ BH.gardenPanel = gardenPanel  -- store for cross-scope access
 -- v8.49: detect garden server (no TradeWorld = garden)
 local isGardenServer = (Workspace:FindFirstChild("TradeWorld") == nil)
 BH.isGardenServer = isGardenServer  -- v8.237: simpen ke BH biar loop auto-rejoin bisa akses
+
+-- v8.435: AUTO DESTROY POHON + GARDEN ORANG LAIN (pas di server leveling/garden)
+-- Persis kayak uplevelnew — skip kebun sendiri, destroy semua kebun lain
+if isGardenServer then
+    local _WS = workspace
+    local _plrName = game.Players.LocalPlayer.Name
+    local function _getSubfarmOwner(subfarm)
+        local imp  = subfarm:FindFirstChild("Important")
+        local data = imp and imp:FindFirstChild("Data")
+        local own  = data and data:FindFirstChild("Owner")
+        if own and own.Value and own.Value ~= "" then return own.Value end
+        local sign = subfarm:FindFirstChild("Sign") or subfarm:FindFirstChild("Sign", true)
+        if sign then return sign:GetAttribute("_owner") end
+        return nil
+    end
+    local function _semuaFarm()
+        local roots = {}
+        local farm = _WS:FindFirstChild("Farm")
+        if not farm then return roots end
+        for _, subfarm in ipairs(farm:GetChildren()) do
+            local owner = _getSubfarmOwner(subfarm)
+            if owner ~= nil and owner ~= _plrName then
+                for _, f in ipairs(subfarm:GetDescendants()) do
+                    if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
+                        table.insert(roots, f)
+                    end
+                end
+            end
+        end
+        return roots
+    end
+    local function _destroyPohonSemua()
+        local roots = _semuaFarm(); local n = 0
+        for _, root in ipairs(roots) do
+            for _, c in ipairs(root:GetChildren()) do
+                if c:IsA("Model") then pcall(function() c:Destroy() end); n = n + 1 end
+            end
+        end
+        return n
+    end
+    task.spawn(function() task.wait(3); _destroyPohonSemua() end)
+    task.spawn(function()
+        local farm = _WS:WaitForChild("Farm", 15)
+        if not farm then return end
+        farm.DescendantAdded:Connect(function(c)
+            if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+                local pp = c.Parent and c.Parent.Parent
+                local subfarm = pp and pp.Parent
+                if subfarm then
+                    local owner = _getSubfarmOwner(subfarm)
+                    if owner == nil or owner == _plrName then return end
+                end
+                task.wait(0.05); pcall(function() c:Destroy() end)
+            end
+        end)
+    end)
+    task.spawn(function() while true do task.wait(30); _destroyPohonSemua() end end)
+    print("[ZenxMarket] destroy pohon garden lain aktif")
+end
+
 if isGardenServer then
     -- v8.392: garden sidebar = 3 tab: MARKET(status) / GIFT PET / TRADE TOKEN. Hide sisa.
     sbBtns["LIST HARGA"].btn.Visible = false
