@@ -1,4 +1,4 @@
--- DBG PARTIKEL — scan + destroy WS FX (ColorCorrection/Blur/SunRays/Bloom)
+-- DBG PARTIKEL — scan + destroy WS FX + kill weather scripts
 
 local Players = game:GetService("Players")
 local lp = Players.LocalPlayer
@@ -6,13 +6,15 @@ local gui = lp:WaitForChild("PlayerGui")
 
 -- ======== GUI ========
 local sg = Instance.new("ScreenGui"); sg.Name="DbgPartikelGui"; sg.ResetOnSpawn=false; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; sg.Parent=gui
-local frame = Instance.new("Frame"); frame.Size=UDim2.new(0,220,0,340); frame.Position=UDim2.new(0,10,0,60); frame.BackgroundColor3=Color3.fromRGB(18,18,24); frame.BorderSizePixel=0; frame.Active=true; frame.Draggable=true; frame.Parent=sg
+-- tinggi frame +34 buat row button ke-2
+local frame = Instance.new("Frame"); frame.Size=UDim2.new(0,220,0,374); frame.Position=UDim2.new(0,10,0,60); frame.BackgroundColor3=Color3.fromRGB(18,18,24); frame.BorderSizePixel=0; frame.Active=true; frame.Draggable=true; frame.Parent=sg
 Instance.new("UICorner",frame).CornerRadius=UDim.new(0,8)
 
 local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,28); title.BackgroundColor3=Color3.fromRGB(30,180,120); title.Text="🔍 SCAN PARTIKEL"; title.TextColor3=Color3.new(1,1,1); title.Font=Enum.Font.GothamBold; title.TextSize=12; title.Parent=frame
 Instance.new("UICorner",title).CornerRadius=UDim.new(0,8)
 
-local scroll=Instance.new("ScrollingFrame"); scroll.Size=UDim2.new(1,-8,1,-72); scroll.Position=UDim2.new(0,4,0,32); scroll.BackgroundTransparency=1; scroll.ScrollBarThickness=4; scroll.CanvasSize=UDim2.new(0,0,0,0); scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; scroll.Parent=frame
+-- scroll area — sisakan 68px buat 2 row button
+local scroll=Instance.new("ScrollingFrame"); scroll.Size=UDim2.new(1,-8,1,-106); scroll.Position=UDim2.new(0,4,0,32); scroll.BackgroundTransparency=1; scroll.ScrollBarThickness=4; scroll.CanvasSize=UDim2.new(0,0,0,0); scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; scroll.Parent=frame
 Instance.new("UIListLayout",scroll).Padding=UDim.new(0,2)
 
 local logL=Instance.new("TextLabel"); logL.Size=UDim2.new(1,-4,0,16); logL.BackgroundTransparency=1; logL.TextColor3=Color3.fromRGB(180,180,180); logL.Font=Enum.Font.Code; logL.TextSize=10; logL.TextXAlignment=Enum.TextXAlignment.Left; logL.TextWrapped=true; logL.AutomaticSize=Enum.AutomaticSize.Y
@@ -23,22 +25,19 @@ local function addLog(s, col)
     local l=logL:Clone(); l.Text=s; l.TextColor3=col or Color3.fromRGB(180,220,180); l.Parent=scroll
 end
 
--- tombol SCAN
-local scanBtn=Instance.new("TextButton"); scanBtn.Size=UDim2.new(0.34,-4,0,28); scanBtn.Position=UDim2.new(0,4,1,-32); scanBtn.BackgroundColor3=Color3.fromRGB(30,120,220); scanBtn.Text="SCAN"; scanBtn.TextColor3=Color3.new(1,1,1); scanBtn.Font=Enum.Font.GothamBold; scanBtn.TextSize=11; scanBtn.Parent=frame
+-- ── ROW 1: SCAN | DEL FX | COPY ──
+local scanBtn=Instance.new("TextButton"); scanBtn.Size=UDim2.new(0.34,-4,0,28); scanBtn.Position=UDim2.new(0,4,1,-66); scanBtn.BackgroundColor3=Color3.fromRGB(30,120,220); scanBtn.Text="SCAN"; scanBtn.TextColor3=Color3.new(1,1,1); scanBtn.Font=Enum.Font.GothamBold; scanBtn.TextSize=11; scanBtn.Parent=frame
 Instance.new("UICorner",scanBtn).CornerRadius=UDim.new(0,6)
 
--- tombol DESTROY FX
-local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0.34,-4,0,28); delBtn.Position=UDim2.new(0.33,2,1,-32); delBtn.BackgroundColor3=Color3.fromRGB(200,80,30); delBtn.Text="DEL FX"; delBtn.TextColor3=Color3.new(1,1,1); delBtn.Font=Enum.Font.GothamBold; delBtn.TextSize=11; delBtn.Parent=frame
+local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0.34,-4,0,28); delBtn.Position=UDim2.new(0.33,2,1,-66); delBtn.BackgroundColor3=Color3.fromRGB(200,80,30); delBtn.Text="DEL FX"; delBtn.TextColor3=Color3.new(1,1,1); delBtn.Font=Enum.Font.GothamBold; delBtn.TextSize=11; delBtn.Parent=frame
 Instance.new("UICorner",delBtn).CornerRadius=UDim.new(0,6)
 
--- tombol COPY ALL
-local copyBtn=Instance.new("TextButton"); copyBtn.Size=UDim2.new(0.33,-2,0,28); copyBtn.Position=UDim2.new(0.67,2,1,-32); copyBtn.BackgroundColor3=Color3.fromRGB(80,60,160); copyBtn.Text="COPY"; copyBtn.TextColor3=Color3.new(1,1,1); copyBtn.Font=Enum.Font.GothamBold; copyBtn.TextSize=11; copyBtn.Parent=frame
+local copyBtn=Instance.new("TextButton"); copyBtn.Size=UDim2.new(0.33,-2,0,28); copyBtn.Position=UDim2.new(0.67,2,1,-66); copyBtn.BackgroundColor3=Color3.fromRGB(80,60,160); copyBtn.Text="COPY"; copyBtn.TextColor3=Color3.new(1,1,1); copyBtn.Font=Enum.Font.GothamBold; copyBtn.TextSize=11; copyBtn.Parent=frame
 Instance.new("UICorner",copyBtn).CornerRadius=UDim.new(0,6)
 
-copyBtn.MouseButton1Click:Connect(function()
-    setclipboard(table.concat(allLines, "\n"))
-    copyBtn.Text = "✓"; task.delay(1.5, function() copyBtn.Text = "COPY" end)
-end)
+-- ── ROW 2: KILL WEATHER (full width) ──
+local killBtn=Instance.new("TextButton"); killBtn.Size=UDim2.new(1,-8,0,28); killBtn.Position=UDim2.new(0,4,1,-34); killBtn.BackgroundColor3=Color3.fromRGB(160,30,160); killBtn.Text="⚡ KILL WEATHER SCRIPTS"; killBtn.TextColor3=Color3.new(1,1,1); killBtn.Font=Enum.Font.GothamBold; killBtn.TextSize=11; killBtn.Parent=frame
+Instance.new("UICorner",killBtn).CornerRadius=UDim.new(0,6)
 
 -- ======== SCAN ========
 local PARTICLE_CLASSES = {
@@ -66,6 +65,13 @@ local function hasKeyword(name)
     for _,kw in ipairs(LIGHTNING_KEYWORDS) do
         if low:find(kw,1,true) then return kw end
     end
+    return nil
+end
+
+local lkw = {"weather","lightning","thunder","storm","electric","petir","bolt","flash","cuaca","kilat"}
+local function hasLKW(name)
+    local low = name:lower()
+    for _,k in ipairs(lkw) do if low:find(k,1,true) then return k end end
     return nil
 end
 
@@ -124,20 +130,12 @@ local function scanAll()
     if #wsP==0 then addLog("  (tidak ada)", Color3.fromRGB(120,120,120))
     else for _,s in ipairs(wsP) do addLog("  "..s, Color3.fromRGB(255,150,100)) end end
 
-    -- scan LocalScript aktif (cuaca biasanya di PlayerGui atau game.Players.LocalPlayer)
     addLog("── LOCALSCRIPT AKTIF ──", Color3.fromRGB(100,200,255))
-    local lkw = {"weather","lightning","thunder","storm","electric","petir","bolt","flash","cuaca","kilat"}
-    local function hasLKW(name)
-        local low = name:lower()
-        for _,k in ipairs(lkw) do if low:find(k,1,true) then return k end end
-        return nil
-    end
     local lsFound = {}
     pcall(function()
-        local lp2 = game:GetService("Players").LocalPlayer
         local sources = {
-            game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui",1),
-            game:GetService("Players").LocalPlayer:WaitForChild("PlayerScripts",1),
+            lp:WaitForChild("PlayerGui",1),
+            lp:WaitForChild("PlayerScripts",1),
             workspace,
         }
         for _, src in ipairs(sources) do
@@ -161,13 +159,12 @@ local function scanAll()
         end
     end
 
-    -- Lighting properties
     addLog("── LIGHTING PROPS ──", Color3.fromRGB(100,200,255))
-    local Lighting2 = game:GetService("Lighting")
-    addLog("  Brightness="..tostring(Lighting2.Brightness), Color3.fromRGB(200,200,200))
-    addLog("  ClockTime="..tostring(Lighting2.ClockTime), Color3.fromRGB(200,200,200))
-    addLog("  Ambient="..tostring(Lighting2.Ambient), Color3.fromRGB(200,200,200))
-    addLog("  OutdoorAmbient="..tostring(Lighting2.OutdoorAmbient), Color3.fromRGB(200,200,200))
+    local L = game:GetService("Lighting")
+    addLog("  Brightness="..tostring(L.Brightness), Color3.fromRGB(200,200,200))
+    addLog("  ClockTime="..tostring(L.ClockTime), Color3.fromRGB(200,200,200))
+    addLog("  Ambient="..tostring(L.Ambient), Color3.fromRGB(200,200,200))
+    addLog("  OutdoorAmbient="..tostring(L.OutdoorAmbient), Color3.fromRGB(200,200,200))
 
     addLog("── TOTAL: "..found.." objek ──", Color3.fromRGB(180,255,180))
 end
@@ -192,13 +189,84 @@ delBtn.MouseButton1Click:Connect(function()
             end
         end
     end)
+    -- juga destroy dari Lighting
+    pcall(function()
+        for _, obj in ipairs(game:GetService("Lighting"):GetChildren()) do
+            if isFxClass(obj) then
+                table.insert(destroyed, "L:"..obj.Name.."["..obj.ClassName.."]")
+                obj:Destroy()
+            end
+        end
+    end)
     if #destroyed > 0 then
         addLog("🗑 DESTROYED: "..table.concat(destroyed,", "), Color3.fromRGB(255,80,80))
     else
-        addLog("✓ tidak ada FX di workspace", Color3.fromRGB(120,200,120))
+        addLog("✓ tidak ada FX di workspace/lighting", Color3.fromRGB(120,200,120))
     end
     task.wait(0.5)
     scanAll()
+end)
+
+-- ======== KILL WEATHER SCRIPTS ========
+killBtn.MouseButton1Click:Connect(function()
+    local killed = {}
+    local failed = {}
+
+    pcall(function()
+        local sources = {
+            lp:WaitForChild("PlayerScripts",1),
+            lp:WaitForChild("PlayerGui",1),
+            workspace,
+        }
+        for _, src in ipairs(sources) do
+            if src then
+                for _, obj in ipairs(src:GetDescendants()) do
+                    if (obj:IsA("LocalScript") or obj:IsA("Script")) and hasLKW(obj.Name) then
+                        local ok, err = pcall(function()
+                            obj.Enabled = false
+                        end)
+                        if ok then
+                            table.insert(killed, obj.Name.."(disabled)")
+                        else
+                            -- coba destroy kalau gak bisa disable
+                            local ok2 = pcall(function() obj:Destroy() end)
+                            if ok2 then
+                                table.insert(killed, obj.Name.."(destroyed)")
+                            else
+                                table.insert(failed, obj.Name)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- reset Lighting ke normal setelah kill
+    pcall(function()
+        local L = game:GetService("Lighting")
+        L.Brightness = 2
+        L.ClockTime = 14
+        L.Ambient = Color3.fromRGB(70,70,70)
+        L.OutdoorAmbient = Color3.fromRGB(128,128,128)
+    end)
+
+    if #killed > 0 then
+        addLog("⚡ KILLED: "..table.concat(killed,", "), Color3.fromRGB(255,80,255))
+    else
+        addLog("  (tidak ada script cuaca ditemukan)", Color3.fromRGB(120,120,120))
+    end
+    if #failed > 0 then
+        addLog("  ❌ GAGAL: "..table.concat(failed,", "), Color3.fromRGB(255,80,80))
+    end
+    addLog("  Lighting direset ke normal", Color3.fromRGB(120,220,180))
+    task.wait(0.5)
+    scanAll()
+end)
+
+copyBtn.MouseButton1Click:Connect(function()
+    setclipboard(table.concat(allLines, "\n"))
+    copyBtn.Text = "✓"; task.delay(1.5, function() copyBtn.Text = "COPY" end)
 end)
 
 scanBtn.MouseButton1Click:Connect(scanAll)
