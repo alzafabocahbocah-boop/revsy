@@ -1,7 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.547 — fix too many local variables: extract cmd_catat + cmd_download ke fungsi
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.546-cf"
+local VERSION = "9.547"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -8069,7 +8070,7 @@ if PERINTAH == "set" then
     return
 end
 
-if PERINTAH == "catat" then
+local function cmd_catat()
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
     local target = arg and arg[2] or ""
@@ -8250,6 +8251,8 @@ if PERINTAH == "catat" then
     print()
     return
 end
+
+if PERINTAH == "catat" then cmd_catat() end
 
 if PERINTAH == "uji" then
     local cfg = load_config()
@@ -11385,7 +11388,7 @@ if PERINTAH == "pasang" and (arg and arg[2] == "mercy") or (PERINTAH == "mercy")
     return
 end
 
-if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
+local function cmd_download()
     local NX = "https://node-x.my.id"
     local cfg = load_config()
     local adaCfg = (cfg ~= nil)
@@ -11629,6 +11632,8 @@ if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
     end
     return
 end
+
+if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then cmd_download() end
 
 function cek_cookie_roblox(cookie)
     if not cookie or cookie == "" then
