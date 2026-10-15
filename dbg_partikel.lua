@@ -25,15 +25,12 @@ local function addLog(s, col)
     local l=logL:Clone(); l.Text=s; l.TextColor3=col or Color3.fromRGB(180,220,180); l.Parent=scroll
 end
 
--- ── ROW 1: SCAN | DEL FX | COPY ──
-local scanBtn=Instance.new("TextButton"); scanBtn.Size=UDim2.new(0.34,-4,0,28); scanBtn.Position=UDim2.new(0,4,1,-66); scanBtn.BackgroundColor3=Color3.fromRGB(30,120,220); scanBtn.Text="SCAN"; scanBtn.TextColor3=Color3.new(1,1,1); scanBtn.Font=Enum.Font.GothamBold; scanBtn.TextSize=11; scanBtn.Parent=frame
+-- ── ROW 1: SCAN+COPY | DEL FX ──
+local scanBtn=Instance.new("TextButton"); scanBtn.Size=UDim2.new(0.5,-6,0,28); scanBtn.Position=UDim2.new(0,4,1,-66); scanBtn.BackgroundColor3=Color3.fromRGB(30,120,220); scanBtn.Text="SCAN+COPY"; scanBtn.TextColor3=Color3.new(1,1,1); scanBtn.Font=Enum.Font.GothamBold; scanBtn.TextSize=11; scanBtn.Parent=frame
 Instance.new("UICorner",scanBtn).CornerRadius=UDim.new(0,6)
 
-local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0.34,-4,0,28); delBtn.Position=UDim2.new(0.33,2,1,-66); delBtn.BackgroundColor3=Color3.fromRGB(200,80,30); delBtn.Text="DEL FX"; delBtn.TextColor3=Color3.new(1,1,1); delBtn.Font=Enum.Font.GothamBold; delBtn.TextSize=11; delBtn.Parent=frame
+local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0.5,-6,0,28); delBtn.Position=UDim2.new(0.5,2,1,-66); delBtn.BackgroundColor3=Color3.fromRGB(200,80,30); delBtn.Text="DEL FX"; delBtn.TextColor3=Color3.new(1,1,1); delBtn.Font=Enum.Font.GothamBold; delBtn.TextSize=11; delBtn.Parent=frame
 Instance.new("UICorner",delBtn).CornerRadius=UDim.new(0,6)
-
-local copyBtn=Instance.new("TextButton"); copyBtn.Size=UDim2.new(0.33,-2,0,28); copyBtn.Position=UDim2.new(0.67,2,1,-66); copyBtn.BackgroundColor3=Color3.fromRGB(80,60,160); copyBtn.Text="COPY"; copyBtn.TextColor3=Color3.new(1,1,1); copyBtn.Font=Enum.Font.GothamBold; copyBtn.TextSize=11; copyBtn.Parent=frame
-Instance.new("UICorner",copyBtn).CornerRadius=UDim.new(0,6)
 
 -- ── ROW 2: KILL WEATHER (full width) ──
 local killBtn=Instance.new("TextButton"); killBtn.Size=UDim2.new(1,-8,0,28); killBtn.Position=UDim2.new(0,4,1,-34); killBtn.BackgroundColor3=Color3.fromRGB(160,30,160); killBtn.Text="⚡ KILL WEATHER SCRIPTS"; killBtn.TextColor3=Color3.new(1,1,1); killBtn.Font=Enum.Font.GothamBold; killBtn.TextSize=11; killBtn.Parent=frame
@@ -75,7 +72,7 @@ local function hasLKW(name)
     return nil
 end
 
-local function scanAll()
+local function scanAll(doCopy)
     for _,c in ipairs(scroll:GetChildren()) do if c:IsA("TextLabel") then c:Destroy() end end
     allLines = {}
     local ws = workspace; local found = 0
@@ -194,11 +191,13 @@ local function scanAll()
     addLog("  OutdoorAmbient="..tostring(L.OutdoorAmbient), Color3.fromRGB(200,200,200))
 
     addLog("── TOTAL: "..found.." objek ──", Color3.fromRGB(180,255,180))
-    -- auto copy setelah scan selesai (defer biar log keisi semua dulu)
-    task.defer(function()
-        pcall(function() setclipboard(table.concat(allLines, "\n")) end)
-        copyBtn.Text = "✓ COPIED"; task.delay(2, function() copyBtn.Text = "COPY" end)
-    end)
+    -- copy hanya kalau doCopy=true (dari tombol manual)
+    if doCopy then
+        task.defer(function()
+            pcall(function() setclipboard(table.concat(allLines, "\n")) end)
+            scanBtn.Text = "✓ COPIED"; task.delay(2, function() scanBtn.Text = "SCAN+COPY" end)
+        end)
+    end
 end
 
 -- ======== DESTROY WS FX ========
@@ -236,7 +235,7 @@ delBtn.MouseButton1Click:Connect(function()
         addLog("✓ tidak ada FX di workspace/lighting", Color3.fromRGB(120,200,120))
     end
     task.wait(0.5)
-    scanAll()
+    scanAll(false)
 end)
 
 -- ======== KILL WEATHER SCRIPTS ========
@@ -293,19 +292,15 @@ killBtn.MouseButton1Click:Connect(function()
     end
     addLog("  Lighting direset ke normal", Color3.fromRGB(120,220,180))
     task.wait(0.5)
-    scanAll()
+    scanAll(false)
 end)
 
-copyBtn.MouseButton1Click:Connect(function()
-    setclipboard(table.concat(allLines, "\n"))
-    copyBtn.Text = "✓"; task.delay(1.5, function() copyBtn.Text = "COPY" end)
-end)
-
-scanBtn.MouseButton1Click:Connect(scanAll)
--- auto scan + copy tiap 5 detik
+-- tombol SCAN+COPY: scan lalu copy 1x
+scanBtn.MouseButton1Click:Connect(function() scanAll(true) end)
+-- auto-loop tiap 5 detik: scan aja, gak copy
 task.spawn(function()
     while sg and sg.Parent do
-        scanAll()
+        scanAll(false)
         task.wait(5)
     end
 end)
