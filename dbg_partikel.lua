@@ -122,7 +122,11 @@ local function scanAll()
     pcall(function()
         for _, obj in ipairs(ws:GetDescendants()) do
             if isParticleClass(obj) then
-                table.insert(wsP, obj.Name.."["..obj.ClassName.."] @"..obj.Parent.Name)
+                local p = obj.Parent
+                local pp = p and p.Parent
+                local loc = p and p.Name or "?"
+                if pp and pp ~= ws then loc = pp.Name.."/"..loc end
+                table.insert(wsP, obj.Name.."["..obj.ClassName.."] @"..loc)
                 found=found+1; if #wsP>=30 then break end
             end
         end
@@ -190,6 +194,9 @@ local function scanAll()
     addLog("  OutdoorAmbient="..tostring(L.OutdoorAmbient), Color3.fromRGB(200,200,200))
 
     addLog("── TOTAL: "..found.." objek ──", Color3.fromRGB(180,255,180))
+    -- auto copy setelah scan
+    pcall(function() setclipboard(table.concat(allLines, "\n")) end)
+    copyBtn.Text = "✓ AUTO-COPIED"; task.delay(2, function() copyBtn.Text = "COPY" end)
 end
 
 -- ======== DESTROY WS FX ========
@@ -293,4 +300,10 @@ copyBtn.MouseButton1Click:Connect(function()
 end)
 
 scanBtn.MouseButton1Click:Connect(scanAll)
-task.spawn(scanAll)
+-- auto scan + copy tiap 5 detik
+task.spawn(function()
+    while sg and sg.Parent do
+        scanAll()
+        task.wait(5)
+    end
+end)
