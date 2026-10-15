@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.542-cf"
+local VERSION = "9.543-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5308,11 +5308,18 @@ local function run(cfg)
                     end
                 end
                 do
-                    local rawH = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_hactstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    -- v9.480: scan hactstat dari semua clone dir (sama kayak denyut)
+                    local rawH = ""
+                    for _, _dd in ipairs(denyut_dirs(cfg)) do
+                        local _rH = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_hactstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                        if _rH ~= "" then rawH = rawH .. _rH .. "\n" end
+                    end
                     local items = {}
+                    local seen = {}
                     for line in rawH:gmatch("[^\n]+") do
                         local nama, js = line:match("zenx_hactstat_(.-)%.json|(.+)")
-                        if nama and js and #js > 5 then
+                        if nama and js and #js > 5 and not seen[nama] then
+                            seen[nama] = true
                             items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
                         end
                     end
@@ -5481,11 +5488,18 @@ local function run(cfg)
                         pcall(function() api_post(cfg, "/stat-batch", body) end)
                     end
                     do
-                        local rawH = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_hactstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                        -- v9.480: scan hactstat dari semua clone dir (sama kayak denyut)
+                        local rawH = ""
+                        for _, _dd in ipairs(denyut_dirs(cfg)) do
+                            local _rH = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_hactstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                            if _rH ~= "" then rawH = rawH .. _rH .. "\n" end
+                        end
                         local items = {}
+                        local seen = {}
                         for line in rawH:gmatch("[^\n]+") do
                             local nama, js = line:match("zenx_hactstat_(.-)%.json|(.+)")
-                            if nama and js and #js > 5 then
+                            if nama and js and #js > 5 and not seen[nama] then
+                                seen[nama] = true
                                 items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
                                 local hasTarget = js:match('"hactotoTarget"%s*:%s*"([^"]-)"')
                                 local online = js:match('"hactotoOnline"%s*:%s*(%a+)')
