@@ -1,4 +1,4 @@
--- DBG PARTIKEL — scan semua partikel/weather/FX yang ada di game
+-- DBG PARTIKEL — scan + destroy WS FX (ColorCorrection/Blur/SunRays/Bloom)
 
 local Players = game:GetService("Players")
 local lp = Players.LocalPlayer
@@ -24,21 +24,32 @@ local function addLog(s, col)
 end
 
 -- tombol SCAN
-local scanBtn=Instance.new("TextButton"); scanBtn.Size=UDim2.new(0.5,-6,0,28); scanBtn.Position=UDim2.new(0,4,1,-32); scanBtn.BackgroundColor3=Color3.fromRGB(30,120,220); scanBtn.Text="SCAN"; scanBtn.TextColor3=Color3.new(1,1,1); scanBtn.Font=Enum.Font.GothamBold; scanBtn.TextSize=11; scanBtn.Parent=frame
+local scanBtn=Instance.new("TextButton"); scanBtn.Size=UDim2.new(0.34,-4,0,28); scanBtn.Position=UDim2.new(0,4,1,-32); scanBtn.BackgroundColor3=Color3.fromRGB(30,120,220); scanBtn.Text="SCAN"; scanBtn.TextColor3=Color3.new(1,1,1); scanBtn.Font=Enum.Font.GothamBold; scanBtn.TextSize=11; scanBtn.Parent=frame
 Instance.new("UICorner",scanBtn).CornerRadius=UDim.new(0,6)
 
+-- tombol DESTROY FX
+local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0.34,-4,0,28); delBtn.Position=UDim2.new(0.33,2,1,-32); delBtn.BackgroundColor3=Color3.fromRGB(200,80,30); delBtn.Text="DEL FX"; delBtn.TextColor3=Color3.new(1,1,1); delBtn.Font=Enum.Font.GothamBold; delBtn.TextSize=11; delBtn.Parent=frame
+Instance.new("UICorner",delBtn).CornerRadius=UDim.new(0,6)
+
 -- tombol COPY ALL
-local copyBtn=Instance.new("TextButton"); copyBtn.Size=UDim2.new(0.5,-6,0,28); copyBtn.Position=UDim2.new(0.5,2,1,-32); copyBtn.BackgroundColor3=Color3.fromRGB(80,60,160); copyBtn.Text="COPY ALL"; copyBtn.TextColor3=Color3.new(1,1,1); copyBtn.Font=Enum.Font.GothamBold; copyBtn.TextSize=11; copyBtn.Parent=frame
+local copyBtn=Instance.new("TextButton"); copyBtn.Size=UDim2.new(0.33,-2,0,28); copyBtn.Position=UDim2.new(0.67,2,1,-32); copyBtn.BackgroundColor3=Color3.fromRGB(80,60,160); copyBtn.Text="COPY"; copyBtn.TextColor3=Color3.new(1,1,1); copyBtn.Font=Enum.Font.GothamBold; copyBtn.TextSize=11; copyBtn.Parent=frame
 Instance.new("UICorner",copyBtn).CornerRadius=UDim.new(0,6)
 
 copyBtn.MouseButton1Click:Connect(function()
-    local txt = table.concat(allLines, "\n")
-    setclipboard(txt)
-    copyBtn.Text = "✓ COPIED"
-    task.delay(1.5, function() copyBtn.Text = "COPY ALL" end)
+    setclipboard(table.concat(allLines, "\n"))
+    copyBtn.Text = "✓"; task.delay(1.5, function() copyBtn.Text = "COPY" end)
 end)
 
--- ======== SCAN FUNCTION ========
+-- ======== SCAN ========
+local PARTICLE_CLASSES = {
+    "ParticleEmitter","Trail","Smoke","Fire","Sparkles",
+    "BlurEffect","ColorCorrectionEffect","BloomEffect","SunRaysEffect","DepthOfFieldEffect",
+}
+local function isParticleClass(obj)
+    for _,c in ipairs(PARTICLE_CLASSES) do if obj:IsA(c) then return true end end
+    return false
+end
+
 local WEATHER_NAMES = {
     "WeatherVisuals","WeatherObjects","WindBlastTemplate",
     "Whale","Clam","Kelp","Water_Effect","SpottedEffect",
@@ -48,48 +59,31 @@ local WEATHER_NAMES = {
     "IcicleSpawner","SnowFX","FrostFX","LightningFX",
 }
 
-local PARTICLE_CLASSES = {
-    "ParticleEmitter","Trail","Smoke","Fire","Sparkles",
-    "BlurEffect","ColorCorrectionEffect","BloomEffect","SunRaysEffect","DepthOfFieldEffect",
-}
-
-local function isParticleClass(obj)
-    for _,c in ipairs(PARTICLE_CLASSES) do
-        if obj:IsA(c) then return true end
-    end
-    return false
-end
-
 local function scanAll()
-    for _,c in ipairs(scroll:GetChildren()) do
-        if c:IsA("TextLabel") then c:Destroy() end
-    end
+    for _,c in ipairs(scroll:GetChildren()) do if c:IsA("TextLabel") then c:Destroy() end end
     allLines = {}
+    local ws = workspace; local found = 0
 
-    local Lighting = game:GetService("Lighting")
-    local ws = workspace
-    local found = 0
-
-    addLog("── WORKSPACE CHILDREN ──", Color3.fromRGB(100,200,255))
+    addLog("── WS CHILDREN ──", Color3.fromRGB(100,200,255))
     for _, obj in ipairs(ws:GetChildren()) do
         local isKnown = false
         for _, name in ipairs(WEATHER_NAMES) do
             if obj.Name == name then
-                addLog("⚠️ WEATHER: "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,180,60))
-                found = found + 1; isKnown = true; break
+                addLog("⚠️ "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,180,60))
+                found=found+1; isKnown=true; break
             end
         end
         if not isKnown and isParticleClass(obj) then
-            addLog("❓ UNKNOWN: "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,120,120))
-            found = found + 1
+            addLog("❓ "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,120,120))
+            found=found+1
         end
     end
 
     addLog("── LIGHTING ──", Color3.fromRGB(100,200,255))
+    local Lighting = game:GetService("Lighting")
     for _, obj in ipairs(Lighting:GetChildren()) do
         if isParticleClass(obj) then
-            addLog("💡 "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,220,80))
-            found = found + 1
+            addLog("💡 "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,220,80)); found=found+1
         end
     end
     for _, obj in ipairs(Lighting:GetDescendants()) do
@@ -97,33 +91,54 @@ local function scanAll()
             addLog("🌤 "..obj.ClassName..": "..obj.Name, Color3.fromRGB(160,220,255))
         end
         if isParticleClass(obj) then
-            addLog("💡 desc: "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,200,80))
-            found = found + 1
+            addLog("💡 "..obj.Name.." ["..obj.ClassName.."]", Color3.fromRGB(255,200,80)); found=found+1
         end
     end
 
-    addLog("── WS DESCENDANTS (partikel) ──", Color3.fromRGB(100,200,255))
-    local wsPartikel = {}
+    addLog("── WS DESCENDANTS ──", Color3.fromRGB(100,200,255))
+    local wsP={}
     pcall(function()
         for _, obj in ipairs(ws:GetDescendants()) do
             if isParticleClass(obj) then
-                local path = obj.Name.."["..obj.ClassName.."] @"..obj.Parent.Name
-                table.insert(wsPartikel, path)
-                found = found + 1
-                if #wsPartikel > 30 then break end
+                table.insert(wsP, obj.Name.."["..obj.ClassName.."] @"..obj.Parent.Name)
+                found=found+1; if #wsP>=30 then break end
             end
         end
     end)
-    if #wsPartikel == 0 then
-        addLog("  (tidak ada)", Color3.fromRGB(120,120,120))
-    else
-        for _,s in ipairs(wsPartikel) do
-            addLog("  "..s, Color3.fromRGB(255,150,100))
-        end
-    end
+    if #wsP==0 then addLog("  (tidak ada)", Color3.fromRGB(120,120,120))
+    else for _,s in ipairs(wsP) do addLog("  "..s, Color3.fromRGB(255,150,100)) end end
 
     addLog("── TOTAL: "..found.." objek ──", Color3.fromRGB(180,255,180))
 end
+
+-- ======== DESTROY WS FX ========
+local FX_CLASSES = {
+    "ColorCorrectionEffect","BlurEffect","SunRaysEffect","BloomEffect",
+    "DepthOfFieldEffect",
+}
+local function isFxClass(obj)
+    for _,c in ipairs(FX_CLASSES) do if obj:IsA(c) then return true end end
+    return false
+end
+
+delBtn.MouseButton1Click:Connect(function()
+    local destroyed = {}
+    pcall(function()
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if isFxClass(obj) then
+                table.insert(destroyed, obj.Name.."["..obj.ClassName.."]")
+                obj:Destroy()
+            end
+        end
+    end)
+    if #destroyed > 0 then
+        addLog("🗑 DESTROYED: "..table.concat(destroyed,", "), Color3.fromRGB(255,80,80))
+    else
+        addLog("✓ tidak ada FX di workspace", Color3.fromRGB(120,200,120))
+    end
+    task.wait(0.5)
+    scanAll()
+end)
 
 scanBtn.MouseButton1Click:Connect(scanAll)
 task.spawn(scanAll)
