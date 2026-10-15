@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.541-cf"
+local VERSION = "9.542-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -2918,7 +2918,13 @@ function refresh_denyut_umur(cfg)
     local now = os.time()
     for line in raw:gmatch("[^\n]+") do
         local nama, mtime = line:match("zenx_denyut_(.-)%.txt|(%d+)")
-        if nama and mtime then DENYUT_UMUR[nama] = now - tonumber(mtime) end
+        if nama and mtime then
+            local umur = now - tonumber(mtime)
+            -- simpan yang paling fresh (umur terkecil)
+            if not DENYUT_UMUR[nama] or umur < DENYUT_UMUR[nama] then
+                DENYUT_UMUR[nama] = umur
+            end
+        end
     end
 end
 
@@ -5426,7 +5432,10 @@ local function run(cfg)
                         if nama and ts then
                             local umurIsi = sekarang - tonumber(ts)      -- dari timestamp DALAM file
                             local umurMtime = mtime and (sekarang - tonumber(mtime)) or nil  -- dari mtime file
-                            denyutSemua[nama] = umurIsi
+                            -- simpan yang paling fresh (umur terkecil) kalau akun sama ada di banyak path
+                            if not denyutSemua[nama] or umurIsi < denyutSemua[nama] then
+                                denyutSemua[nama] = umurIsi
+                            end
                             local skReal = isi:match(";S(%d+)")
                             local nightKg = isi:match(";N(%d+)")   -- v9.413: night egg dari upkg (format kg)
                             local petTotal = isi:match(";P(%d+)")  -- uplevel: total pet inventory
