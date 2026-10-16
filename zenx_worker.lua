@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.548 — debug log rejoin loop (pinpoint hang antara client)
+-- zenx_worker v9.549 — FIX hang permanen: cek PID reader FIFO sebelum write ke persistent shell
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.548"
+local VERSION = "9.549"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -280,6 +280,7 @@ end
 
 local SHELL_AKTIF   = false      -- lagi kepakai apa nggak
 local SHELL_TULIS            -- pipa buat ngirim perintah
+local SHELL_PID     = nil    -- v9.549: PID su-sh buat deteksi reader FIFO mati
 local RUMAH     = os.getenv("HOME") or "."
 local SHELL_IN  = RUMAH .. "/.zenx_in"
 local SHELL_OUT = RUMAH .. "/.zenx_out"
@@ -288,11 +289,19 @@ local SHELL_URUT = 0
 local function shell_matikan()
     if SHELL_TULIS then pcall(function() SHELL_TULIS:close() end) end
     SHELL_TULIS, SHELL_AKTIF = nil, false
+    if SHELL_PID then
+        os.execute("kill -9 " .. SHELL_PID .. " >/dev/null 2>&1")
+        SHELL_PID = nil
+    end
     os.execute("rm -f " .. SHELL_IN .. " " .. SHELL_OUT .. "* >/dev/null 2>&1")
 end
 
 local function shell_jalan(cmd, batas)
     if not SHELL_AKTIF or not SHELL_TULIS then return nil end
+    -- v9.549: cek PID reader FIFO masih hidup sebelum write (cegah hang permanen)
+    if SHELL_PID and not io.open("/proc/" .. SHELL_PID, "r") then
+        shell_matikan(); return nil   -- reader mati -> fallback ke io.popen
+    end
     SHELL_URUT = SHELL_URUT + 1
 
     local fOut  = SHELL_OUT .. "." .. SHELL_URUT
@@ -339,10 +348,20 @@ local function shell_nyalakan()
     if sh_lama("command -v setsid >/dev/null 2>&1 && echo ADA"):find("ADA", 1, true) then
         pakaiSetsid = "setsid "
     end
+    -- v9.549: simpan PID su-sh biar bisa detect kalau reader FIFO mati
+    local fPid = SHELL_OUT .. ".pid"
     os.execute(pakaiSetsid .. "su -c 'sh < " .. SHELL_IN .. " >> " .. SHELL_OUT ..
-               " 2>&1' </dev/null >/dev/null 2>&1 &")
+               " 2>&1' </dev/null >/dev/null 2>&1 & echo $! > " .. fPid)
     os.execute("sleep 1")
     os.execute("stty sane 2>/dev/null")
+    do
+        local pf = io.open(fPid, "r")
+        if pf then
+            local pid_s = pf:read("*l"); pf:close()
+            os.execute("rm -f " .. fPid .. " >/dev/null 2>&1")
+            SHELL_PID = pid_s and pid_s:match("(%d+)") or nil
+        end
+    end
 
     local f = io.open(SHELL_IN, "w")
     if not f then shell_matikan(); return false, "gagal buka pipa" end
