@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.547 — fix too many local variables: extract cmd_catat + cmd_download ke fungsi
+-- zenx_worker v9.548 — debug log rejoin loop (pinpoint hang antara client)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.547"
+local VERSION = "9.548"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5786,18 +5786,34 @@ local function run(cfg)
                         end
                     end
                     for idx, pkg in ipairs(perluTembak) do
-                        if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
+                        local _nmp = pkg:gsub("com%.roblox%.","")
+                        info(("[rejoin-dbg] [%d/%d] %s -- cek_batal/perintah"):format(idx, #perluTembak, _nmp))
+                        if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then
+                            info(("[rejoin-dbg] BREAK di idx=%d (cek_batal/perintah baru)"):format(idx))
+                            break
+                        end
+                        info(("[rejoin-dbg] [%d/%d] %s -- grid_satu"):format(idx, #perluTembak, _nmp))
                         pcall(function() grid_satu(cfg, pkg) end)
+                        info(("[rejoin-dbg] [%d/%d] %s -- open_one"):format(idx, #perluTembak, _nmp))
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                        info(("[rejoin-dbg] [%d/%d] %s -- open_one KELAR"):format(idx, #perluTembak, _nmp))
                         TERAKHIR_BUKA[pkg] = os.time()   -- v9.380: FIX dobel-buka. Tanpa ini, FORCE
                         KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- v9.403: GRACE loading. Rejoin 1-1
                         KICK_DIURUS["denyut_rejoin:" .. pkg] = os.time()   -- v9.382: BLOCK FORCE. Client
+                        info(("[rejoin-dbg] [%d/%d] %s -- jaga_depan"):format(idx, #perluTembak, _nmp))
                         pcall(function() jaga_depan(cfg, mapLink) end)
+                        info(("[rejoin-dbg] [%d/%d] %s -- jaga_depan KELAR"):format(idx, #perluTembak, _nmp))
                         if idx < #perluTembak then
-                            for _ = 1, jeda_client(cfg, _staggerAntrian) do
-                                if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
+                            local _jeda = jeda_client(cfg, _staggerAntrian)
+                            info(("[rejoin-dbg] [%d/%d] %s -- mulai sleep %ds"):format(idx, #perluTembak, _nmp, _jeda))
+                            for _si = 1, _jeda do
+                                if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then
+                                    info(("[rejoin-dbg] [%d/%d] %s -- BREAK di sleep ke-%d/%d"):format(idx, #perluTembak, _nmp, _si, _jeda))
+                                    break
+                                end
                                 os.execute("sleep 1")
                             end
+                            info(("[rejoin-dbg] [%d/%d] %s -- sleep selesai, lanjut idx berikutnya"):format(idx, #perluTembak, _nmp))
                         end
                     end
                     KICK_DIURUS["_denyutTop"] = os.time()
