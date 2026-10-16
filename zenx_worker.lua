@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.551 — FIX sleep loop hang: ada_perintah_baru pakai waktu bukan counter, cek tiap 20s bukan tiap detik (cegah 45x curl block 11s = 8 menit hang, hemat curl)
+-- zenx_worker v9.552 — UP6KG: restart interval 45min→120min, denyut check dimatiin (fallback ke 360s)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.551"
+local VERSION = "9.552"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -430,7 +430,7 @@ end
 function interval_denyut(cfg)
     local sl = tostring(cfg and cfg.script_label or "")
     if sl:find("UP3", 1, true) then return 90 end   -- up3.8kg: cek denyut 90s (v9.487, dari 60s)
-    if sl:find("UP6KG") then return 90 end   -- up6kg: cek denyut 90s (v9.508, dari 65s)
+    -- if sl:find("UP6KG") then return 90 end   -- up6kg: DIMATIIN v9.552 (fallback ke 360s)
     if sl:find("UPLEVEL") or sl:find("MARKET") then return 180 end
     if sl:find("HACT") then return 120 end   -- hact: cek denyut 120s
     return 360
@@ -5875,16 +5875,16 @@ local function run(cfg)
             if _isUp38 or _isUp6 then   -- v9.520: hact DIKELUARIN dari restart terjadwal (user request)
                 local wibNow = os.time() + 7 * 3600
                 local wt = os.date("!*t", wibNow)
-                local per2jam = _isUp38 -- up3.8kg: tiap 2 jam (00/02/04/... WIB); up6kg: 45 menit
-                local slotSize = per2jam and 7200 or 2700                    -- 120min, up6kg 45min (v9.508: dari 30min)
+                local per2jam = _isUp38 or _isUp6 -- up3.8kg: tiap 2 jam (00/02/04/... WIB); up6kg: 120 menit (v9.552: dari 45min)
+                local slotSize = per2jam and 7200 or 2700                    -- 120min (up3.8kg & up6kg), lainnya 45min
                 local fireNow
                 if cfg.restart_min_override then
                     -- v9.495: penanda khusus (mis. newmarket-arceus) -- interval custom (mis. 180 menit),
                     -- gak selalu kelipatan yg pas sama ":00 tiap jam" -> pake modulo generik.
                     slotSize = cfg.restart_min_override * 60
                     fireNow = (wibNow % slotSize) < 60
-                elseif per2jam then fireNow = (wt.hour % 2 == 0 and wt.min == 0) -- up3.8kg: tiap 2 jam (00/02/04/... :00 WIB)
-                else fireNow = (wibNow % 2700) < 90 end     -- up6kg: tiap 45 menit (v9.508: 00:00,00:45,01:30,...)
+                elseif per2jam then fireNow = (wt.hour % 2 == 0 and wt.min == 0) -- up3.8kg & up6kg: tiap 2 jam (00/02/04/... :00 WIB)
+                else fireNow = (wibNow % 2700) < 90 end     -- lainnya: tiap 45 menit
                 local slot = math.floor(wibNow / slotSize)
                 if fireNow and RESTART_JADWAL_SLOT ~= slot then
                     RESTART_JADWAL_SLOT = slot
