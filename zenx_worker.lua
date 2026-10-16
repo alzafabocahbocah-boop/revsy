@@ -1,6 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.551 — FIX sleep loop hang: ada_perintah_baru pakai waktu bukan counter, cek tiap 5s bukan tiap detik (cegah 45x curl block 11s = 8 menit hang)
+-- zenx_worker v9.551 — FIX sleep loop hang: ada_perintah_baru pakai waktu bukan counter, cek tiap 20s bukan tiap detik (cegah 45x curl block 11s = 8 menit hang, hemat curl)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
 local VERSION = "9.551"
 TIM1_AKHIR = 10
@@ -5829,13 +5829,13 @@ local function run(cfg)
                             local _jeda = jeda_client(cfg, _staggerAntrian)
                             info(("[rejoin-dbg] [%d/%d] %s -- mulai sleep %ds"):format(idx, #perluTembak, _nmp, _jeda))
                             -- v9.551: FIX hang — jangan cek ada_perintah_baru tiap detik (api_get bisa 11-16s timeout)
-                            -- pakai waktu, cek tiap 5s (real) supaya 90s sleep gak jadi 8+ menit
+                            -- pakai waktu, cek tiap 20s (real) supaya 90s sleep gak jadi 8+ menit + hemat curl
                             local _sleepEnd = os.time() + _jeda
                             local _apbCek = 0   -- kapan terakhir cek perintah
                             local _batal = false
                             while os.time() < _sleepEnd do
                                 local _now = os.time()
-                                if (_now - _apbCek) >= 5 then
+                                if (_now - _apbCek) >= 20 then
                                     _apbCek = _now
                                     if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then
                                         info(("[rejoin-dbg] [%d/%d] %s -- BREAK di sleep (sisa %ds)"):format(idx, #perluTembak, _nmp, math.max(0, _sleepEnd - _now)))
