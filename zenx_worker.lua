@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.549 — FIX hang permanen: cek PID reader FIFO sebelum write ke persistent shell
+-- zenx_worker v9.550 — FIX GOSERVER market join PUBLIC (pakai_S=true paksa bypass guard place market)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.549"
+local VERSION = "9.550"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1750,6 +1750,9 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     end
     local _smtSave = SERVER_MOVE_TEMBAK
     if _moveLink and _moveLink ~= "" then link_client = _moveLink; SERVER_MOVE_TEMBAK = true end
+    -- v9.550: kalau dipanggil eksplisit dari panel (pakai_S=true, misal GOSERVER/TEMBAK) + ada link
+    -- -> paksa SERVER_MOVE_TEMBAK=true biar build_url gak force PUBLIC buat place market
+    if pakai_S and link_client and link_client ~= "" then SERVER_MOVE_TEMBAK = true end
     local url = build_url(cfg, link_client)
     SERVER_MOVE_TEMBAK = _smtSave
     do
