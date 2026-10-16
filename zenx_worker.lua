@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.550 — FIX GOSERVER market join PUBLIC (pakai_S=true paksa bypass guard place market)
+-- zenx_worker v9.551 — FIX sleep loop hang: ada_perintah_baru pakai waktu bukan counter, cek tiap 5s bukan tiap detik (cegah 45x curl block 11s = 8 menit hang)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.550"
+local VERSION = "9.551"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5828,14 +5828,26 @@ local function run(cfg)
                         if idx < #perluTembak then
                             local _jeda = jeda_client(cfg, _staggerAntrian)
                             info(("[rejoin-dbg] [%d/%d] %s -- mulai sleep %ds"):format(idx, #perluTembak, _nmp, _jeda))
-                            for _si = 1, _jeda do
-                                if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then
-                                    info(("[rejoin-dbg] [%d/%d] %s -- BREAK di sleep ke-%d/%d"):format(idx, #perluTembak, _nmp, _si, _jeda))
-                                    break
+                            -- v9.551: FIX hang — jangan cek ada_perintah_baru tiap detik (api_get bisa 11-16s timeout)
+                            -- pakai waktu, cek tiap 5s (real) supaya 90s sleep gak jadi 8+ menit
+                            local _sleepEnd = os.time() + _jeda
+                            local _apbCek = 0   -- kapan terakhir cek perintah
+                            local _batal = false
+                            while os.time() < _sleepEnd do
+                                local _now = os.time()
+                                if (_now - _apbCek) >= 5 then
+                                    _apbCek = _now
+                                    if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then
+                                        info(("[rejoin-dbg] [%d/%d] %s -- BREAK di sleep (sisa %ds)"):format(idx, #perluTembak, _nmp, math.max(0, _sleepEnd - _now)))
+                                        _batal = true
+                                        break
+                                    end
                                 end
                                 os.execute("sleep 1")
                             end
-                            info(("[rejoin-dbg] [%d/%d] %s -- sleep selesai, lanjut idx berikutnya"):format(idx, #perluTembak, _nmp))
+                            if not _batal then
+                                info(("[rejoin-dbg] [%d/%d] %s -- sleep selesai, lanjut idx berikutnya"):format(idx, #perluTembak, _nmp))
+                            end
                         end
                     end
                     KICK_DIURUS["_denyutTop"] = os.time()
