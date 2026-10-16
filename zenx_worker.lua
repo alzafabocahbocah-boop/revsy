@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.552 — UP6KG: restart interval 45min→120min, denyut check dimatiin (fallback ke 360s)
+-- zenx_worker v9.553 — UP6KG: denyut beneran dimatiin (return 999999, bukan fallback 360s)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.552"
+local VERSION = "9.553"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -430,7 +430,7 @@ end
 function interval_denyut(cfg)
     local sl = tostring(cfg and cfg.script_label or "")
     if sl:find("UP3", 1, true) then return 90 end   -- up3.8kg: cek denyut 90s (v9.487, dari 60s)
-    -- if sl:find("UP6KG") then return 90 end   -- up6kg: DIMATIIN v9.552 (fallback ke 360s)
+    if sl:find("UP6KG") then return 999999 end   -- up6kg: denyut DIMATIIN v9.553
     if sl:find("UPLEVEL") or sl:find("MARKET") then return 180 end
     if sl:find("HACT") then return 120 end   -- hact: cek denyut 120s
     return 360
