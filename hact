@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.183  ══════════════════════════
+-- ══════════════════════════  HACT  v27.184  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.183"
+local VERSION = "v27.184"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2136,8 +2136,18 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         _G.__hactTradeAktif = tick()   -- v27.111: MULAI trade (fire send tiket) -> fav MATI
         _G.__hactStep = "FIRE TIKET -> "..targetPlayer.Name
         local _completeBaseline = _G.__hactLastTradeComplete or 0   -- v27.152: catat baseline SEBELUM fire, buat deteksi "Trade completed!" baru abis round ini
-        pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
-        task.wait(0.3)   -- tunggu window kebuka (was 0.4)
+        -- v27.184: SPAM sendReqRE sampai window beneran kebuka (dulu 1x + wait 0.3s → kalau target
+        -- belum nerima, window gak kebuka, added tetap count naik, idx maju, round 2 break "petList HABIS")
+        do
+            local _spamStart = tick()
+            local _spamCount = 0
+            while not windowOpen() and tick() - _spamStart < 10 do
+                pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
+                _spamCount = _spamCount + 1
+                task.wait(0.4)
+            end
+            print(("[HactTelur] round %d: spam sendReq %dx (%.1fs) → window=%s"):format(round, _spamCount, tick()-_spamStart, tostring(windowOpen())))
+        end
         local added = 0
         for i = idx, #petList do
             if stopCheck and stopCheck() then break end
