@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.201  ══════════════════════════
+-- ══════════════════════════  HACT  v27.202  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.201"
+local VERSION = "v27.202"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -8159,20 +8159,24 @@ end)()  -- tutup IIFE TAB TRADE
                                         teStatL.Text = "ERR: trade remote nil"
                                         print("[TradeEgg] trade remote nil, abort")
                                     else
-                                    -- v27.201: unfav pakai favoritePet (fungsi yg udah ada) + PetDetect
+                                    -- v27.202: unfav → cek ulang → repeat sampai 0 yang fav, baru send ticket
                                     teStatL.Text = "unfav pet sell..."
                                     do
-                                        local unfavCount = 0
-                                        for _, p in ipairs(PetDetect.listBackpackPets(true)) do
-                                            local uc = tostring(p.uuid):gsub("[{}]","")
-                                            if snapUuids[uc] and p.fav and p.tool then
-                                                favoritePet(p.tool)
-                                                unfavCount = unfavCount + 1
-                                                task.wait(0.04)
+                                        for attempt = 1, 10 do
+                                            PetDetect.rebuild()
+                                            local stillFav = 0
+                                            for _, p in ipairs(PetDetect.listBackpackPets(true)) do
+                                                local uc = tostring(p.uuid):gsub("[{}]","")
+                                                if snapUuids[uc] and p.fav and p.tool then
+                                                    favoritePet(p.tool)
+                                                    stillFav = stillFav + 1
+                                                    task.wait(0.04)
+                                                end
                                             end
+                                            print(("[TradeEgg] unfav check attempt %d: %d masih fav"):format(attempt, stillFav))
+                                            if stillFav == 0 then break end
+                                            task.wait(0.2)
                                         end
-                                        print(("[TradeEgg] unfav selesai: %d pet di-unfav"):format(unfavCount))
-                                        if unfavCount > 0 then task.wait(0.2) end
                                     end
                                     local ti = 1  -- target index (rotasi kalau > 1 target)
                                     while teRunning do
