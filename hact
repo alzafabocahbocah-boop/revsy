@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.178  ══════════════════════════
+-- ══════════════════════════  HACT  v27.179  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.178"
+local VERSION = "v27.179"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -7842,6 +7842,31 @@ end)()  -- tutup IIFE TAB TRADE
         makeTargetRow(1)
         makeTargetRow(2)
 
+        -- v27.179: TARGET COUNT per player (0 = unlimited)
+        local teTargetCount = {0, 0}   -- max pet per target (0 = unlimited)
+        local teSentTotal = {0, 0}     -- total pet terkirim ke target[i] akumulatif (reset waktu stop)
+
+        local function makeCountRow(idx)
+            local label = elbl(teFrame, "Max T"..idx, 12, C.textDim)
+            label.Position = UDim2.new(0,0,0,yE); label.Size = UDim2.new(0,80,0,28)
+            local box = mk("TextBox", {
+                Size = UDim2.new(1,-86,0,28), Position = UDim2.new(0,86,0,yE),
+                BackgroundColor3 = C.card, BorderSizePixel = 0,
+                Text = "0", TextColor3 = C.text, Font = FONT, TextSize = 12,
+                PlaceholderText = "0 = unlimited",
+                PlaceholderColor3 = C.textDim, ClearTextOnFocus = false,
+                Parent = teFrame })
+            Instance.new("UICorner", box).CornerRadius = UDim.new(0,5)
+            box.FocusLost:Connect(function()
+                local n = tonumber(box.Text)
+                if n and n >= 0 then teTargetCount[idx] = math.floor(n)
+                else box.Text = tostring(teTargetCount[idx]) end
+            end)
+            yE = yE + 34
+        end
+        makeCountRow(1)
+        makeCountRow(2)
+
         -- STATUS label
         local teStatL = elbl(teFrame, "", 10, C.textDim)
         teStatL.TextWrapped = true; teStatL.TextXAlignment = Enum.TextXAlignment.Left
@@ -7946,7 +7971,8 @@ end)()  -- tutup IIFE TAB TRADE
             local hasTarget = teTargetNames[1] or teTargetNames[2]
             if not hasTarget then teStatL.Text = "pilih minimal 1 target player"; return end
             if not PRESET_HACT[teEggSel] then teStatL.Text = "preset "..teEggSel.." gak ada"; return end
-            -- START
+            -- START — reset counter akumulatif
+            teSentTotal = {0, 0}
             teRunning = true
             _G.__hactTradeEggAktif = true
             teBtn.Text = "STOP TRADE EGG"
@@ -8075,21 +8101,51 @@ end)()  -- tutup IIFE TAB TRADE
                                             end
                                             return gone
                                         end
-                                        for _, tPlr2 in ipairs(activeTgts) do
+                                        -- v27.179: track sent per target, skip kalau sudah >= targetCount
+                                        local goneBaseline = countGone()  -- hilang sebelum batch ini
+                                        for ti, tPlr2 in ipairs(activeTgts) do
                                             if not teRunning then break end
-                                            if not Players:FindFirstChild(tPlr2.Name) then
+                                            -- cek limit per target
+                                            local maxForThis = teTargetCount[ti] or 0
+                                            if maxForThis > 0 and teSentTotal[ti] >= maxForThis then
+                                                teStatL.Text = ("target %s sudah %d/%d, skip"):format(tPlr2.Name, teSentTotal[ti], maxForThis)
+                                                print(("[TradeEgg] skip "..tPlr2.Name..": sent=%d max=%d"):format(teSentTotal[ti], maxForThis))
+                                                task.wait(0.3)
+                                            elseif not Players:FindFirstChild(tPlr2.Name) then
                                                 teStatL.Text = tPlr2.Name.." offline, skip"
                                                 task.wait(0.5)
                                             else
-                                                teStatL.Text = ("→ trade ke %s..."):format(tPlr2.Name)
-                                                print(("[TradeEgg] mulai tradePetsToTarget -> "..tPlr2.Name.." | "..#petTools.." pet | TradeSys.ensure="..tostring(TradeSys.ensure())))
-                                                local n = tradePetsToTarget(tPlr2, petTools, function() return not teRunning end)
-                                                print(("[TradeEgg] tradePetsToTarget selesai -> totalSent="..tostring(n)))
+                                                local goneBefore = countGone()
+                                                local sisa = (maxForThis > 0) and (maxForThis - teSentTotal[ti]) or #petTools
+                                                -- kalau ada limit, potong petTools ke sisa yg boleh dikirim
+                                                local subList = petTools
+                                                if maxForThis > 0 and sisa < #petTools then
+                                                    subList = {}
+                                                    for si = 1, sisa do subList[si] = petTools[si] end
+                                                end
+                                                teStatL.Text = ("→ trade ke %s (%d/%s)..."):format(tPlr2.Name, teSentTotal[ti], maxForThis > 0 and tostring(maxForThis) or "∞")
+                                                print(("[TradeEgg] mulai tradePetsToTarget -> "..tPlr2.Name.." | "..#subList.." pet | sent=%d max=%d"):format(teSentTotal[ti], maxForThis))
+                                                local n = tradePetsToTarget(tPlr2, subList, function()
+                                                    if not teRunning then return true end
+                                                    -- v27.179: stop kalau limit tercapai
+                                                    if maxForThis > 0 then
+                                                        local nowGone = countGone() - goneBefore
+                                                        if teSentTotal[ti] + nowGone >= maxForThis then return true end
+                                                    end
+                                                    return false
+                                                end)
+                                                -- update akumulatif
+                                                local addedThisRound = countGone() - goneBefore
+                                                teSentTotal[ti] = teSentTotal[ti] + addedThisRound
+                                                print(("[TradeEgg] selesai -> n=%s addedThisRound=%d total[%d]=%d"):format(tostring(n), addedThisRound, ti, teSentTotal[ti]))
                                             end
                                         end
-                                        sent2 = countGone()
+                                        sent2 = countGone() - goneBaseline
                                         local names2 = {}
-                                        for _, p in ipairs(activeTgts) do names2[#names2+1] = p.Name end
+                                        for ti, p in ipairs(activeTgts) do
+                                            local max = teTargetCount[ti] or 0
+                                            names2[#names2+1] = p.Name.."("..teSentTotal[ti]..(max>0 and "/"..max or "")..")"
+                                        end
                                         teStatL.Text = ("selesai: %d pet hilang → %s ✓"):format(sent2, table.concat(names2, " & "))
                                     end
                                 else
