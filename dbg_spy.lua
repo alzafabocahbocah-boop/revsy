@@ -4,7 +4,7 @@
 local LOG_GETGC    = true
 local LOG_REQUIRE  = true
 local LOG_ATTR     = true
-local LOG_PETDATA  = true
+local LOG_PETDATA  = false  -- off biar gak noise
 local MAX_LINES    = 200  -- max log di GUI
 
 -- ═══════════════════ GUI ═══════════════════
