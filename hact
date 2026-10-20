@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.188"
+local VERSION = "v27.190"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -3879,23 +3879,65 @@ local _gameDataCache, _gameDataTime = nil, 0
 local function getGameData()
     if _gameDataCache and (tick() - _gameDataTime) < 30 then return _gameDataCache end
     local d = { maxPets = nil, maxEggs = nil, maxEquip = nil }
+    -- v27.190: port cara up6kg — lebih reliable dari terbesar/terkecil
+    -- 1) baca dari UI "Pet Items (X/Y)" -> Y = max ASLI akun (paling akurat, gak ke-kontaminasi getgc)
     pcall(function()
-        -- scan SEMUA tabel, ambil nilai TERKECIL yang valid (>= 50) tiap field
-        -- template/default game biasanya lebih BESAR dari nilai akun sebenarnya
-        -- jadi ambil terkecil biar dapet nilai akun yang bener
+        local pg = player:FindFirstChild("PlayerGui")
+        if not pg then return end
+        local totalCur = #PetDetect.listBackpackPets()
+        for _, dd in ipairs(pg:GetDescendants()) do
+            if (dd:IsA("TextLabel") or dd:IsA("TextButton")) and type(dd.Text) == "string" then
+                local low = dd.Text:lower()
+                if low:find("pet") and low:find("item") then
+                    local a, b = dd.Text:match("(%d+)%s*/%s*(%d+)")
+                    if a and b then
+                        a, b = tonumber(a), tonumber(b)
+                        if a and b and b > 0 and math.abs(a - totalCur) <= 10 then
+                            d.maxPets = b; break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    -- 2) fallback getgc: cuma tabel PlayerData asli (punya ketiga field sekaligus),
+    --    pilih MODE (paling sering muncul) di antara nilai >= jumlah pet sekarang
+    if not d.maxPets then
+        pcall(function()
+            local totalCur = #PetDetect.listBackpackPets()
+            local floor = totalCur - 5
+            local tally = {}
+            for _, obj in ipairs(getgc(true)) do
+                if type(obj) == "table" then
+                    local mp = rawget(obj, "MaxPetsInInventory")
+                    if type(mp) == "number" and mp > 0
+                        and rawget(obj, "MaxEggsInFarm") ~= nil
+                        and rawget(obj, "MaxEquippedPets") ~= nil
+                        and mp >= floor then
+                        tally[mp] = (tally[mp] or 0) + 1
+                    end
+                end
+            end
+            local bestN = 0
+            for v, n in pairs(tally) do
+                -- mode; kalau seri -> pilih lebih kecil (default game cenderung gede)
+                if n > bestN or (n == bestN and (not d.maxPets or v < d.maxPets)) then
+                    d.maxPets = v; bestN = n
+                end
+            end
+        end)
+    end
+    -- maxEggs dan maxEquip tetap scan semua (jarang salah karena nilainya unik)
+    pcall(function()
         for _, obj in ipairs(getgc(true)) do
             if type(obj) == "table" then
-                local mp = rawget(obj, "MaxPetsInInventory")
-                if type(mp) == "number" and mp >= 50 then
-                    if not d.maxPets or mp < d.maxPets then d.maxPets = mp end
-                end
                 local me = rawget(obj, "MaxEggsInFarm")
-                if type(me) == "number" and me >= 10 then
-                    if not d.maxEggs or me < d.maxEggs then d.maxEggs = me end
+                if type(me) == "number" and me > 0 then
+                    if not d.maxEggs or me > d.maxEggs then d.maxEggs = me end
                 end
                 local mq = rawget(obj, "MaxEquippedPets")
-                if type(mq) == "number" and mq >= 1 then
-                    if not d.maxEquip or mq < d.maxEquip then d.maxEquip = mq end
+                if type(mq) == "number" and mq > 0 then
+                    if not d.maxEquip or mq > d.maxEquip then d.maxEquip = mq end
                 end
             end
         end
