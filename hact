@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.215  ══════════════════════════
+-- ══════════════════════════  HACT  v27.216  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.215"
+local VERSION = "v27.216"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -7957,6 +7957,7 @@ end)()  -- tutup IIFE TAB TRADE
         -- v27.179: TARGET COUNT per player (0 = unlimited)
         local teTargetCount = {0, 0}   -- max pet per target (0 = unlimited)
         local teSentTotal = {0, 0}     -- total pet terkirim ke target[i] akumulatif (reset waktu stop)
+        local teOrigAutoAccTrade = nil -- v27.216: simpan AutoAcc.trade asli sebelum Trade Egg ubah
 
         local function makeCountRow(idx)
             local label = elbl(teFrame, "Max T"..idx, 12, C.textDim)
@@ -8072,6 +8073,10 @@ end)()  -- tutup IIFE TAB TRADE
                 teRunning = false
                 _G.__hactTradeEggAktif = false
                 _G.__hactTradeEggSnapUuids = nil  -- v27.210: clear snap, auto-fav normal lagi
+                if teOrigAutoAccTrade ~= nil then  -- v27.216: restore AutoAcc.trade
+                    AutoAcc.trade = teOrigAutoAccTrade
+                    teOrigAutoAccTrade = nil
+                end
                 teBtn.Text = "START TRADE EGG"
                 teBtn.BackgroundColor3 = C.card
                 teBtn.TextColor3 = C.text
@@ -8084,6 +8089,7 @@ end)()  -- tutup IIFE TAB TRADE
             if not PRESET_HACT[teEggSel] then teStatL.Text = "preset "..teEggSel.." gak ada"; return end
             -- START — reset counter akumulatif
             teSentTotal = {0, 0}
+            teOrigAutoAccTrade = AutoAcc.trade  -- v27.216: simpan original sebelum kita ubah
             teRunning = true
             _G.__hactTradeEggAktif = true
             teBtn.Text = "STOP TRADE EGG"
@@ -8111,6 +8117,9 @@ end)()  -- tutup IIFE TAB TRADE
                             return
                         end
                         local full2 = isBackpackFull()
+                        if full2 then
+                            AutoAcc.trade = false  -- v27.216: inv full → jangan terima trade masuk
+                        end
                         if full2 and not wasFull2 then
                             -- LEADING EDGE: inv baru penuh → snapshot pet sell sekarang
                             local tgtLabel = table.concat((function()
@@ -8270,7 +8279,13 @@ end)()  -- tutup IIFE TAB TRADE
                                 wasFull2 = true  -- nunggu full lagi
                             end
                         else
-                            if not full2 then teStatL.Text = "aktif — nunggu inv full lagi..." end
+                            if not full2 then
+                                teStatL.Text = "aktif — nunggu inv full lagi..."
+                                -- v27.216: inv gak full lagi → restore AutoAcc.trade ke original
+                                if teOrigAutoAccTrade ~= nil then
+                                    AutoAcc.trade = teOrigAutoAccTrade
+                                end
+                            end
                             wasFull2 = false  -- reset: siap trigger lagi pas full berikutnya
                         end
                     end)
