@@ -873,9 +873,15 @@ end
 -- otomatis ikut upgrade akun. fallback attribute MaxPets.
 local _maxPetsCache, _maxPetsAt = nil, 0
 local function getMaxPets()
-    if _maxPetsCache and (tick() - _maxPetsAt) < 30 then return _maxPetsCache end
+    if _maxPetsCache and (tick() - _maxPetsAt) < 300 then return _maxPetsCache end  -- cache 5 menit
     local best = nil
+    -- coba attribute dulu (tanpa getgc)
     pcall(function()
+        local m = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+        if type(m) == "number" and m > 0 then best = m end
+    end)
+    -- fallback getgc hanya kalau attribute tidak ada
+    if not best then pcall(function()
         if getgc then
             for _, obj in ipairs(getgc(true)) do
                 if type(obj) == "table" then
@@ -884,7 +890,7 @@ local function getMaxPets()
                 end
             end
         end
-    end)
+    end) end
     if not best then
         pcall(function()
             local m = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")

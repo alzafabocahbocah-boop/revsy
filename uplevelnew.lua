@@ -562,12 +562,20 @@ local function ambilContainer()
     end
     _kgContainer=findMemoryContainer(); return _kgContainer
 end
--- refresh container tiap 15s (getgc berat)
+-- refresh container: scan terus sampai ketemu, lalu stop (re-scan tiap 5 menit safety net)
 task.spawn(function()
-    while true do pcall(ambilContainer); task.wait(15) end
+    local lastScan = 0
+    while true do
+        task.wait(2)
+        local needScan = false
+        if not _kgContainer then needScan = true
+        elseif (tick() - lastScan) > 300 then needScan = true end  -- 5 menit safety net
+        if needScan then
+            pcall(ambilContainer)
+            lastScan = tick()
+        end
+    end
 end)
--- initial find (async)
-task.spawn(function() pcall(ambilContainer) end)
 
 -- Baca age dari container
 local function getAgeFromContainer(uuid)
