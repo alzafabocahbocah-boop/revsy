@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.246  ══════════════════════════
+-- ══════════════════════════  HACT  v27.247  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.246"
+local VERSION = "v27.247"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -3464,21 +3464,28 @@ local function getGardenPetTypes()
         end
     end)
     -- 2) lookup jenis dari getgc (data pet punya PetType + UUID)
+    -- v27.247: early exit kalau semua gardenUuids udah ketemu
     if getgc then
-        pcall(function()
-            for _, obj in pairs(getGcDump()) do
-                if type(obj) == "table" then
-                    local uuid = rawget(obj,"UUID") or rawget(obj,"PetUUID") or rawget(obj,"uuid")
-                    local pt = rawget(obj,"PetType") or rawget(obj,"Type")
-                    if type(uuid)=="string" and type(pt)=="string" then
-                        local clean = uuid:gsub("[{}]","")
-                        if gardenUuids[clean] and not result[clean] then
-                            result[clean] = pt
+        local remaining = 0
+        for _ in pairs(gardenUuids) do remaining = remaining + 1 end
+        if remaining > 0 then
+            pcall(function()
+                for _, obj in pairs(getGcDump()) do
+                    if type(obj) == "table" then
+                        local uuid = rawget(obj,"UUID") or rawget(obj,"PetUUID") or rawget(obj,"uuid")
+                        local pt = rawget(obj,"PetType") or rawget(obj,"Type")
+                        if type(uuid)=="string" and type(pt)=="string" then
+                            local clean = uuid:gsub("[{}]","")
+                            if gardenUuids[clean] and not result[clean] then
+                                result[clean] = pt
+                                remaining = remaining - 1
+                                if remaining <= 0 then return end  -- semua ketemu, stop
+                            end
                         end
                     end
                 end
-            end
-        end)
+            end)
+        end
     end
     return result
 end
