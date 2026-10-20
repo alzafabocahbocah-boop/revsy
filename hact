@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.225  ══════════════════════════
+-- ══════════════════════════  HACT  v27.226  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.225"
+local VERSION = "v27.226"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -8051,6 +8051,14 @@ end)()  -- tutup IIFE TAB TRADE
             if not next(sellTypes) then return {} end
             local bp = player:FindFirstChild("Backpack")
             if not bp then return {} end
+            -- v27.226: build kg map dari PetDetect buat filter
+            local kgMap = {}
+            pcall(function()
+                for _, p in ipairs(PetDetect.listBackpackPets()) do
+                    local uc = tostring(p.uuid):gsub("[{}]","")
+                    kgMap[uc] = p.age1Kg or p.dispKg or 0
+                end
+            end)
             local uuids = {}
             for _, t in ipairs(bp:GetChildren()) do
                 if t:IsA("Tool") then
@@ -8058,10 +8066,14 @@ end)()  -- tutup IIFE TAB TRADE
                     local uuid = t:GetAttribute("PET_UUID")
                     local uclean = uuid and tostring(uuid):gsub("[{}]","")
                     if uclean and uclean ~= "" then
-                        for tp in pairs(sellTypes) do
-                            if base:lower():find(tp:lower(), 1, true) then
-                                uuids[uclean] = true
-                                break
+                        -- v27.226: skip pet yg kg > 3 (terlalu berat, jangan di-trade)
+                        local kg = kgMap[uclean] or 0
+                        if kg <= 3 then
+                            for tp in pairs(sellTypes) do
+                                if base:lower():find(tp:lower(), 1, true) then
+                                    uuids[uclean] = true
+                                    break
+                                end
                             end
                         end
                     end
