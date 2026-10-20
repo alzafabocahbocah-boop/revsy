@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.193  ══════════════════════════
+-- ══════════════════════════  HACT  v27.194  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.193"
+local VERSION = "v27.194"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -8181,10 +8181,14 @@ end)()  -- tutup IIFE TAB TRADE
                                     return gone
                                 end
                                 if #activeTgts > 0 then
-                                    -- v27.193: inner loop — kirim sampai semua pet sell di snapshot habis.
-                                    -- setiap trade selesai (TUI=false), langsung rebuild petTools dari backpack
-                                    -- (pakai snapUuids yang sama) dan send ticket lagi tanpa nunggu full.
-                                    local goneTotal = 0
+                                    -- v27.194: pola up6kg — sendReq+addItem per UUID langsung, gak pakai
+                                    -- tradePetsToTarget (yg punya 10s timeout → berhenti setelah 8s).
+                                    -- kirim terus sampai semua pet sell dari snapUuids habis dari backpack.
+                                    if not TradeSys.ensure() then
+                                        teStatL.Text = "ERR: trade remote nil"
+                                        print("[TradeEgg] trade remote nil, abort")
+                                    else
+                                    local ti = 1  -- target index (rotasi kalau > 1 target)
                                     while teRunning do
                                         -- rebuild petTools dari backpack saat ini (yg masih punya UUID di snapUuids)
                                         local bp2 = player:FindFirstChild("Backpack")
@@ -8195,7 +8199,7 @@ end)()  -- tutup IIFE TAB TRADE
                                                     local uuid = t:GetAttribute("PET_UUID")
                                                     local uclean = uuid and tostring(uuid):gsub("[{}]","")
                                                     if uclean and snapUuids[uclean] then
-                                                        petTools[#petTools+1] = "{"..uclean.."}"
+                                                        petTools[#petTools+1] = uclean
                                                     end
                                                 end
                                             end
@@ -8205,43 +8209,45 @@ end)()  -- tutup IIFE TAB TRADE
                                             print(("[TradeEgg] semua pet sell terkirim (total gone=%d)"):format(countGone()))
                                             break
                                         end
-                                        print(("[TradeEgg] inner loop: %d pet sell sisa di backpack → kirim ke %d target"):format(#petTools, #activeTgts))
-                                        for ti, tPlr2 in ipairs(activeTgts) do
-                                            if not teRunning then break end
-                                            if not Players:FindFirstChild(tPlr2.Name) then
-                                                teStatL.Text = tPlr2.Name.." offline, skip"
-                                                task.wait(0.5)
+                                        -- pilih target, rotasi
+                                        local tIdx = ti
+                                        local tPlr2 = activeTgts[tIdx]
+                                        ti = (ti % #activeTgts) + 1
+                                        if not Players:FindFirstChild(tPlr2.Name) then
+                                            teStatL.Text = tPlr2.Name.." offline, skip"
+                                            task.wait(0.3)
+                                        else
+                                            local maxForThis = teTargetCount[tIdx] or 0
+                                            if maxForThis > 0 and (teSentTotal[tIdx] or 0) >= maxForThis then
+                                                teStatL.Text = ("target %s sudah %d/%d, skip"):format(tPlr2.Name, teSentTotal[tIdx] or 0, maxForThis)
+                                                task.wait(0.2)
                                             else
-                                                local maxForThis = teTargetCount[ti] or 0
+                                                -- ambil max 12 pet (limit per trade)
+                                                local batch = {}
+                                                for bi = 1, math.min(12, #petTools) do
+                                                    batch[#batch+1] = petTools[bi]
+                                                end
+                                                teStatL.Text = ("→ trade ke %s (%d pet)..."):format(tPlr2.Name, #batch)
+                                                print(("[TradeEgg] v27.194 direct send -> %s | %d pet"):format(tPlr2.Name, #batch))
+                                                -- pegang ticket dulu
+                                                pcall(holdTradingTicket)
+                                                -- kirim sendReq+addItem per UUID (pola up6kg)
                                                 local goneBefore = countGone()
-                                                local sisa = (maxForThis > 0) and (maxForThis - teSentTotal[ti]) or #petTools
-                                                local subList = petTools
-                                                if maxForThis > 0 and sisa < #petTools then
-                                                    subList = {}
-                                                    for si = 1, sisa do subList[si] = petTools[si] end
+                                                for _, uclean in ipairs(batch) do
+                                                    if not teRunning then break end
+                                                    pcall(function() TradeSys.sendReqRE:FireServer(tPlr2) end)
+                                                    task.wait(0.1)
+                                                    pcall(function() TradeSys.addItemRE:FireServer("Pet", "{"..uclean.."}") end)
+                                                    task.wait(0.15)
                                                 end
-                                                if maxForThis > 0 and teSentTotal[ti] >= maxForThis then
-                                                    teStatL.Text = ("target %s sudah %d/%d, skip"):format(tPlr2.Name, teSentTotal[ti], maxForThis)
-                                                    task.wait(0.3)
-                                                else
-                                                    teStatL.Text = ("→ trade ke %s (%d pet)..."):format(tPlr2.Name, #subList)
-                                                    print(("[TradeEgg] tradePetsToTarget -> "..tPlr2.Name.." | "..#subList.." pet"):format())
-                                                    tradePetsToTarget(tPlr2, subList, function()
-                                                        if not teRunning then return true end
-                                                        if maxForThis > 0 then
-                                                            local nowGone = countGone() - goneBefore
-                                                            if teSentTotal[ti] + nowGone >= maxForThis then return true end
-                                                        end
-                                                        return false
-                                                    end)
-                                                    local addedThisRound = countGone() - goneBefore
-                                                    teSentTotal[ti] = teSentTotal[ti] + addedThisRound
-                                                    goneTotal = countGone()
-                                                    print(("[TradeEgg] selesai round -> added=%d total[%d]=%d gone=%d"):format(addedThisRound, ti, teSentTotal[ti], goneTotal))
-                                                end
+                                                -- update sent count
+                                                local addedThisRound = countGone() - goneBefore
+                                                teSentTotal[tIdx] = teSentTotal[tIdx] + addedThisRound
+                                                print(("[TradeEgg] batch selesai -> added=%d total[%d]=%d gone=%d"):format(addedThisRound, tIdx, teSentTotal[tIdx], countGone()))
                                             end
                                         end
                                     end
+                                    end  -- TradeSys.ensure
                                     local names2 = {}
                                     for ti, p in ipairs(activeTgts) do
                                         local max = teTargetCount[ti] or 0
