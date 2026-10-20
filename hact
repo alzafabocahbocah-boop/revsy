@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.240  ══════════════════════════
+-- ══════════════════════════  HACT  v27.241  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.240"
+local VERSION = "v27.241"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -3916,8 +3916,7 @@ local function getGameData()
             end
         end
     end)
-    -- 2) fallback getgc: cuma tabel PlayerData asli (punya ketiga field sekaligus),
-    --    pilih MODE (paling sering muncul) di antara nilai >= jumlah pet sekarang
+    -- 2) fallback getgc: 1x scan ambil maxPets+maxEggs+maxEquip sekaligus (v27.241: dulu 2x scan)
     if not d.maxPets then
         pcall(function()
             local totalCur = #PetDetect.listBackpackPets()
@@ -3926,38 +3925,45 @@ local function getGameData()
             for _, obj in ipairs(getgc(true)) do
                 if type(obj) == "table" then
                     local mp = rawget(obj, "MaxPetsInInventory")
-                    if type(mp) == "number" and mp > 0
-                        and rawget(obj, "MaxEggsInFarm") ~= nil
-                        and rawget(obj, "MaxEquippedPets") ~= nil
-                        and mp >= floor then
+                    local me = rawget(obj, "MaxEggsInFarm")
+                    local mq = rawget(obj, "MaxEquippedPets")
+                    -- maxPets: mode di antara nilai >= floor
+                    if type(mp) == "number" and mp > 0 and me ~= nil and mq ~= nil and mp >= floor then
                         tally[mp] = (tally[mp] or 0) + 1
+                    end
+                    -- maxEggs + maxEquip: ambil terbesar
+                    if type(me) == "number" and me > 0 then
+                        if not d.maxEggs or me > d.maxEggs then d.maxEggs = me end
+                    end
+                    if type(mq) == "number" and mq > 0 then
+                        if not d.maxEquip or mq > d.maxEquip then d.maxEquip = mq end
                     end
                 end
             end
             local bestN = 0
             for v, n in pairs(tally) do
-                -- mode; kalau seri -> pilih lebih kecil (default game cenderung gede)
                 if n > bestN or (n == bestN and (not d.maxPets or v < d.maxPets)) then
                     d.maxPets = v; bestN = n
                 end
             end
         end)
-    end
-    -- maxEggs dan maxEquip tetap scan semua (jarang salah karena nilainya unik)
-    pcall(function()
-        for _, obj in ipairs(getgc(true)) do
-            if type(obj) == "table" then
-                local me = rawget(obj, "MaxEggsInFarm")
-                if type(me) == "number" and me > 0 then
-                    if not d.maxEggs or me > d.maxEggs then d.maxEggs = me end
-                end
-                local mq = rawget(obj, "MaxEquippedPets")
-                if type(mq) == "number" and mq > 0 then
-                    if not d.maxEquip or mq > d.maxEquip then d.maxEquip = mq end
+    else
+        -- maxPets udah dapat dari UI, tinggal scan maxEggs+maxEquip aja
+        pcall(function()
+            for _, obj in ipairs(getgc(true)) do
+                if type(obj) == "table" then
+                    local me = rawget(obj, "MaxEggsInFarm")
+                    local mq = rawget(obj, "MaxEquippedPets")
+                    if type(me) == "number" and me > 0 then
+                        if not d.maxEggs or me > d.maxEggs then d.maxEggs = me end
+                    end
+                    if type(mq) == "number" and mq > 0 then
+                        if not d.maxEquip or mq > d.maxEquip then d.maxEquip = mq end
+                    end
                 end
             end
-        end
-    end)
+        end)
+    end
     _gameDataCache = d; _gameDataTime = tick()
     return d
 end
