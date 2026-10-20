@@ -1,4 +1,4 @@
--- uplevelnew v8.246 — bahan age>=500 unequip dulu sebelum kembali sesi 1
+-- uplevelnew v8.247 — bahan age>=500 unequip dulu sebelum kembali sesi 1
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.246"
+local VERSION = "v8.247"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -506,6 +506,7 @@ local function fmtUUID(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.
 -- Container adalah tabel memori game {uuid -> {PetData={Level, BaseWeight, ...}, PetType="..."}}
 -- Age = PetData.Level | UUID = key container (braced format)
 local _kgContainer = nil
+local _kgMutableStats = nil   -- v8.247: pointer MutableStats (MaxPetsInInventory dll)
 local function findMemoryContainer()
     if not getgc then return nil end
     local backpackUUIDs, bpCount = {}, 0
@@ -548,6 +549,47 @@ local function findMemoryContainer()
             end
         end
     end)
+    -- v8.247: sekalian cari MutableStats dari GC yang sama (gratis)
+    if best and not _kgMutableStats then
+        pcall(function()
+            for _, obj in pairs(getgc(false)) do
+                if type(obj)=="table" and obj~=best then
+                    for _, v in pairs(obj) do
+                        if v==best then
+                            for _, obj2 in pairs(getgc(false)) do
+                                if type(obj2)=="table" and obj2~=obj then
+                                    for _, v2 in pairs(obj2) do
+                                        if v2==obj then
+                                            local ms=rawget(obj2,"MutableStats")
+                                            if ms and type(rawget(ms,"MaxPetsInInventory"))=="number" then
+                                                _kgMutableStats=ms
+                                            end
+                                            break
+                                        end
+                                    end
+                                end
+                                if _kgMutableStats then break end
+                            end
+                            break
+                        end
+                    end
+                end
+                if _kgMutableStats then break end
+            end
+            if not _kgMutableStats then
+                for _, obj in pairs(getgc(false)) do
+                    if type(obj)=="table" then
+                        local mp=rawget(obj,"MaxPetsInInventory")
+                        local me=rawget(obj,"MaxEggsInFarm")
+                        local mq=rawget(obj,"MaxEquippedPets")
+                        if type(mp)=="number" and type(me)=="number" and type(mq)=="number" then
+                            _kgMutableStats=obj; break
+                        end
+                    end
+                end
+            end
+        end)
+    end
     return best
 end
 local function ambilContainer()
@@ -1025,7 +1067,14 @@ do
                                 end
                             end
                         end)
-                        -- fallback getgc cari MaxPetsInInventory (tally MODE, mirip up6kg)
+                        -- fallback pointer MutableStats (v8.247, no getgc)
+                        if not maxUI and _kgMutableStats then
+                            pcall(function()
+                                local mp = rawget(_kgMutableStats, "MaxPetsInInventory")
+                                if type(mp)=="number" and mp>0 then maxUI=mp end
+                            end)
+                        end
+                        -- fallback getgc (hanya kalau pointer belum ada)
                         if not maxUI and getgc then
                             local tally = {}
                             local floor = math.max(0, totalAll - 5)
@@ -1038,6 +1087,7 @@ do
                                             and rawget(obj, "MaxEquippedPets") ~= nil
                                             and mp >= floor then
                                             tally[mp] = (tally[mp] or 0) + 1
+                                            if not _kgMutableStats then _kgMutableStats=obj end
                                         end
                                     end
                                 end
