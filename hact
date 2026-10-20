@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.176  ══════════════════════════
+-- ══════════════════════════  HACT  v27.178  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.176"
+local VERSION = "v27.178"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -8002,10 +8002,43 @@ end)()  -- tutup IIFE TAB TRADE
                                         if p then activeTgts[#activeTgts+1] = p end
                                     end
                                 end
+                                -- v27.177: unfav dulu pet yg mau di-trade (dari snapUuids = sell rules)
+                                -- biar trade bisa jalan — syncFavByRules nge-fav keep pet, ini unfav dulu sebelum kirim
+                                do
+                                    local bp_unfav = player:FindFirstChild("Backpack")
+                                    if bp_unfav and SellSys.favRE then
+                                        for attempt = 1, 3 do
+                                            local stillFav = 0
+                                            for _, t in ipairs(bp_unfav:GetChildren()) do
+                                                if t:IsA("Tool") then
+                                                    local uid = t:GetAttribute("PET_UUID")
+                                                    local uc = uid and tostring(uid):gsub("[{}]","")
+                                                    if uc and snapUuids[uc] then
+                                                        -- cek apakah masih fav
+                                                        local isFav = false
+                                                        for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
+                                                            if t:GetAttribute(attr) == true then isFav = true; break end
+                                                        end
+                                                        if isFav then
+                                                            pcall(function() SellSys.favRE:FireServer(t) end)
+                                                            stillFav = stillFav + 1
+                                                            task.wait(0.05)
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                            if stillFav == 0 then break end
+                                            print(("[TradeEgg] unfav attempt %d: %d pet masih fav, retry"):format(attempt, stillFav))
+                                            task.wait(0.4)
+                                        end
+                                        task.wait(0.3)  -- biar server proses unfav
+                                    end
+                                end
                                 -- v27.171: pakai tradePetsToTarget (sama seperti hact biasa — handle tiket, retry, window detection)
                                 local sent2 = 0
                                 if #activeTgts > 0 then
-                                    -- build petList format yg diterima tradePetsToTarget: array of Tool objects
+                                    -- v27.178: build petList sebagai UUID string {uuid} — format yg diterima tradePetsToTarget
+                                    -- (line 2152: tostring(petList[i]) expects string, bukan Tool object)
                                     local bp2 = player:FindFirstChild("Backpack")
                                     local petTools = {}
                                     if bp2 then
@@ -8014,7 +8047,7 @@ end)()  -- tutup IIFE TAB TRADE
                                                 local uuid = t:GetAttribute("PET_UUID")
                                                 local uclean = uuid and tostring(uuid):gsub("[{}]","")
                                                 if uclean and snapUuids[uclean] then
-                                                    petTools[#petTools+1] = t
+                                                    petTools[#petTools+1] = "{"..uclean.."}"  -- UUID string format
                                                 end
                                             end
                                         end
