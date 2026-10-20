@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.199  ══════════════════════════
+-- ══════════════════════════  HACT  v27.200  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.199"
+local VERSION = "v27.200"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -8159,6 +8159,39 @@ end)()  -- tutup IIFE TAB TRADE
                                         teStatL.Text = "ERR: trade remote nil"
                                         print("[TradeEgg] trade remote nil, abort")
                                     else
+                                    -- v27.200: unfav SEMUA pet sell dari snapshot SEKALI sebelum loop
+                                    local _favRE = SellSys.favRE or (GameEvents and GameEvents:FindFirstChild("Favorite_Item"))
+                                    print(("[TradeEgg] unfav sebelum loop: favRE=%s"):format(tostring(_favRE ~= nil)))
+                                    if _favRE then
+                                        teStatL.Text = "unfav pet sell..."
+                                        for attempt = 1, 5 do
+                                            local bpUf = player:FindFirstChild("Backpack")
+                                            local stillFav = 0
+                                            if bpUf then
+                                                for _, t in ipairs(bpUf:GetChildren()) do
+                                                    if t:IsA("Tool") then
+                                                        local uid = t:GetAttribute("PET_UUID")
+                                                        local uc = uid and tostring(uid):gsub("[{}]","")
+                                                        if uc and snapUuids[uc] then
+                                                            local isFav = false
+                                                            for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
+                                                                if t:GetAttribute(attr) == true then isFav = true; break end
+                                                            end
+                                                            if isFav then
+                                                                pcall(function() _favRE:FireServer(t) end)
+                                                                stillFav = stillFav + 1
+                                                                task.wait(0.04)
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                            print(("[TradeEgg] unfav attempt %d: %d masih fav"):format(attempt, stillFav))
+                                            if stillFav == 0 then break end
+                                            task.wait(0.2)
+                                        end
+                                        task.wait(0.15)
+                                    end
                                     local ti = 1  -- target index (rotasi kalau > 1 target)
                                     while teRunning do
                                         -- rebuild petTools dari backpack saat ini (yg masih punya UUID di snapUuids)
@@ -8199,40 +8232,7 @@ end)()  -- tutup IIFE TAB TRADE
                                                     batch[#batch+1] = petTools[bi]
                                                 end
                                                 teStatL.Text = ("→ trade ke %s (%d pet)..."):format(tPlr2.Name, #batch)
-                                                print(("[TradeEgg] v27.197 direct send -> %s | %d pet"):format(tPlr2.Name, #batch))
-                                                -- v27.199: unfav semua pet sell, cek sampai 0 yg fav, baru send ticket
-                                                -- lookup favRE runtime (bukan dari SellSys yg di-set waktu startup)
-                                                local _favRE = SellSys.favRE or (GameEvents and GameEvents:FindFirstChild("Favorite_Item"))
-                                                print(("[TradeEgg] unfav check: favRE=%s"):format(tostring(_favRE ~= nil)))
-                                                if _favRE then
-                                                    for attempt = 1, 5 do
-                                                        local bpUf = player:FindFirstChild("Backpack")
-                                                        local stillFav = 0
-                                                        if bpUf then
-                                                            for _, t in ipairs(bpUf:GetChildren()) do
-                                                                if t:IsA("Tool") then
-                                                                    local uid = t:GetAttribute("PET_UUID")
-                                                                    local uc = uid and tostring(uid):gsub("[{}]","")
-                                                                    if uc and snapUuids[uc] then
-                                                                        local isFav = false
-                                                                        for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
-                                                                            if t:GetAttribute(attr) == true then isFav = true; break end
-                                                                        end
-                                                                        if isFav then
-                                                                            pcall(function() _favRE:FireServer(t) end)
-                                                                            stillFav = stillFav + 1
-                                                                            task.wait(0.04)
-                                                                        end
-                                                                    end
-                                                                end
-                                                            end
-                                                        end
-                                                        print(("[TradeEgg] unfav attempt %d: %d masih fav"):format(attempt, stillFav))
-                                                        if stillFav == 0 then break end
-                                                        task.wait(0.2)
-                                                    end
-                                                    task.wait(0.15)
-                                                end
+                                                print(("[TradeEgg] v27.200 direct send -> %s | %d pet"):format(tPlr2.Name, #batch))
                                                 -- pegang ticket dulu
                                                 pcall(holdTradingTicket)
                                                 -- kirim sendReq+addItem per UUID (pola up6kg)
