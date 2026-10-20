@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.247  ══════════════════════════
+-- ══════════════════════════  HACT  v28.0  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.247"
+local VERSION = "v28.0"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -685,18 +685,19 @@ end
 
 -- build cache uuid -> PetData. MERGE semua container yg berisi pet kita
 -- (pet bisa kesebar di container #2 & #3; garden pet kadang di salah satunya).
+-- v28.0: POINTER-BASED — getgc hanya sekali saat init, lalu baca pointer langsung.
+-- Jalur: PlayerData.PetInventory.Data[uuid].{PetData, PetType}
+-- Pointer valid selama session (Lua table by-reference), update game langsung keliatan.
 PetDetect.lastRebuild = 0
-PetDetect.rebuildTTL = 8  -- v21.2: detik; getgc SANGAT berat (apalagi pet/egg banyak). dulu 3s -> lag.
-function PetDetect.rebuild(force)
-    -- throttle: skip kalau baru rebuild < TTL detik lalu (kecuali force)
-    local now = tick()
-    if not force and PetDetect.cache and (now - PetDetect.lastRebuild) < PetDetect.rebuildTTL then
-        return PetDetect.count or 0
-    end
-    PetDetect.lastRebuild = now
-    PetDetect.cache = {}
-    if not getgc then return 0 end  -- getgc unavailable check tetap
-    -- 1) kumpulin uuid pet kita (bp + char + garden)
+PetDetect.rebuildTTL = 999999  -- efektif disabled; rebuild hanya saat init atau force
+PetDetect._containers = nil    -- list of container table pointers (uuid→{PetData,PetType})
+PetDetect._initDone = false
+
+-- init: getgc sekali, temukan semua container, simpan pointer
+function PetDetect._initContainers()
+    if PetDetect._initDone then return end
+    if not getgc then return end
+    -- kumpul uuid milik kita (untuk identifikasi container yang benar)
     local mine = {}
     pcall(function()
         local function addTool(holder)
@@ -710,28 +711,6 @@ function PetDetect.rebuild(force)
         end
         addTool(player:FindFirstChild("Backpack"))
         addTool(player.Character)
-        -- v17.0: garden (PetsPhysical dll) berisi pet SEMUA pemain di server.
-        -- HANYA ambil pet milik kita (cek OWNER = nama/UserId kita). dulu semua ke-ambil
-        -- -> pet pemain lain ikut kehitung (mis garden orang +8 -> total meleset).
-        local myName = player.Name
-        local myId = tostring(player.UserId)
-        local function ownerIsMine(d)
-            -- cek owner di node ini atau ancestor terdekat (model induk pet).
-            -- atribut aslinya 'owner' (lowercase) — GetAttribute case-sensitive!
-            local cur = d
-            for _ = 1, 6 do  -- naik max 6 level cari atribut owner
-                if not cur or cur == Workspace then break end
-                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
-                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
-                    or cur:GetAttribute("OwnerUserId") or cur:GetAttribute("OwnerId")
-                if o ~= nil then
-                    local os = tostring(o)
-                    return (os == myName or os == myId)
-                end
-                cur = cur.Parent
-            end
-            return nil  -- owner gak ketemu (tak tentu)
-        end
         for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
             local f = Workspace:FindFirstChild(nm)
             if f then
@@ -741,24 +720,16 @@ function PetDetect.rebuild(force)
                         local n = d.Name:gsub("[{}]","")
                         if #n >= 32 and n:find("-") then u = n end
                     end
-                    if u then
-                        local mineFlag = ownerIsMine(d)
-                        -- masukin kalau owner = kita ATAU owner tak ketemu (fallback aman:
-                        -- pet kita yg baru di-place kadang owner blm ke-set). owner pemain lain -> SKIP.
-                        if mineFlag ~= false then
-                            mine[tostring(u):gsub("[{}]","")] = true
-                        end
-                    end
+                    if u then mine[tostring(u):gsub("[{}]","")] = true end
                 end
             end
         end
     end)
-    -- 2) walk SEMUA container, merge entry dari container yg berisi >=1 pet kita
-    local n = 0
+    -- getgc SEKALI — scan container
+    local containers = {}
     pcall(function()
-        for _, obj in pairs(getGcDump()) do
+        for _, obj in pairs(getgc(true)) do
             if type(obj) == "table" then
-                -- cek dulu apakah container ini punya pet kita
                 local hasMine, valid, scanned = false, 0, 0
                 for k, v in pairs(obj) do
                     if type(k) == "string" and #k >= 32 and k:find("-")
@@ -769,26 +740,92 @@ function PetDetect.rebuild(force)
                     scanned = scanned + 1
                     if scanned > 1500 then break end
                 end
-                -- merge kalo container berisi pet kita (skip DB global 219 yg gak ada pet kita)
-                -- v16.9: HANYA simpan pet yg uuid-nya MILIK KITA (ada di set `mine`).
-                -- dulu merge SEMUA pet di container -> ikut hitung pet pemain lain yg nyangkut
-                -- di container yg sama -> count meledak (mis 341 padahal asli 195).
                 if hasMine and valid >= 1 then
-                    for k, v in pairs(obj) do
-                        if type(k) == "string" and #k >= 32 and k:find("-")
-                           and type(v) == "table" and rawget(v, "PetData") then
-                            local clean = k:gsub("[{}]","")
-                            if mine[clean] then  -- cuma pet milik kita
-                                if not PetDetect.cache[clean] then n = n + 1 end
-                                PetDetect.cache[clean] = v.PetData
-                                PetDetect.cache["{"..clean.."}"] = v.PetData
-                                -- v27.7: PetType ada di level LUAR PetData (sibling).
-                                -- simpan terpisah biar resolve nama pet garden gak jatuh ke UUID.
-                                local pt = rawget(v, "PetType")
-                                if pt and tostring(pt) ~= "" then
-                                    PetDetect.typeCache[clean] = tostring(pt)
-                                end
-                            end
+                    containers[#containers+1] = obj
+                end
+            end
+        end
+    end)
+    PetDetect._containers = containers
+    PetDetect._initDone = (#containers > 0)
+end
+
+function PetDetect.rebuild(force)
+    -- init pointer sekali (getgc hanya di sini)
+    if not PetDetect._initDone then
+        PetDetect._initContainers()
+    end
+    if not PetDetect._containers or #PetDetect._containers == 0 then
+        -- fallback: belum ada pointer, coba ulang
+        PetDetect._initDone = false
+        PetDetect._initContainers()
+        if not PetDetect._containers or #PetDetect._containers == 0 then
+            return PetDetect.count or 0
+        end
+    end
+    -- kumpul uuid milik kita (untuk filter — garden mungkin berisi pet orang lain)
+    local mine = {}
+    pcall(function()
+        local function addTool(holder)
+            if not holder then return end
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") then
+                    local u = t:GetAttribute("PET_UUID")
+                    if u then mine[tostring(u):gsub("[{}]","")] = true end
+                end
+            end
+        end
+        addTool(player:FindFirstChild("Backpack"))
+        addTool(player.Character)
+        local myName = player.Name
+        local myId = tostring(player.UserId)
+        local function ownerIsMine(d)
+            local cur = d
+            for _ = 1, 6 do
+                if not cur or cur == Workspace then break end
+                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+                    or cur:GetAttribute("OwnerUserId") or cur:GetAttribute("OwnerId")
+                if o ~= nil then
+                    local os = tostring(o)
+                    return (os == myName or os == myId)
+                end
+                cur = cur.Parent
+            end
+            return nil
+        end
+        for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
+            local f = Workspace:FindFirstChild(nm)
+            if f then
+                for _, d in ipairs(f:GetDescendants()) do
+                    local u = d:GetAttribute("PET_UUID") or d:GetAttribute("UUID")
+                    if not u then
+                        local n = d.Name:gsub("[{}]","")
+                        if #n >= 32 and n:find("-") then u = n end
+                    end
+                    if u and ownerIsMine(d) ~= false then
+                        mine[tostring(u):gsub("[{}]","")] = true
+                    end
+                end
+            end
+        end
+    end)
+    -- baca langsung dari pointer (no getgc) — v28.0
+    local n = 0
+    PetDetect.cache = {}
+    pcall(function()
+        for _, container in ipairs(PetDetect._containers) do
+            for k, v in pairs(container) do
+                if type(k) == "string" and #k >= 32 and k:find("-")
+                   and type(v) == "table" and rawget(v, "PetData") then
+                    local clean = k:gsub("[{}]","")
+                    if mine[clean] then
+                        if not PetDetect.cache[clean] then n = n + 1 end
+                        PetDetect.cache[clean] = v.PetData
+                        PetDetect.cache["{"..clean.."}"] = v.PetData
+                        local pt = rawget(v, "PetType")
+                        if pt and tostring(pt) ~= "" then
+                            PetDetect.typeCache[clean] = tostring(pt)
                         end
                     end
                 end
@@ -796,6 +833,7 @@ function PetDetect.rebuild(force)
         end
     end)
     PetDetect.count = n
+    PetDetect.lastRebuild = tick()
     return n
 end
 
