@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.241  ══════════════════════════
+-- ══════════════════════════  HACT  v27.242  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.241"
+local VERSION = "v27.242"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -433,6 +433,20 @@ local function lbl(parent, text, size, col, xalign)
         TextYAlignment = Enum.TextYAlignment.Center, Parent = parent })
 end
 
+-- ============ SHARED GETGC CACHE (v27.242) ============
+-- getgc(true) dump semua object Roblox — berat sama apapun yang dicari.
+-- Semua fungsi pakai getGcDump() biar max 1x dump per GC_TTL detik.
+local _gcDump, _gcDumpTime = nil, 0
+local GC_TTL = 6
+local function getGcDump()
+    local now = tick()
+    if _gcDump and (now - _gcDumpTime) < GC_TTL then return _gcDump end
+    if not getgc then return {} end
+    _gcDump = getgc(true)
+    _gcDumpTime = now
+    return _gcDump
+end
+
 -- ============ DETEKSI PET (memory container getgc — terbukti dari market/telur) ============
 local PetDetect = {}
 PetDetect.DEBUG_PCT = false  -- set true buat print nilai seal/koi per pet ke console
@@ -576,7 +590,7 @@ end
 -- cari container UUID->PetData yg berisi PET KITA (backpack + garden), bukan yg terbanyak.
 -- (DB global pet bisa 219 entri tapi GARDEN=0; container milik kita ~56 entri tapi punya garden)
 function PetDetect.findContainer()
-    if not getgc then return nil, 0 end
+    if not getgc then return nil, 0 end  -- getgc unavailable check tetap
     -- kumpulin uuid pet kita: dari backpack/char + dari workspace garden
     local mine = {}
     pcall(function()
@@ -609,7 +623,7 @@ function PetDetect.findContainer()
 
     local best, bestScore, bestCnt = nil, -1, 0
     pcall(function()
-        for _, obj in pairs(getgc(true)) do
+        for _, obj in pairs(getGcDump()) do
             if type(obj) == "table" then
                 local valid, mineHits, scanned = 0, 0, 0
                 for k, v in pairs(obj) do
@@ -646,7 +660,7 @@ function PetDetect.rebuild(force)
     end
     PetDetect.lastRebuild = now
     PetDetect.cache = {}
-    if not getgc then return 0 end
+    if not getgc then return 0 end  -- getgc unavailable check tetap
     -- 1) kumpulin uuid pet kita (bp + char + garden)
     local mine = {}
     pcall(function()
@@ -707,7 +721,7 @@ function PetDetect.rebuild(force)
     -- 2) walk SEMUA container, merge entry dari container yg berisi >=1 pet kita
     local n = 0
     pcall(function()
-        for _, obj in pairs(getgc(true)) do
+        for _, obj in pairs(getGcDump()) do
             if type(obj) == "table" then
                 -- cek dulu apakah container ini punya pet kita
                 local hasMine, valid, scanned = false, 0, 0
@@ -3414,7 +3428,7 @@ local function getGardenPetTypes()
     -- 2) lookup jenis dari getgc (data pet punya PetType + UUID)
     if getgc then
         pcall(function()
-            for _, obj in pairs(getgc(true)) do
+            for _, obj in pairs(getGcDump()) do
                 if type(obj) == "table" then
                     local uuid = rawget(obj,"UUID") or rawget(obj,"PetUUID") or rawget(obj,"uuid")
                     local pt = rawget(obj,"PetType") or rawget(obj,"Type")
@@ -3922,7 +3936,7 @@ local function getGameData()
             local totalCur = #PetDetect.listBackpackPets()
             local floor = totalCur - 5
             local tally = {}
-            for _, obj in ipairs(getgc(true)) do
+            for _, obj in ipairs(getGcDump()) do
                 if type(obj) == "table" then
                     local mp = rawget(obj, "MaxPetsInInventory")
                     local me = rawget(obj, "MaxEggsInFarm")
@@ -3950,7 +3964,7 @@ local function getGameData()
     else
         -- maxPets udah dapat dari UI, tinggal scan maxEggs+maxEquip aja
         pcall(function()
-            for _, obj in ipairs(getgc(true)) do
+            for _, obj in ipairs(getGcDump()) do
                 if type(obj) == "table" then
                     local me = rawget(obj, "MaxEggsInFarm")
                     local mq = rawget(obj, "MaxEquippedPets")
@@ -5488,7 +5502,7 @@ local function getDevProductList()
     for _, it in ipairs(out) do seenId2[it.id] = true end
     if getgc then
         pcall(function()
-            for _, obj in pairs(getgc(true)) do
+            for _, obj in pairs(getGcDump()) do
                 if type(obj) == "table" then
                     for _, key in ipairs({"PurchaseID","PurchaseId","ProductId","DeveloperProductId","DevProductId"}) do
                         local v = rawget(obj, key)
@@ -5618,7 +5632,7 @@ local function boostRefreshTables()
     if not sample then return end
     local braced = "{"..sample.."}"
     pcall(function()
-        for _, obj in pairs(getgc(true)) do
+        for _, obj in pairs(getGcDump()) do
             if type(obj) == "table" then
                 local v = rawget(obj, braced) or rawget(obj, sample)
                 if type(v) == "table" and type(rawget(v,"PetData")) == "table" then
