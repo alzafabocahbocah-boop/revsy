@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.170  ══════════════════════════
+-- ══════════════════════════  HACT  v27.171  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.170"
+local VERSION = "v27.171"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -7994,13 +7994,6 @@ end)()  -- tutup IIFE TAB TRADE
                                 -- build UUID list (ordered) dari snapshot
                                 local uuidList = {}
                                 for u in pairs(snapUuids) do uuidList[#uuidList+1] = "{"..u.."}" end
-                                -- resolve TradeEvents RE
-                                local ge2 = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-                                local te2 = ge2 and ge2:FindFirstChild("TradeEvents")
-                                local sendReqRE2 = te2 and te2:FindFirstChild("SendRequest")
-                                local addItemRE2 = te2 and te2:FindFirstChild("AddItem")
-                                local accRE2 = te2 and te2:FindFirstChild("Accept")
-                                local cfmRE2 = te2 and te2:FindFirstChild("Confirm")
                                 -- kumpulin target yg online
                                 local activeTgts = {}
                                 for ti = 1, 2 do
@@ -8009,58 +8002,52 @@ end)()  -- tutup IIFE TAB TRADE
                                         if p then activeTgts[#activeTgts+1] = p end
                                     end
                                 end
+                                -- v27.171: pakai tradePetsToTarget (sama seperti hact biasa — handle tiket, retry, window detection)
                                 local sent2 = 0
-                                if sendReqRE2 and addItemRE2 and #activeTgts > 0 then
-                                    pcall(holdTradingTicket)   -- v27.168: pegang tiket dulu sebelum mulai trade
-                                    task.wait(0.5)
-                                    -- kirim ke target 1 dulu semua, selesai baru target 2
-                                    for _, tPlr2 in ipairs(activeTgts) do
-                                        if not teRunning then break end
-                                        if not Players:FindFirstChild(tPlr2.Name) then
-                                            teStatL.Text = tPlr2.Name.." offline, skip"
-                                            task.wait(0.5)
-                                        else
-                                            local bgOn = true
-                                            task.spawn(function()
-                                                while bgOn do
-                                                    pcall(function() sendReqRE2:FireServer(tPlr2) end)
-                                                    task.wait(0.1)
+                                if #activeTgts > 0 then
+                                    -- build petList format yg diterima tradePetsToTarget: array of Tool objects
+                                    local bp2 = player:FindFirstChild("Backpack")
+                                    local petTools = {}
+                                    if bp2 then
+                                        for _, t in ipairs(bp2:GetChildren()) do
+                                            if t:IsA("Tool") then
+                                                local uuid = t:GetAttribute("PET_UUID")
+                                                local uclean = uuid and tostring(uuid):gsub("[{}]","")
+                                                if uclean and snapUuids[uclean] then
+                                                    petTools[#petTools+1] = t
                                                 end
-                                            end)
-                                            task.spawn(function()
-                                                while bgOn do
-                                                    if accRE2 then pcall(function() accRE2:FireServer() end) end
-                                                    if cfmRE2 then pcall(function() cfmRE2:FireServer() end) end
-                                                    task.wait(0.12)
-                                                end
-                                            end)
-                                            -- snapshot UUID sebelum trade (untuk hitung yang beneran hilang)
-                                            local beforeUuids = snapshotSellPets(teEggSel)
-                                            for i, uuid in ipairs(uuidList) do
-                                                if not teRunning then break end
-                                                teStatL.Text = ("→ %s: add item %d/%d..."):format(tPlr2.Name, i, #uuidList)
-                                                pcall(function() addItemRE2:FireServer("Pet", uuid) end)
-                                                task.wait(0.1)
                                             end
-                                            bgOn = false
-                                            -- tunggu confirm/accept selesai
-                                            task.wait(1.0)
-                                            -- hitung dari UUID yang beneran hilang dari backpack
-                                            local afterUuids = snapshotSellPets(teEggSel)
-                                            local sentThis = 0
-                                            for u in pairs(beforeUuids) do
-                                                if not afterUuids[u] then sentThis = sentThis + 1 end
-                                            end
-                                            sent2 = sent2 + sentThis
-                                            teStatL.Text = ("✓ %s: %d pet beneran hilang"):format(tPlr2.Name, sentThis)
-                                            task.wait(0.5)
                                         end
                                     end
-                                    local names2 = {}
-                                    for _, p in ipairs(activeTgts) do names2[#names2+1] = p.Name end
-                                    teStatL.Text = ("selesai: %d pet → %s ✓"):format(sent2, table.concat(names2, " & "))
+                                    if #petTools == 0 then
+                                        teStatL.Text = "0 pet cocok di backpack saat ini"
+                                    else
+                                        for _, tPlr2 in ipairs(activeTgts) do
+                                            if not teRunning then break end
+                                            if not Players:FindFirstChild(tPlr2.Name) then
+                                                teStatL.Text = tPlr2.Name.." offline, skip"
+                                                task.wait(0.5)
+                                            else
+                                                teStatL.Text = ("→ trade %d pet ke %s..."):format(#petTools, tPlr2.Name)
+                                                local beforeUuids = snapshotSellPets(teEggSel)
+                                                local n = tradePetsToTarget(tPlr2, petTools, function() return not teRunning end)
+                                                -- hitung dari UUID yang hilang (akurat)
+                                                local afterUuids = snapshotSellPets(teEggSel)
+                                                local sentThis = 0
+                                                for u in pairs(beforeUuids) do
+                                                    if not afterUuids[u] then sentThis = sentThis + 1 end
+                                                end
+                                                sent2 = sent2 + sentThis
+                                                teStatL.Text = ("✓ %s: %d pet terkirim"):format(tPlr2.Name, sentThis)
+                                                task.wait(0.5)
+                                            end
+                                        end
+                                        local names2 = {}
+                                        for _, p in ipairs(activeTgts) do names2[#names2+1] = p.Name end
+                                        teStatL.Text = ("selesai: %d pet → %s ✓"):format(sent2, table.concat(names2, " & "))
+                                    end
                                 else
-                                    teStatL.Text = "ERR: TradeEvents / semua target offline"
+                                    teStatL.Text = "ERR: semua target offline"
                                 end
                                 Auto.giftBusy = false
                                 _G.__hactTradeAktif = tick()   -- grace 30s abis trade (pola sama hact)
