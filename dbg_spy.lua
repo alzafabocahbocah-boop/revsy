@@ -2,9 +2,9 @@
 -- jalanin SEBELUM sc lain. GUI di tengah layar.
 
 local LOG_GETGC    = true
-local LOG_REQUIRE  = true
-local LOG_ATTR     = true
-local LOG_PETDATA  = false  -- off biar gak noise
+local LOG_REQUIRE  = false
+local LOG_ATTR     = false
+local LOG_PETDATA  = false  -- loop dimatiin juga kalau false
 local MAX_LINES    = 200  -- max log di GUI
 
 -- ═══════════════════ GUI ═══════════════════
@@ -262,9 +262,9 @@ if LOG_PETDATA then
     local _logged = {}
     task.spawn(function()
         task.wait(3)
-        while true do
+        while LOG_PETDATA do  -- stop kalau false
             task.wait(5)
-            if not getgc then break end
+            if not _gcOrig then break end
             local ok, dump = pcall(_gcOrig, true)  -- pakai orig, bukan hook
             if not ok then break end
             local found = 0
