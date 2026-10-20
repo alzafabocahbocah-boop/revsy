@@ -192,8 +192,8 @@ local function caller()
 end
 
 -- ═══════════════════ HOOK GETGC ═══════════════════
+local _gcOrig = getgc  -- simpan sebelum hook, buat spy internal
 if LOG_GETGC and getgc then
-    local _orig = getgc
     local _cnt, _last = 0, 0
     getgc = function(...)
         _cnt = _cnt + 1
@@ -203,7 +203,7 @@ if LOG_GETGC and getgc then
         local msg = ("[getgc] #%d dt=%.0fms %s"):format(_cnt, dt*1000, loc)
         addLog(msg, COLOR.getgc)
         print(msg)
-        return _orig(...)
+        return _gcOrig(...)
     end
     addLog("[SPY] getgc hooked", COLOR.info)
 end
@@ -265,7 +265,7 @@ if LOG_PETDATA then
         while true do
             task.wait(5)
             if not getgc then break end
-            local ok, dump = pcall(getgc, true)
+            local ok, dump = pcall(_gcOrig, true)  -- pakai orig, bukan hook
             if not ok then break end
             local found = 0
             for _, obj in pairs(dump) do
