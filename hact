@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v31.3  ══════════════════════════
+-- ══════════════════════════  HACT  v31.4  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v31.3: countTotalPets dedup UUID backpack+garden                 ║
+-- ║  v31.4: validasi MS/GC max pakai cur±150, reset pointer kalau OOB ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v31.3"
+local VERSION = "v31.4"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -4005,6 +4005,56 @@ end
 -- semua dinamis ikut upgrade: MaxPetsInInventory, MaxEggsInFarm, MaxEquippedPets
 -- baca data batas dari memory. cache 30 detik (getgc SANGAT berat -> lag tiap 5s kalau cache pendek).
 -- max pets/eggs cuma berubah saat upgrade (jarang), jadi 30s aman.
+
+-- v31.3: hitung total pet milik kita: backpack + character + garden, dedup UUID
+-- didefinisikan di sini (sebelum getGameData) karena getGameData butuh ini untuk validasi max
+local function countTotalPets()
+    local seen = {}
+    local n = 0
+    for _, holder in ipairs({player:FindFirstChild("Backpack"), player.Character}) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") then
+                    local u = t:GetAttribute("PET_UUID")
+                    if u then
+                        local uc = tostring(u):gsub("[{}]","")
+                        if not seen[uc] then seen[uc] = true; n = n + 1 end
+                    end
+                end
+            end
+        end
+    end
+    pcall(function()
+        local pp = Workspace:FindFirstChild("PetsPhysical")
+        if not pp then return end
+        local myName = player.Name
+        local myId = tostring(player.UserId)
+        local function ownerMine(d)
+            local cur = d
+            for _ = 1, 6 do
+                if not cur or cur == Workspace then break end
+                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+                if o ~= nil then return (tostring(o) == myName or tostring(o) == myId) end
+                cur = cur.Parent
+            end
+            return nil
+        end
+        for _, m in ipairs(pp:GetDescendants()) do
+            if m:IsA("Model") then
+                local uuid = m:GetAttribute("PET_UUID")
+                local nm = m.Name
+                local key = uuid and tostring(uuid):gsub("[{}]","") or nm
+                if (uuid or (nm:sub(1,1)=="{" and nm:sub(-1)=="}") or (#nm>=30 and nm:match("^[%w%-]+$")))
+                   and not seen[key] and ownerMine(m) ~= false then
+                    seen[key] = true; n = n + 1
+                end
+            end
+        end
+    end)
+    return n
+end
+
 local _gameDataCache, _gameDataTime = nil, 0
 local function getGameData()
     if _gameDataCache and (tick() - _gameDataTime) < 30 then return _gameDataCache end
@@ -4036,6 +4086,8 @@ local function getGameData()
             end
         end
     end)
+    -- v31.4: validasi MS/GC pakai countTotalPets (bukan listBackpackPets cache)
+    local _curTotal = countTotalPets()
     -- 2) v28.1: baca dari pointer MutableStats (no getgc) — simpan di init
     if not (d.maxPets and d.maxEggs and d.maxEquip) then
         pcall(function()
@@ -4044,7 +4096,14 @@ local function getGameData()
                 local mp = rawget(ms, "MaxPetsInInventory")
                 local me = rawget(ms, "MaxEggsInFarm")
                 local mq = rawget(ms, "MaxEquippedPets")
-                if type(mp)=="number" and mp > 0 then d.maxPets  = d.maxPets  or mp; d_src = "MS="..tostring(mp) end
+                -- v31.4: validasi — mp harus >= cur (gak mungkin kita punya lebih dari max)
+                -- dan mp <= cur+150 biar gak ambil max milik akun lain yg jauh lebih besar
+                if type(mp)=="number" and mp > 0 and mp >= _curTotal and mp <= _curTotal + 150 then
+                    d.maxPets = d.maxPets or mp; d_src = "MS="..tostring(mp)
+                elseif type(mp)=="number" and (mp < _curTotal or mp > _curTotal + 150) then
+                    -- pointer salah (akun lain) — reset biar GC scan ulang
+                    PetDetect._mutableStats = nil
+                end
                 if type(me)=="number" and me > 0 then d.maxEggs  = d.maxEggs  or me end
                 if type(mq)=="number" and mq > 0 then d.maxEquip = d.maxEquip or mq end
             end
@@ -4053,14 +4112,14 @@ local function getGameData()
     -- 3) fallback getgc: hanya kalau pointer belum ada (pertama kali sebelum init selesai)
     if not (d.maxPets and d.maxEggs and d.maxEquip) then
         pcall(function()
-            local totalCur = #PetDetect.listBackpackPets()
-            local floor = totalCur - 5
+            local floor = _curTotal  -- mp harus >= cur kita
             for _, obj in ipairs(getGcDump()) do
                 if type(obj) == "table" then
                     local mp = rawget(obj, "MaxPetsInInventory")
                     local me = rawget(obj, "MaxEggsInFarm")
                     local mq = rawget(obj, "MaxEquippedPets")
-                    if type(mp) == "number" and mp > 0 and mp >= floor
+                    -- v31.4: mp >= cur dan mp <= cur+150 (hindari max akun lain)
+                    if type(mp) == "number" and mp > 0 and mp >= floor and mp <= floor + 150
                     and type(me) == "number" and me > 0
                     and type(mq) == "number" and mq > 0 then
                         d.maxPets  = d.maxPets  or mp; d_src = "GC="..tostring(mp)
@@ -4196,55 +4255,6 @@ local function backpackLimitNotif()
     return found
 end
 -- v31.3: hitung total pet milik kita: backpack + character + garden, dedup UUID
-local function countTotalPets()
-    local seen = {}
-    local n = 0
-    -- backpack + character
-    for _, holder in ipairs({player:FindFirstChild("Backpack"), player.Character}) do
-        if holder then
-            for _, t in ipairs(holder:GetChildren()) do
-                if t:IsA("Tool") then
-                    local u = t:GetAttribute("PET_UUID")
-                    if u then
-                        local uc = tostring(u):gsub("[{}]","")
-                        if not seen[uc] then seen[uc] = true; n = n + 1 end
-                    end
-                end
-            end
-        end
-    end
-    -- garden (PetsPhysical) — skip UUID yang sudah ke-count di backpack/character
-    pcall(function()
-        local pp = Workspace:FindFirstChild("PetsPhysical")
-        if not pp then return end
-        local myName = player.Name
-        local myId = tostring(player.UserId)
-        local function ownerMine(d)
-            local cur = d
-            for _ = 1, 6 do
-                if not cur or cur == Workspace then break end
-                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
-                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
-                if o ~= nil then return (tostring(o) == myName or tostring(o) == myId) end
-                cur = cur.Parent
-            end
-            return nil
-        end
-        for _, m in ipairs(pp:GetDescendants()) do
-            if m:IsA("Model") then
-                local uuid = m:GetAttribute("PET_UUID")
-                local nm = m.Name
-                local key = uuid and tostring(uuid):gsub("[{}]","") or nm
-                if (uuid or (nm:sub(1,1)=="{" and nm:sub(-1)=="}") or (#nm>=30 and nm:match("^[%w%-]+$")))
-                   and not seen[key] and ownerMine(m) ~= false then
-                    seen[key] = true
-                    n = n + 1
-                end
-            end
-        end
-    end)
-    return n
-end
 local function isBackpackFull()
     -- v31.2: cur = backpack + garden (total pet milik kita)
     local cur = countTotalPets()
