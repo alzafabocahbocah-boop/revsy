@@ -8684,7 +8684,7 @@ end)()
     local titleL = lbl(tradeTimContent, "TRADE TIM", 15, C.text)
     titleL.Font = FONT_B
 
-    local subL = lbl(tradeTimContent, "trade semua pet tim ke 1 akun di server", 11, C.textDim)
+    local subL = lbl(tradeTimContent, "gift semua pet tim ke 1 akun di server", 11, C.textDim)
 
     -- ===== PICKER AKUN =====
     local pickLbl = lbl(tradeTimContent, "Pilih Akun Target:", 12, C.textDim)
@@ -8840,14 +8840,24 @@ end)()
                 task.wait(0.4)
             end
 
-            statusL.Text = "▶ trade tim ke " .. _ttTarget .. " (" .. #uuids .. " pet, unfav " .. unfavCount .. ")..."
+            statusL.Text = "▶ gift tim ke " .. _ttTarget .. " (" .. #uuids .. " pet, unfav " .. unfavCount .. ")..."
             progL.Text = ""
 
+            -- v32.7: gift (bukan trade) — pakai giftPetToTarget tiap pet satu-satu
             local sent = 0
             local ok, err = pcall(function()
-                sent = tradePetsToTarget(tgtPlayer, uuids, function()
-                    return _ttStopReq or not _ttOn
-                end)
+                PetDetect.rebuild(true)
+                for _, p in ipairs(PetDetect.listBackpackPets(true)) do
+                    if _ttStopReq or not _ttOn then break end
+                    local uclean = tostring(p.uuid):gsub("[{}]","")
+                    if uuidSet[uclean] and p.tool then
+                        progL.Text = "▸ gift " .. (p.name or "?"):sub(1,20)
+                        if giftPetToTarget(tgtPlayer, p.tool) then
+                            sent = sent + 1
+                        end
+                        task.wait(0.15)
+                    end
+                end
             end)
 
             -- clear snap — auto-fav normal lagi
@@ -8855,9 +8865,9 @@ end)()
             if not ok then
                 statusL.Text = "✘ error: " .. tostring(err):sub(1,50)
             elseif sent > 0 then
-                statusL.Text = "✔ selesai — " .. sent .. " pet terkirim ke " .. _ttTarget
+                statusL.Text = "✔ selesai — " .. sent .. " pet di-gift ke " .. _ttTarget
             else
-                statusL.Text = "⚠ 0 pet terkirim (sudah penuh / stop)"
+                statusL.Text = "⚠ 0 pet ke-gift (target penuh / stop)"
             end
             progL.Text = ""
             _ttBusy = false
@@ -8881,7 +8891,7 @@ end)()
         end
         _ttOn = not _ttOn
         if _ttOn then
-            toggle.Text = "ON — trade jalan"
+            toggle.Text = "ON — gift jalan"
             toggle.BackgroundColor3 = C.accent
             toggle.TextColor3 = Color3.new(0, 0, 0)
             doTradeTim()
