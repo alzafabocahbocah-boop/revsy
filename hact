@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v28.6  ══════════════════════════
+-- ══════════════════════════  HACT  v28.7  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v28.6: rebuild() skip scan Workspace pet folders (lag tiap 5s)     ║
+-- ║  v28.7: notif log dari server muncul di debug panel atas kanan      ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v28.6"
+local VERSION = "v28.7"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1365,6 +1365,30 @@ local dbgLbl = mk("TextLabel", {
     TextWrapped = true, Parent = pillGui })
 corner(dbgLbl, 4)
 _G.__hactDbgLbl = dbgLbl
+-- v28.7: panel notif terpisah di bawah dbgLbl — tampil semua notif dari server (Notification + TradeEvents)
+-- posisi Y mulai setelah dbgLbl (50 + 108 + 6 = 164), tinggi 200px buat ~10 baris
+local notifPanel = mk("TextLabel", {
+    AnchorPoint = Vector2.new(1, 0),
+    Size = UDim2.new(0, 340, 0, 200), Position = UDim2.new(1, -14, 0, 164),
+    BackgroundColor3 = Color3.fromRGB(0,0,20), BackgroundTransparency = 0.4,
+    Text = "notif...", TextColor3 = Color3.fromRGB(180,255,180),
+    Font = FONT, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true, Parent = pillGui })
+corner(notifPanel, 4)
+_G.__hactNotifLog = {}   -- circular buffer, max 12 entri
+_G.__hactNotifPanel = notifPanel
+local function pushNotifLog(tag, msg)
+    local t = os.date("%H:%M:%S")
+    local line = ("[%s] %s: %s"):format(t, tag, msg)
+    local buf = _G.__hactNotifLog
+    table.insert(buf, line)
+    if #buf > 12 then table.remove(buf, 1) end
+    if _G.__hactNotifPanel then
+        _G.__hactNotifPanel.Text = table.concat(buf, "\n")
+    end
+end
+_G.__hactPushNotifLog = pushNotifLog   -- expose buat hook di bawah
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -4173,6 +4197,10 @@ do
                 if type(a1) == "string" then msg = a1
                 elseif type(a1) == "table" then msg = tostring(a1.Text or a1.Message or a1.text or "") end
                 local low = msg:lower()
+                -- v28.7: log SEMUA notif ke panel atas kanan (buat debug + lihat teks asli server)
+                if _G.__hactPushNotifLog then
+                    _G.__hactPushNotifLog("NOTIF", msg ~= "" and msg or tostring(a1 or "?"))
+                end
                 -- v26.1: CUMA cek "Trade completed!" — gift bener2 sukses diterima lawan.
                 -- begitu muncul -> automation STOP MENDADAK + unequip pet garden.
                 if low:find("trade completed") or low:find("trade complete") then
@@ -4180,6 +4208,39 @@ do
                     _G.__hactLastTradeComplete = tick()   -- v27.152: mirror ke _G -> bisa diakses tradePetsToTarget (didefinisiin SEBELUM Auto ada)
                 end
             end)
+        end
+    end)
+end
+-- v28.7: hook TradeEvents semua children — log OnClientEvent ke panel notif
+-- buat lihat apakah "can't add more" / "max their inventory" dikirim lewat remote
+do
+    pcall(function()
+        local ge = RS:FindFirstChild("GameEvents") or RS
+        local te = ge:FindFirstChild("TradeEvents")
+        if not te then return end
+        for _, r in ipairs(te:GetChildren()) do
+            if r:IsA("RemoteEvent") then
+                local rname = r.Name
+                r.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    local parts = {}
+                    for _, v in ipairs(args) do
+                        if type(v) == "table" then
+                            local sub = {}
+                            for k2, v2 in pairs(v) do sub[#sub+1] = tostring(k2).."="..tostring(v2) end
+                            parts[#parts+1] = "{"..table.concat(sub,",").."}"
+                        else
+                            local s = tostring(v)
+                            if #s > 60 then s = s:sub(1,60).."…" end
+                            parts[#parts+1] = s
+                        end
+                    end
+                    local msg = table.concat(parts, "|")
+                    if _G.__hactPushNotifLog then
+                        _G.__hactPushNotifLog("TE/"..rname, msg)
+                    end
+                end)
+            end
         end
     end)
 end
