@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v29.0  ══════════════════════════
+-- ══════════════════════════  HACT  v29.1  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v29.0: fix petFate() sell rule: tanpa kg filter -> sell (bukan keep) ║
+-- ║  v29.1: debug log syncFavByRules — log pet sell yg malah ke-fav      ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v29.0"
+local VERSION = "v29.1"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -3074,6 +3074,17 @@ function syncFavByRules()
             local uclean = tostring(p.uuid):gsub("[{}]","")
             local isTeam = teamSel[uclean]
             local fate = petFate(p)
+            -- v29.0 DBG: log pet sell yg malah ke-fav (harusnya unfav)
+            local rule = config.sellRules and config.sellRules[p.name]
+            if rule and rule.action == "sell" and fate ~= "sell" and not isTeam and not giftTargeted[uclean] and not (snapU and snapU[uclean]) then
+                local dbgMsg = ("FAV-BUG? %s fate=%s kg=%.2f rKg=%s fav=%s"):format(
+                    tostring(p.name), tostring(fate),
+                    p.dispKg or -1,
+                    tostring(rule.kg),
+                    tostring(p.fav))
+                print("[SyncFav DBG] "..dbgMsg)
+                if _G.__hactPushNotifLog then _G.__hactPushNotifLog("SF", dbgMsg) end
+            end
             if giftTargeted[uclean] then
                 -- v23.1: lagi mau di-gift -> JANGAN sentuh fav (biar gift yg kelola unfav-nya)
             elseif snapU and snapU[uclean] then
@@ -3083,7 +3094,16 @@ function syncFavByRules()
                 if p.fav then favoritePet(p.tool); unfav = unfav + 1; task.wait(0.04) end
             else
                 -- keep/tim -> pastiin favorit
-                if not p.fav then favoritePet(p.tool); fav = fav + 1; task.wait(0.04) end
+                if not p.fav then
+                    -- v29.0 DBG: log kalau pet sell rule malah di-fav
+                    if rule and rule.action == "sell" then
+                        local dbgFav = ("FAV sell-rule! %s kg=%.2f rKg=%s isTeam=%s"):format(
+                            tostring(p.name), p.dispKg or -1, tostring(rule.kg), tostring(isTeam))
+                        print("[SyncFav DBG] "..dbgFav)
+                        if _G.__hactPushNotifLog then _G.__hactPushNotifLog("SF!", dbgFav) end
+                    end
+                    favoritePet(p.tool); fav = fav + 1; task.wait(0.04)
+                end
             end
         end
     end
