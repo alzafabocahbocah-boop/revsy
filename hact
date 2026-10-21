@@ -2082,11 +2082,6 @@ local function autoAcceptTrade()
         if lt and lt.Visible and tui and tui.Enabled then
             _G.__hactTradeAktif = tick()   -- v27.111: GUI trade ada -> fav MATI (reset timer 30s tiap keliatan)
             local opts = lt:FindFirstChild("Options")
-            -- v30.3: log opts
-            if _G.__hactPushNotifLog then
-                local optsKids = opts and (function() local t={} for _,c in ipairs(opts:GetChildren()) do t[#t+1]=c.Name end return table.concat(t," ") end)() or "NIL"
-                _G.__hactPushNotifLog("OPT", "opts="..(opts and "ok" or "NIL").." kids="..optsKids:sub(1,40))
-            end
             -- v30.3: port up6kg — firesignal Activated + fireBtn (MouseButton1Down+Click) per tombol
             for _, bn in ipairs({"Accept", "Confirm", "Terima"}) do
                 local b = opts and opts:FindFirstChild(bn)
@@ -2097,25 +2092,16 @@ local function autoAcceptTrade()
                 end
             end
             -- scan semua visible button di LiveTrade
-            local btnLog = {}
             for _, d in ipairs(lt:GetDescendants()) do
                 if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
                     local t = ((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
-                    table.insert(btnLog, d.Name:sub(1,10).."["..t:sub(1,8).."]")
                     if t == "yes" or t:find("confirm") or t == "continue" or t == "accept" or t == "terima" or t:find("terima") then
-                        local ap = d.AbsolutePosition; local as = d.AbsoluteSize
-                        if _G.__hactPushNotifLog then
-                            _G.__hactPushNotifLog("ACK", ("klik %s pos=%.0f,%.0f sz=%.0f,%.0f"):format(d.Name, ap.X, ap.Y, as.X, as.Y))
-                        end
                         -- v30.5: Activated dulu (seperti up6kg), baru tekan (MouseButton1Down/Click)
                         if firesignal then pcall(function() firesignal(d.Activated) end) end
                         if getconnections then for _, c in ipairs(getconnections(d.Activated)) do pcall(function() c:Fire() end) end end
                         tekan(d)
                     end
                 end
-            end
-            if _G.__hactPushNotifLog then
-                _G.__hactPushNotifLog("BTN", #btnLog > 0 and table.concat(btnLog, " ") or "kosong")
             end
             -- scan seluruh pg untuk popup di luar LiveTrade (unfair trade dll)
             for _, d in ipairs(pg:GetDescendants()) do
@@ -2135,10 +2121,6 @@ local function autoAcceptTrade()
         local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
         te = te and te:FindFirstChild("TradeEvents")
         if te then
-            -- v30.1 DBG: log semua children TradeEvents
-            local teNames = {}
-            for _, r in ipairs(te:GetChildren()) do table.insert(teNames, r.Name) end
-            if _G.__hactPushNotifLog then _G.__hactPushNotifLog("TE", table.concat(teNames, " "):sub(1,80)) end
             local a = te:FindFirstChild("Accept"); local c = te:FindFirstChild("Confirm")
             if c then pcall(function() c:FireServer() end) end
             if a then pcall(function() a:FireServer() end) end
@@ -2166,28 +2148,6 @@ task.spawn(function()
             -- v29.3 DBG: log status window trade ke notifPanel
             local ltV = lt and lt.Visible or false
             local tuiE = tui and tui.Enabled or false
-            if ltV or tuiE then
-                local block = ""
-                if _G.__hactSending and not _G.__hactPetsAdded then block = "BLOCK:sending+noAdd" end
-                local dbg = ("TUI lt=%s en=%s %s"):format(tostring(ltV), tostring(tuiE), block)
-                if _G.__hactPushNotifLog then _G.__hactPushNotifLog("TUI", dbg) end
-            end
-            -- v29.5 DBG: kalau TradingUI nil, scan semua PlayerGui cari GUI yang punya "accept"/"trade" button
-            if not tui and pg then
-                for _, v in ipairs(pg:GetChildren()) do
-                    if v:IsA("ScreenGui") and v.Enabled then
-                        for _, d in ipairs(v:GetDescendants()) do
-                            if (d:IsA("TextButton") or d:IsA("TextLabel")) and d.Visible then
-                                local t = (d.Text or ""):lower()
-                                if t:find("accept") or t:find("waiting") or t:find("confirm") then
-                                    local msg = ("SCAN gui=%s el=%s txt=%s"):format(v.Name:sub(1,12), d.ClassName:sub(1,8), d.Text:sub(1,20))
-                                    if _G.__hactPushNotifLog then _G.__hactPushNotifLog("SCN", msg) end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
             if lt and lt.Visible and tui.Enabled then autoAcceptTrade() end
         end)
     end
@@ -4042,6 +4002,7 @@ local _gameDataCache, _gameDataTime = nil, 0
 local function getGameData()
     if _gameDataCache and (tick() - _gameDataTime) < 30 then return _gameDataCache end
     local d = { maxPets = nil, maxEggs = nil, maxEquip = nil }
+    local d_src = "none"
     -- v27.190: port cara up6kg — lebih reliable dari terbesar/terkecil
     -- 1) baca dari UI "Pet Items (X/Y)" -> Y = max ASLI akun (paling akurat, gak ke-kontaminasi getgc)
     pcall(function()
@@ -4056,7 +4017,9 @@ local function getGameData()
                     if a and b then
                         a, b = tonumber(a), tonumber(b)
                         if a and b and b > 0 and math.abs(a - totalCur) <= 10 then
-                            d.maxPets = b; break
+                            d.maxPets = b
+                            d_src = "UI:"..dd:GetFullName():sub(-30).."="..tostring(b)
+                            break
                         end
                     end
                 end
@@ -4071,7 +4034,7 @@ local function getGameData()
                 local mp = rawget(ms, "MaxPetsInInventory")
                 local me = rawget(ms, "MaxEggsInFarm")
                 local mq = rawget(ms, "MaxEquippedPets")
-                if type(mp)=="number" and mp > 0 then d.maxPets  = d.maxPets  or mp end
+                if type(mp)=="number" and mp > 0 then d.maxPets  = d.maxPets  or mp; d_src = "MS="..tostring(mp) end
                 if type(me)=="number" and me > 0 then d.maxEggs  = d.maxEggs  or me end
                 if type(mq)=="number" and mq > 0 then d.maxEquip = d.maxEquip or mq end
             end
@@ -4090,7 +4053,7 @@ local function getGameData()
                     if type(mp) == "number" and mp > 0 and mp >= floor
                     and type(me) == "number" and me > 0
                     and type(mq) == "number" and mq > 0 then
-                        d.maxPets  = d.maxPets  or mp
+                        d.maxPets  = d.maxPets  or mp; d_src = "GC="..tostring(mp)
                         d.maxEggs  = d.maxEggs  or me
                         d.maxEquip = d.maxEquip or mq
                         -- simpan pointer untuk berikutnya
@@ -4100,6 +4063,10 @@ local function getGameData()
                 end
             end
         end)
+    end
+    -- v30.5: log sumber max
+    if _G.__hactPushNotifLog and d.maxPets then
+        _G.__hactPushNotifLog("MAX", ("max=%d src=%s"):format(d.maxPets, d_src))
     end
     _gameDataCache = d; _gameDataTime = tick()
     return d
@@ -4226,11 +4193,6 @@ local function isBackpackFull()
     local inCooldown = (tick() - (Auto.lastSellTime or 0)) < 4
     local byNotif = (not inCooldown) and (Auto.bpFullFlag or backpackLimitNotif())
     local full = (cur >= maxPets) or byNotif
-    -- v30.5: debug log max sumber
-    if _G.__hactPushNotifLog then
-        local src = getGameData().maxPets == maxPets and "ok" or "fallback"
-        _G.__hactPushNotifLog("INV", ("cur=%d max=%d full=%s src=%s"):format(cur, maxPets, tostring(full), src))
-    end
     return full, cur, maxPets
 end
 _G.__hactIsInvFull = isBackpackFull  -- v27.238: expose ke scope awal untuk respond path
