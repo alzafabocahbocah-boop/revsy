@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v28.3  ══════════════════════════
+-- ══════════════════════════  HACT  v28.4  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v28.3: matiin background getgc loop tiap 10s (freeze 290ms hilang) ║
+-- ║  v28.4: gak scan pg:GetDescendants() tiap 0.3s (lag saat trade)     ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v28.3"
+local VERSION = "v28.4"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2062,17 +2062,20 @@ local function autoAcceptTrade()
                 end
             end
         end
-        -- v27.116: popup "UNFAIR TRADE" (value gak imbang -> game minta konfirmasi IYA/TIDAK). Scan SELURUH
-        -- PlayerGui, cek TEXT + NAME (kadang ImageButton tanpa text). Klik yes/confirm/sure/anyway/proceed/accept.
-        -- SKIP no/cancel/decline/reject biar GAK salah klik "TIDAK" (batalin trade). Cuma jalan pas trade aktif.
-        for _, d in ipairs(pg:GetDescendants()) do
-            if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
-                local t = (((d:IsA("TextButton") and d.Text) or "") .. " " .. (d.Name or "")):lower()
-                if not (t:find("cancel") or t:find("decline") or t:find("reject") or t == "no " or t:find(" no ")) then
-                    if t:find("yes") or t:find("confirm") or t:find("continue") or t:find("lanjut")
-                       or t:find("sure") or t:find("anyway") or t:find("proceed") or t:find("accept") then
-                        if firesignal then pcall(function() firesignal(d.Activated) end) end
-                        if getconnections then for _, c in ipairs(getconnections(d.Activated)) do pcall(function() c:Fire() end) end end
+        -- v28.4: popup "UNFAIR TRADE" — gak scan pg:GetDescendants() tiap loop (berat, ribuan obj).
+        -- Cukup cek children langsung dari pg (popup biasanya 1 level), jauh lebih ringan.
+        for _, d in ipairs(pg:GetChildren()) do
+            if d.Visible and d ~= tui then
+                for _, b in ipairs(d:GetChildren()) do
+                    if (b:IsA("TextButton") or b:IsA("ImageButton")) and b.Visible then
+                        local t = (((b:IsA("TextButton") and b.Text) or "") .. " " .. (b.Name or "")):lower()
+                        if not (t:find("cancel") or t:find("decline") or t:find("reject") or t == "no " or t:find(" no ")) then
+                            if t:find("yes") or t:find("confirm") or t:find("continue") or t:find("lanjut")
+                               or t:find("sure") or t:find("anyway") or t:find("proceed") or t:find("accept") then
+                                if firesignal then pcall(function() firesignal(b.Activated) end) end
+                                if getconnections then for _, c in ipairs(getconnections(b.Activated)) do pcall(function() c:Fire() end) end end
+                            end
+                        end
                     end
                 end
             end
