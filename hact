@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v32.5  ══════════════════════════
+-- ══════════════════════════  HACT  v32.4  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v32.5: cache gardenName scan (cegah FPS drop setelah hatch Koi)     ║
+-- ║  v32.4: scan popup YES/NO gak perlu cek tui (unfair trade kapan aja) ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v32.5"
+local VERSION = "v32.4"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -813,48 +813,42 @@ function PetDetect._listBackpackPetsRaw()
     scanTools(player:FindFirstChild("Backpack"))
     scanTools(player.Character)
 
-    -- v32.5: cache gardenName — scan PetsPhysical berat (ribuan node), jgn tiap force call.
-    -- TTL 3s: nama garden pet stabil, gak perlu real-time (beda sama fav yg butuh fresh).
-    local _gnCacheT = PetDetect._gardenNameCacheT or 0
-    if not PetDetect._gardenNameCache or (tick() - _gnCacheT) >= 3 then
-        local gardenName = {}
-        pcall(function()
-            for _, fname in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
-                local f = Workspace:FindFirstChild(fname)
-                if f then
-                    for _, d in ipairs(f:GetDescendants()) do
-                        local u = d:GetAttribute("PET_UUID") or d:GetAttribute("UUID")
-                        if not u then
-                            local n = d.Name:gsub("[{}]","")
-                            if #n >= 32 and n:find("-") then u = n end
-                        end
-                        if u then
-                            local clean = tostring(u):gsub("[{}]","")
-                            if not gardenName[clean] then
-                                -- cari nama tipe: atribut PetType/Type, atau dari child TextLabel PET_TYPE
-                                local nm = d:GetAttribute("PetType") or d:GetAttribute("Type")
-                                    or d:GetAttribute("PetName") or d:GetAttribute("Name")
-                                if not nm then
-                                    for _, c in ipairs(d:GetDescendants()) do
-                                        if c:IsA("TextLabel") and (c.Name == "PET_TYPE" or c.Name == "PetType")
-                                           and c.Text and #c.Text > 0 then
-                                            nm = c.Text break
-                                        end
+    -- lookup nama TIPE pet dari workspace (buat pet garden yg PetData-nya gak punya PetType)
+    local gardenName = {}
+    pcall(function()
+        for _, fname in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
+            local f = Workspace:FindFirstChild(fname)
+            if f then
+                for _, d in ipairs(f:GetDescendants()) do
+                    local u = d:GetAttribute("PET_UUID") or d:GetAttribute("UUID")
+                    if not u then
+                        local n = d.Name:gsub("[{}]","")
+                        if #n >= 32 and n:find("-") then u = n end
+                    end
+                    if u then
+                        local clean = tostring(u):gsub("[{}]","")
+                        if not gardenName[clean] then
+                            -- cari nama tipe: atribut PetType/Type, atau dari child TextLabel PET_TYPE
+                            local nm = d:GetAttribute("PetType") or d:GetAttribute("Type")
+                                or d:GetAttribute("PetName") or d:GetAttribute("Name")
+                            if not nm then
+                                for _, c in ipairs(d:GetDescendants()) do
+                                    if c:IsA("TextLabel") and (c.Name == "PET_TYPE" or c.Name == "PetType")
+                                       and c.Text and #c.Text > 0 then
+                                        nm = c.Text break
                                     end
                                 end
-                                if nm and tostring(nm) ~= "" and not tostring(nm):find("-") then
-                                    gardenName[clean] = tostring(nm)
-                                end
+                            end
+                            if nm and tostring(nm) ~= "" and not tostring(nm):find("-") then
+                                gardenName[clean] = tostring(nm)
                             end
                         end
                     end
                 end
             end
-        end)
-        PetDetect._gardenNameCache = gardenName
-        PetDetect._gardenNameCacheT = tick()
-    end
-    PetDetect._gardenName = PetDetect._gardenNameCache
+        end
+    end)
+    PetDetect._gardenName = gardenName
 
     local out = {}
     local seen = {}
