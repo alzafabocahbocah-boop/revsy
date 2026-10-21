@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v31.1  ══════════════════════════
+-- ══════════════════════════  HACT  v31.2  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v31.1: trade egg cek full pakai cur langsung, bukan byNotif      ║
+-- ║  v31.2: cur hitung backpack+garden, pakai countTotalPets()        ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v31.1"
+local VERSION = "v31.2"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1182,15 +1182,8 @@ local function updateVerTxt()
     pcall(function()
         local maxP = _G.HactTelurGetMaxPets and _G.HactTelurGetMaxPets() or nil
         local pets = PetDetect.listBackpackPets()
-        -- v30.9: hitung cur langsung dari Backpack+Character (bukan cache/inBackpack yg gak reliable)
-        local cur = 0
-        for _, holder in ipairs({player:FindFirstChild("Backpack"), player.Character}) do
-            if holder then
-                for _, t in ipairs(holder:GetChildren()) do
-                    if t:IsA("Tool") and t:GetAttribute("PET_UUID") then cur = cur + 1 end
-                end
-            end
-        end
+        -- v31.2: cur = backpack + garden (total pet milik kita)
+        local cur = countTotalPets()
         local base = maxP and maxP > 0 and (cur.."/"..maxP) or tostring(cur)
         if trackPetType then
             local low = tostring(trackPetType):lower()
@@ -4202,16 +4195,22 @@ local function backpackLimitNotif()
     end)
     return found
 end
-local function isBackpackFull()
-    -- v30.9: hitung cur langsung dari Backpack+Character (paling akurat, real-time)
-    local cur = 0
+-- v31.2: hitung total pet milik kita: backpack + character + garden
+local function countTotalPets()
+    local n = 0
     for _, holder in ipairs({player:FindFirstChild("Backpack"), player.Character}) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
-                if t:IsA("Tool") and t:GetAttribute("PET_UUID") then cur = cur + 1 end
+                if t:IsA("Tool") and t:GetAttribute("PET_UUID") then n = n + 1 end
             end
         end
     end
+    n = n + countGardenPets()
+    return n
+end
+local function isBackpackFull()
+    -- v31.2: cur = backpack + garden (total pet milik kita)
+    local cur = countTotalPets()
     local maxPets = getMaxPets()
     if not maxPets or maxPets <= 0 then maxPets = 230 end
     -- cooldown stlh sell: abaikan notif lama (yg blm hilang) biar gak stuck di Seal
@@ -8308,14 +8307,8 @@ end)()  -- tutup IIFE TAB TRADE
                             teBtn.Text = "START TRADE EGG"; teBtn.BackgroundColor3 = C.card; teBtn.TextColor3 = C.text
                             return
                         end
-                        -- v31.1: cek cur langsung, bukan byNotif/bpFullFlag yg bisa stuck
-                        local _cur2 = 0
-                        for _, _h in ipairs({player:FindFirstChild("Backpack"), player.Character}) do
-                            if _h then for _, _t in ipairs(_h:GetChildren()) do
-                                if _t:IsA("Tool") and _t:GetAttribute("PET_UUID") then _cur2 = _cur2 + 1 end
-                            end end
-                        end
-                        local full2 = _cur2 >= (getMaxPets() or 230)
+                        -- v31.2: cek cur langsung (backpack+garden), bukan byNotif/bpFullFlag
+                        local full2 = countTotalPets() >= (getMaxPets() or 230)
                         if full2 then
                             AutoAcc.trade = false  -- v27.216: inv full → jangan terima trade masuk
                             _G.__hactDbgAcc = ("FULL:trade=false [%d]"):format(math.floor(tick()%1000))
