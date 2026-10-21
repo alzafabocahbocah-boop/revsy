@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v29.3  ══════════════════════════
+-- ══════════════════════════  HACT  v29.4  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v29.3: debug log status TUI window trade di notifPanel              ║
+-- ║  v29.4: fix+debug cantAddMore — scan TextButton juga, log hasil      ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v29.3"
+local VERSION = "v29.4"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2182,18 +2182,24 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
     -- deteksi notif "you can't add more items" di layar (slot trade penuh)
     local function cantAddMore()
         local found = false
+        local foundTxt = ""
         pcall(function()
             local pg = player:FindFirstChild("PlayerGui")
             if not pg then return end
+            -- v29.3: scan TextLabel DAN TextButton (game kadang pakai TextButton buat notif)
             for _, d in ipairs(pg:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Visible then
+                if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible then
                     local t = (d.Text or ""):lower()
-                    if t:find("can't add more") or t:find("cant add more") or t:find("can.t add more") then
-                        found = true; break
+                    if t:find("can") and t:find("add more") then
+                        found = true; foundTxt = d.Text:sub(1,40); break
                     end
                 end
             end
         end)
+        -- v29.3 DBG: log hasil deteksi ke notifPanel
+        if _G.__hactPushNotifLog then
+            _G.__hactPushNotifLog("CAM", ("found=%s txt=%s"):format(tostring(found), foundTxt ~= "" and foundTxt or "-"))
+        end
         return found
     end
     -- v27.65: cek window trade masih kebuka?
