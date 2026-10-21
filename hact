@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v29.1  ══════════════════════════
+-- ══════════════════════════  HACT  v29.2  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v29.1: debug log syncFavByRules — log pet sell yg malah ke-fav      ║
+-- ║  v29.2: log caller di favoritePet — tau dari mana fav dipanggil      ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v29.1"
+local VERSION = "v29.2"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1987,8 +1987,20 @@ local function sellOnePet(tool)
     return false
 end
 -- favoritkan pet (kirim Instance Tool). Favorite_Item = toggle.
-local function favoritePet(tool)
+local function favoritePet(tool, _caller)
     if SellSys.favRE and tool then
+        -- v29.2 DBG: log setiap fav ke notifPanel
+        pcall(function()
+            local nm = tostring(tool.Name or "?")
+            local caller = _caller or "?"
+            -- cek apakah pet ini punya sell rule (harusnya gak di-fav)
+            local baseName = nm:gsub("%s*%[.-%]",""):gsub("%s+$","")
+            local rule = config and config.sellRules and config.sellRules[baseName]
+            local tag = (rule and rule.action=="sell") and "FAV!" or "fav"
+            local msg = ("[%s] %s <- %s"):format(tag, nm:sub(1,30), caller)
+            if _G.__hactPushNotifLog then _G.__hactPushNotifLog(tag, msg) end
+            print("[favoritePet] "..msg)
+        end)
         pcall(function() SellSys.favRE:FireServer(tool) end)
         return true
     end
@@ -2691,7 +2703,7 @@ local function giftPetsByFilter(cfg)
                         if ref.tool:GetAttribute(attr) == true then isFav = true break end
                     end
                 end
-                if isFav and ref and ref.tool then favoritePet(ref.tool); stillFav = stillFav + 1; task.wait(0.05) end
+                if isFav and ref and ref.tool then favoritePet(ref.tool,"keepFav"); stillFav = stillFav + 1; task.wait(0.05) end
             end
             if stillFav == 0 then
                 print(("[HactTelur] TIMING unfav OK attempt %d, %.2fs (0 getgc, referensi langsung)"):format(attempt, tick()-_ta))
@@ -3025,7 +3037,7 @@ function favTeamPets()
     for _, p in ipairs(PetDetect.listBackpackPets(true)) do
         local uclean = tostring(p.uuid):gsub("[{}]","")
         if teamSel[uclean] and p.tool and not p.fav and not (snapU and snapU[uclean]) then
-            favoritePet(p.tool)
+            favoritePet(p.tool,"favTeam")
             n = n + 1
             task.wait(0.04)
         end
@@ -3091,7 +3103,7 @@ function syncFavByRules()
                 -- v27.214: lagi di Trade Egg snapshot -> JANGAN re-fav (biar unfav loop yg kelola)
             elseif fate == "sell" and not isTeam then
                 -- masuk kriteria jual -> pastiin TIDAK favorit
-                if p.fav then favoritePet(p.tool); unfav = unfav + 1; task.wait(0.04) end
+                if p.fav then favoritePet(p.tool,"syncUnfav"); unfav = unfav + 1; task.wait(0.04) end
             else
                 -- keep/tim -> pastiin favorit
                 if not p.fav then
@@ -3102,7 +3114,7 @@ function syncFavByRules()
                         print("[SyncFav DBG] "..dbgFav)
                         if _G.__hactPushNotifLog then _G.__hactPushNotifLog("SF!", dbgFav) end
                     end
-                    favoritePet(p.tool); fav = fav + 1; task.wait(0.04)
+                    favoritePet(p.tool,"syncFav"); fav = fav + 1; task.wait(0.04)
                 end
             end
         end
@@ -3150,9 +3162,18 @@ function doAutoSell()
     local protN = 0
     for _, p in ipairs(PetDetect.listBackpackPets(true)) do
         local uclean = tostring(p.uuid):gsub("[{}]","")
-        local mustKeep = teamSel2[uclean] or (petFate(p) == "keep")
+        local fate2 = petFate(p)
+        local mustKeep = teamSel2[uclean] or (fate2 == "keep")
         if mustKeep and not p.fav and p.tool then
-            favoritePet(p.tool); protN = protN + 1; task.wait(0.04)
+            -- v29.2 DBG: log kalau pet sell rule masuk proteksi fav
+            local rule2 = config.sellRules and config.sellRules[p.name]
+            if rule2 and rule2.action == "sell" then
+                local dbg2 = ("PROT-FAV sell! %s fate=%s kg=%.2f rKg=%s"):format(
+                    tostring(p.name), fate2, p.dispKg or -1, tostring(rule2.kg))
+                print("[doAutoSell DBG] "..dbg2)
+                if _G.__hactPushNotifLog then _G.__hactPushNotifLog("AS!", dbg2) end
+            end
+            favoritePet(p.tool,"autoSellProt"); protN = protN + 1; task.wait(0.04)
         end
     end
     if protN > 0 then print("[HactTelur] proteksi: fav "..protN.." pet keep/tim sebelum jual"); task.wait(0.4) end
@@ -6622,7 +6643,7 @@ local function makeManualPanel()
                     task.spawn(function()
                         local uf = 0
                         for _, p in ipairs(g.pets) do
-                            if p.fav and p.tool then pcall(function() favoritePet(p.tool) end); uf = uf + 1; task.wait(0.04) end
+                            if p.fav and p.tool then pcall(function() favoritePet(p.tool,"giftUnfav") end); uf = uf + 1; task.wait(0.04) end
                         end
                         if uf > 0 then info.Text = nm..": "..uf.." pet di-unfav (siap jual)" end
                     end)
@@ -6685,7 +6706,7 @@ local function makeManualPanel()
                 local sold = 0
                 for _, p in ipairs(target) do
                     if p.tool then
-                        if p.fav then pcall(function() favoritePet(p.tool) end); task.wait(0.05) end
+                        if p.fav then pcall(function() favoritePet(p.tool,"tradeUnfav") end); task.wait(0.05) end
                         if sellOnePet(p.tool) then sold = sold + 1 end
                         task.wait(0.1)
                     end
@@ -6801,7 +6822,7 @@ local function favAllPets(wantFav)
         if (not wantFav) and teamSel[uclean] then
             -- skip
         elseif p.tool and (p.fav ~= wantFav) then
-            favoritePet(p.tool)  -- Favorite_Item = toggle
+            favoritePet(p.tool,"manualFav")  -- Favorite_Item = toggle
             n = n + 1
             task.wait(0.04)
         end
@@ -8291,7 +8312,7 @@ end)()  -- tutup IIFE TAB TRADE
                                             for _, p in ipairs(PetDetect.listBackpackPets(true)) do
                                                 local uc = tostring(p.uuid):gsub("[{}]","")
                                                 if snapUuids[uc] and p.fav and p.tool then
-                                                    favoritePet(p.tool)
+                                                    favoritePet(p.tool,"teggUnfav")
                                                     stillFav = stillFav + 1
                                                     task.wait(0.04)
                                                 end
