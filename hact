@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v32.2  ══════════════════════════
+-- ══════════════════════════  HACT  v32.3  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v32.2: auto decline trade kalau lawan gak nambah pet dalam 30s     ║
+-- ║  v32.3: fix addItem 0.05->0.12s, cantAddMore cache, windowOpen fix  ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v32.2"
+local VERSION = "v32.3"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2194,14 +2194,22 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
     _G.__hactStep = "trade loop | petList="..#petList.." | stop="..tostring(stopCheck and stopCheck())
     _G.__hactPetsAdded = false; _G.__hactSending = true   -- v27.132: global (dulu Auto.__petsAdded -> Auto NIL di sini -> ERROR, trade mampet)
     -- deteksi notif "you can't add more items" di layar (slot trade penuh)
+    -- v32.3: cache cantAddMore 0.25s — dulu scan seluruh PlayerGui:GetDescendants() tiap pet (ribuan node)
+    -- → jadi lambat banget, total delay per batch naik drastis → kurang dari 12 pet ke-add
+    local _camCache, _camCacheT = false, 0
     local function cantAddMore()
+        if tick() - _camCacheT < 0.25 then return _camCache end  -- pakai cache
         local found = false
         local foundTxt = ""
         pcall(function()
             local pg = player:FindFirstChild("PlayerGui")
             if not pg then return end
+            -- v32.3: scan LiveTrade dulu (notif "can't add more" ada di sini), baru fallback pg
+            local tui = pg:FindFirstChild("TradingUI")
+            local lt = tui and tui:FindFirstChild("LiveTrade")
+            local root = lt or pg
             -- v29.3: scan TextLabel DAN TextButton (game kadang pakai TextButton buat notif)
-            for _, d in ipairs(pg:GetDescendants()) do
+            for _, d in ipairs(root:GetDescendants()) do
                 if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible then
                     local t = (d.Text or ""):lower()
                     if t:find("can") and t:find("add more") then
@@ -2210,20 +2218,22 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
                 end
             end
         end)
+        _camCache, _camCacheT = found, tick()
         -- v29.3 DBG: log hasil deteksi ke notifPanel
-        if _G.__hactPushNotifLog then
+        if _G.__hactPushNotifLog and found then
             _G.__hactPushNotifLog("CAM", ("found=%s txt=%s"):format(tostring(found), foundTxt ~= "" and foundTxt or "-"))
         end
         return found
     end
     -- v27.65: cek window trade masih kebuka?
+    -- v32.3: tambah cek tui.Enabled (sama kayak autoAcceptTrade — lt.Visible bisa true walau UI disabled)
     local function windowOpen()
         local o = false
         pcall(function()
             local pg = player:FindFirstChild("PlayerGui")
             local tui = pg and pg:FindFirstChild("TradingUI")
             local lt = tui and tui:FindFirstChild("LiveTrade")
-            o = (lt and lt.Visible) or false
+            o = (lt and lt.Visible and tui and tui.Enabled) or false
         end)
         return o
     end
@@ -2305,7 +2315,7 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
             local u = tostring(petList[i]):gsub("[{}]",""); u = "{"..u.."}"
             pcall(function() TradeSys.addItemRE:FireServer("Pet", u) end)
             added = added + 1
-            task.wait(0.05)
+            task.wait(0.2)  -- v32.3: 0.05->0.2 biar server gak drop (terlalu cepat -> <12 ke-add)
             if cantAddMore() then break end   -- slot trade penuh (12) -> accept + re-send sisa
         end
         -- v27.122: tandain pet UDAH ke-add -> baru boleh confirm (anti race: loop 0.12s confirm window
