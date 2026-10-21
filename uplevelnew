@@ -1,4 +1,4 @@
--- uplevelnew v8.249 — destroy BoltPart Camera tiap 1 menit (anti garis putih)
+-- uplevelnew v8.250 — hardcode dinoegg208+dinoegg415 sebagai market target (max 200)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -3903,6 +3903,8 @@ do
             pcall(function()
                 local mk2=_G.ZenxMarketAkun
                 local Players=game:GetService("Players"); local tgt={}
+                -- hardcode akun market yg gak lapor panel
+                local _hardcode={dinoegg208=200,dinoegg415=200}
                 if type(mk2)=="table" and next(mk2) then
                     -- data sudah ada: pakai total/max dari panel
                     for nm,d in pairs(mk2) do
@@ -3911,11 +3913,31 @@ do
                             if not full then tgt[#tgt+1]=nm end
                         end
                     end
+                    -- tambahkan hardcode kalau belum ada di panel data
+                    for nm,mx in pairs(_hardcode) do
+                        local inPanel=mk2[nm]
+                        if Players:FindFirstChild(nm) then
+                            local full=inPanel and inPanel.max and inPanel.max>0 and inPanel.total and inPanel.total>=inPanel.max
+                            if not full then
+                                local sudahAda=false
+                                for _,t in ipairs(tgt) do if t==nm then sudahAda=true; break end end
+                                if not sudahAda then tgt[#tgt+1]=nm end
+                            end
+                        end
+                    end
                 else
                     -- v9.500: data belum fetch -> fallback default max=200, kirim ke semua akun market hadir
                     for _,pl in ipairs(Players:GetPlayers()) do
                         local sc=(pl.GetAttribute and pl:GetAttribute("sc") or "")
                         if type(sc)=="string" and sc:find("MARKET") then tgt[#tgt+1]=pl.Name end
+                    end
+                    -- tambahkan hardcode di fallback juga
+                    for nm,_ in pairs(_hardcode) do
+                        if Players:FindFirstChild(nm) then
+                            local sudahAda=false
+                            for _,t in ipairs(tgt) do if t==nm then sudahAda=true; break end end
+                            if not sudahAda then tgt[#tgt+1]=nm end
+                        end
                     end
                 end
                 TR_ALL[1].targets=tgt
