@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v28.2  ══════════════════════════
+-- ══════════════════════════  HACT  v28.3  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v28.2: STOP langsung (task.wait panjang diganti loop pendek)        ║
+-- ║  v28.3: matiin background getgc loop tiap 10s (freeze 290ms hilang) ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v28.2"
+local VERSION = "v28.3"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -451,36 +451,8 @@ local function getGcDump()
     _gcDbg = ("gc:sync %.0fms"):format((_gcDumpTime - t0) * 1000)
     return _gcDump
 end
--- background pre-fetch tiap GC_TTL detik pakai desync (gak block frame)
-task.spawn(function()
-    task.wait(2)  -- tunggu init selesai
-    while true do
-        task.wait(GC_TTL)
-        if not getgc then break end
-        task.spawn(function()
-            local t0 = tick()
-            local ok, result = pcall(function()
-                task.desynchronize()  -- pindah ke parallel thread
-                return getgc(true)
-            end)
-            local dt = (tick() - t0) * 1000
-            if ok and result then
-                _gcDump = result
-                _gcDumpTime = tick()
-                _gcDbg = ("gc:async %.0fms"):format(dt)
-            else
-                -- desync gak support di executor ini, fallback sync
-                local ok2, r2 = pcall(getgc, true)
-                local dt2 = (tick() - t0) * 1000
-                if ok2 and r2 then
-                    _gcDump = r2
-                    _gcDumpTime = tick()
-                    _gcDbg = ("gc:sync %.0fms"):format(dt2)
-                end
-            end
-        end)
-    end
-end)
+-- v28.3: background pre-fetch dimatiin — getgc pointer-based, cache ini udah gak kepake rutin
+-- getGcDump() tetap ada sbg fallback on-demand (AutoBoost + maxPets fallback)
 
 -- ============ DETEKSI PET (memory container getgc — terbukti dari market/telur) ============
 local PetDetect = {}
