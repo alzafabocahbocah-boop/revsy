@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v30.8  ══════════════════════════
+-- ══════════════════════════  HACT  v30.9  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v30.8: fix cur pet ngitung garden juga; sekarang hanya backpack   ║
+-- ║  v30.9: fix cur scan langsung Backpack+Character, bukan cache      ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v30.8"
+local VERSION = "v30.9"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1181,11 +1181,16 @@ corner(trackRefBtn, 6); stroke(trackRefBtn, C.border, 1)
 local function updateVerTxt()
     pcall(function()
         local maxP = _G.HactTelurGetMaxPets and _G.HactTelurGetMaxPets() or nil
-        -- v21.8: panggil listBackpackPets SEKALI aja (dulu 2x -> berat -> lag). pakai hasilnya buat semua.
         local pets = PetDetect.listBackpackPets()
-        -- v30.8: cur = hanya pet di backpack (inBackpack=true), bukan semua incl garden
+        -- v30.9: hitung cur langsung dari Backpack+Character (bukan cache/inBackpack yg gak reliable)
         local cur = 0
-        for _, p in ipairs(pets) do if p.inBackpack then cur = cur + 1 end end
+        for _, holder in ipairs({player:FindFirstChild("Backpack"), player.Character}) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    if t:IsA("Tool") and t:GetAttribute("PET_UUID") then cur = cur + 1 end
+                end
+            end
+        end
         local base = maxP and maxP > 0 and (cur.."/"..maxP) or tostring(cur)
         if trackPetType then
             local low = tostring(trackPetType):lower()
@@ -4198,10 +4203,15 @@ local function backpackLimitNotif()
     return found
 end
 local function isBackpackFull()
-    -- v30.8: hitung HANYA pet di backpack (inBackpack=true), bukan semua termasuk garden
-    local _all = PetDetect.listBackpackPets()
+    -- v30.9: hitung cur langsung dari Backpack+Character (paling akurat, real-time)
     local cur = 0
-    for _, p in ipairs(_all) do if p.inBackpack then cur = cur + 1 end end
+    for _, holder in ipairs({player:FindFirstChild("Backpack"), player.Character}) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") and t:GetAttribute("PET_UUID") then cur = cur + 1 end
+            end
+        end
+    end
     local maxPets = getMaxPets()
     if not maxPets or maxPets <= 0 then maxPets = 230 end
     -- cooldown stlh sell: abaikan notif lama (yg blm hilang) biar gak stuck di Seal
