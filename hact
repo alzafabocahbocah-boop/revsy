@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v32.1  ══════════════════════════
+-- ══════════════════════════  HACT  v32.2  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v32.1: skip clearGarden saat trade egg, pet tim gak keluar masuk   ║
+-- ║  v32.2: auto decline trade kalau lawan gak nambah pet dalam 30s     ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v32.1"
+local VERSION = "v32.2"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2584,10 +2584,101 @@ do
                                     _G.__hactDbgAcc = ("ACC:ACCEPT [%d]"):format(math.floor(tick()%1000))
                                     pcall(function() respondRE:FireServer(AutoAcc.lastTradeID, true) end)
                                     print("[HactTelur] auto-accept trade masuk")
+                                    local acceptedTradeID = AutoAcc.lastTradeID
                                     task.spawn(function()
                                         for i = 1, 8 do
                                             if not AutoAcc.trade then break end
                                             autoAcceptTrade(); task.wait(0.5)
+                                        end
+                                    end)
+                                    -- v32.2: auto-decline kalau lawan gak nambah pet dalam 30s
+                                    task.spawn(function()
+                                        local deadline = tick() + 30
+                                        local opponentAdded = false
+                                        while tick() < deadline do
+                                            task.wait(1)
+                                            -- cek window masih terbuka
+                                            local pg2 = player:FindFirstChild("PlayerGui")
+                                            local tui2 = pg2 and pg2:FindFirstChild("TradingUI")
+                                            local lt2 = tui2 and tui2:FindFirstChild("LiveTrade")
+                                            if not (lt2 and lt2.Visible and tui2.Enabled) then
+                                                -- window udah tutup, gak perlu decline
+                                                return
+                                            end
+                                            -- scan LiveTrade cari slot item LAWAN
+                                            -- struktur umum: LiveTrade > [frame kiri=kita, frame kanan=lawan]
+                                            -- cari frame yg bukan milik kita (username/displayname beda)
+                                            local myName = player.Name:lower()
+                                            local myDisp = (player.DisplayName or ""):lower()
+                                            local itemCount = 0
+                                            pcall(function()
+                                                -- scan semua descendant, cari ImageLabel/Frame yg merupakan slot pet lawan
+                                                -- deteksi: cari container dengan nama mengandung "other","them","opponent","right","player2"
+                                                -- atau label yg namanya mengandung angka item count lawan
+                                                for _, d in ipairs(lt2:GetDescendants()) do
+                                                    local dn = d.Name:lower()
+                                                    -- cari label "X Items" atau "X/Y" di sisi lawan
+                                                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible then
+                                                        local txt = d.Text or ""
+                                                        -- skip kalau nama parent mengandung nama kita
+                                                        local parentName = (d.Parent and d.Parent.Name or ""):lower()
+                                                        local isOurSide = parentName:find(myName) or parentName:find(myDisp)
+                                                            or dn:find(myName) or dn:find(myDisp)
+                                                        -- slot item lawan: cari ImageLabel dengan PET_UUID attribute (pet icon di slot)
+                                                        -- atau TextLabel yg menampilkan count > 0
+                                                        if not isOurSide then
+                                                            local n = tonumber(txt:match("^%s*(%d+)%s*$"))
+                                                            if n and n > 0 then itemCount = itemCount + n end
+                                                        end
+                                                    end
+                                                    -- cari ImageLabel dengan attribute PET_UUID (slot pet aktual)
+                                                    if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+                                                        local uuid = d:GetAttribute("PET_UUID")
+                                                        if uuid then
+                                                            -- cek bukan dari sisi kita
+                                                            local anc = d.Parent
+                                                            local isOurs = false
+                                                            for _ = 1, 5 do
+                                                                if not anc then break end
+                                                                local an = anc.Name:lower()
+                                                                if an:find(myName) or an:find(myDisp) or an:find("myside") or an:find("myitem") or an:find("player1") then
+                                                                    isOurs = true; break
+                                                                end
+                                                                anc = anc.Parent
+                                                            end
+                                                            if not isOurs then itemCount = itemCount + 1 end
+                                                        end
+                                                    end
+                                                end
+                                            end)
+                                            if itemCount > 0 then
+                                                opponentAdded = true
+                                                _G.__hactDbgAcc = ("ACC:OPP-ITEM=%d OK [%d]"):format(itemCount, math.floor(tick()%1000))
+                                                return  -- lawan udah nambah pet, cancel timer
+                                            end
+                                        end
+                                        -- 30s habis, lawan belum nambah pet -> decline
+                                        if not opponentAdded then
+                                            local pg2 = player:FindFirstChild("PlayerGui")
+                                            local tui2 = pg2 and pg2:FindFirstChild("TradingUI")
+                                            local lt2 = tui2 and tui2:FindFirstChild("LiveTrade")
+                                            if lt2 and lt2.Visible and tui2.Enabled then
+                                                pcall(function() respondRE:FireServer(acceptedTradeID, false) end)
+                                                _G.__hactDbgAcc = ("ACC:DECLINE-30s [%d]"):format(math.floor(tick()%1000))
+                                                print("[HactTelur] auto-decline: lawan gak nambah pet dalam 30s")
+                                                -- klik tombol Decline di UI juga buat fallback
+                                                pcall(function()
+                                                    if not lt2 then return end
+                                                    for _, d in ipairs(lt2:GetDescendants()) do
+                                                        if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                                                            local t = ((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                                                            if t:find("decline") or t:find("cancel") or t:find("batal") or t:find("tolak") then
+                                                                tekan(d)
+                                                            end
+                                                        end
+                                                    end
+                                                end)
+                                            end
                                         end
                                     end)
                                 end
