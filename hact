@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v28.1  ══════════════════════════
+-- ══════════════════════════  HACT  v28.2  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
+-- ║  v28.2: STOP langsung (task.wait panjang diganti loop pendek)        ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v28.1"
+local VERSION = "v28.2"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -3588,6 +3588,7 @@ local function waitTeamInGarden(teamName, timeout)
                 if not want[u] then autoUnequip(u); task.wait(0.08) end
             end
         end
+        if not globalRunning then return false end  -- v28.2: STOP langsung
         task.wait(0.3)
         waited = waited + 0.3
     end
@@ -3777,6 +3778,7 @@ local function hatchAllEggs()
     -- v27.119: pas TRADE atau JEDA (30s abis trade) -> JANGAN hatch (bener-bener stop, samain pill). Ini
     -- gate UTAMA aksi netas -> dulu cuma equip telur yg di-hold, tapi hatchAllEggs tetep netas pas jeda.
     if Auto.giftBusy or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then return 0 end
+    if not globalRunning then return 0 end  -- v28.2: STOP langsung, jangan hatch
     local eggBefore = totalEggNow()  -- egg sebelum hatch
     local eggs = getReadyEggs()
     local n = 0
@@ -4674,7 +4676,8 @@ local function automationLoop()
                     task.wait(3)
                 else
                     print("[HactTelur] tim Koi LENGKAP ("..countGardenPets().."), tunggu "..hd.." detik...")
-                    task.wait(hd)  -- jeda biar skill Koi bener-bener aktif (bisa diatur di Config)
+                    do local t0=tick() while globalRunning and (tick()-t0)<hd do task.wait(0.2) end end  -- v28.2: interruptible
+                    if not globalRunning then equipTeam("Reduce Tim") break end
                     print("[HactTelur] hatch all!")
                     hatchAllEggs()
                     task.wait(2)
@@ -4697,7 +4700,8 @@ local function automationLoop()
                     task.wait(3)  -- kasih waktu egg sisa ready / Koi CD selesai
                 else
                     print("[HactTelur] Koi LENGKAP ("..countGardenPets().."), tunggu 6 detik...")
-                    task.wait(6)
+                    do local t0=tick() while globalRunning and (tick()-t0)<6 do task.wait(0.2) end end  -- v28.2: interruptible
+                    if not globalRunning then equipTeam("Reduce Tim") break end
                     hatchAllEggs()
                     task.wait(2)
                     equipTeam("Reduce Tim")
