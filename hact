@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v31.2  ══════════════════════════
+-- ══════════════════════════  HACT  v31.3  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v31.2: cur hitung backpack+garden, pakai countTotalPets()        ║
+-- ║  v31.3: countTotalPets dedup UUID backpack+garden                 ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v31.2"
+local VERSION = "v31.3"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -4195,17 +4195,54 @@ local function backpackLimitNotif()
     end)
     return found
 end
--- v31.2: hitung total pet milik kita: backpack + character + garden
+-- v31.3: hitung total pet milik kita: backpack + character + garden, dedup UUID
 local function countTotalPets()
+    local seen = {}
     local n = 0
+    -- backpack + character
     for _, holder in ipairs({player:FindFirstChild("Backpack"), player.Character}) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
-                if t:IsA("Tool") and t:GetAttribute("PET_UUID") then n = n + 1 end
+                if t:IsA("Tool") then
+                    local u = t:GetAttribute("PET_UUID")
+                    if u then
+                        local uc = tostring(u):gsub("[{}]","")
+                        if not seen[uc] then seen[uc] = true; n = n + 1 end
+                    end
+                end
             end
         end
     end
-    n = n + countGardenPets()
+    -- garden (PetsPhysical) — skip UUID yang sudah ke-count di backpack/character
+    pcall(function()
+        local pp = Workspace:FindFirstChild("PetsPhysical")
+        if not pp then return end
+        local myName = player.Name
+        local myId = tostring(player.UserId)
+        local function ownerMine(d)
+            local cur = d
+            for _ = 1, 6 do
+                if not cur or cur == Workspace then break end
+                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+                if o ~= nil then return (tostring(o) == myName or tostring(o) == myId) end
+                cur = cur.Parent
+            end
+            return nil
+        end
+        for _, m in ipairs(pp:GetDescendants()) do
+            if m:IsA("Model") then
+                local uuid = m:GetAttribute("PET_UUID")
+                local nm = m.Name
+                local key = uuid and tostring(uuid):gsub("[{}]","") or nm
+                if (uuid or (nm:sub(1,1)=="{" and nm:sub(-1)=="}") or (#nm>=30 and nm:match("^[%w%-]+$")))
+                   and not seen[key] and ownerMine(m) ~= false then
+                    seen[key] = true
+                    n = n + 1
+                end
+            end
+        end
+    end)
     return n
 end
 local function isBackpackFull()
