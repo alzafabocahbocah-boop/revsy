@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.32  ══════════════════════════
+-- ══════════════════════════  HACT  v33.33  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -26,6 +26,7 @@
 -- ║  v33.30: skip guard loadDone (_G isolation bikin MY_GEN selalu beda)  ║
 -- ║  v33.31: skip isCurrentGen juga + print trace saveConfig dipanggil    ║
 -- ║  v33.32: setSaveStatus → pushNotifLog (panel bawah), bukan atas kanan  ║
+-- ║  v33.33: setSaveStatus tulis langsung ke _G.__hactNotifPanel + buf     ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -305,7 +306,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.32"
+local VERSION = "v33.33"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -9339,8 +9340,16 @@ end)
 local function setSaveStatus(msg)
     shared.__hactSaveStatus = msg  -- v33.26: shared[] bypass _G isolation
     _G.__hactDbgSave = msg         -- fallback
-    -- v33.32: tulis ke notifPanel bawah (yg lebar), bukan dbgLbl atas kanan
-    local pn = _G.__hactPushNotifLog; if pn then pcall(pn, "SAVE", msg) end
+    -- v33.32: tulis ke notifPanel bawah langsung + via pushNotifLog
+    local np = _G.__hactNotifPanel
+    if np then
+        local buf = _G.__hactNotifLog or {}
+        local t = os.date("%H:%M:%S")
+        table.insert(buf, ("[%s] SAVE: %s"):format(t, msg))
+        if #buf > 12 then table.remove(buf, 1) end
+        _G.__hactNotifLog = buf
+        pcall(function() np.Text = ("── "..VERSION.." ──\n")..table.concat(buf, "\n") end)
+    end
 end
 local SAVE_FILE = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
 _G.__hactSaveFile = SAVE_FILE  -- v33.27: expose buat render loop
