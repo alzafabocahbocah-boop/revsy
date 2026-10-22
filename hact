@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.42  ══════════════════════════
+-- ══════════════════════════  HACT  v33.43  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -28,7 +28,7 @@
 -- ║  v33.32: setSaveStatus → pushNotifLog (panel bawah), bukan atas kanan  ║
 -- ║  v33.33: setSaveStatus tulis langsung ke _G.__hactNotifPanel + buf     ║
 -- ║  v33.38: shared.__hactNotifPanel bypass _G isolation di setSaveStatus  ║
--- ║  v33.42: rawset/rawget _G.__hactUI bypass upvalue scope limit executor  ║
+-- ║  v33.43: _G.__hactDbgLbl simpan saat panel dibuat; diag pakai _G vars    ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.42"
+local VERSION = "v33.43"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1416,8 +1416,7 @@ corner(notifPanel, 4)
 _G.__hactNotifLog = {}   -- circular buffer, max 12 entri
 _G.__hactNotifPanel = notifPanel
 shared.__hactNotifPanel = notifPanel  -- v33.38: shared[] buat bypass _G isolation
--- v33.42: simpan kedua panel ke rawget(_G) table biar bisa diakses jauh di bawah
-rawset(_G, "__hactUI", {dbg=dbgLbl, notif=notifPanel})
+_G.__hactDbgLbl = dbgLbl  -- v33.43: simpan ke _G biar bisa diakses dari mana saja
 local function pushNotifLog(tag, msg)
     local t = os.date("%H:%M:%S")
     local line = ("[%s] %s: %s"):format(t, tag, msg)
@@ -9569,18 +9568,15 @@ if not _loadOk then setSaveStatus("📂 LOAD ERR: "..tostring(_loadErr)) end
 -- jadi flag lama gak kepake -> save dini ke-block sampai load gen baru kelar.
 _G.HactTelurLoadDoneGen = MY_GEN
 print("[HactTelur] load selesai (gen "..MY_GEN.."), save aktif")
--- v33.42: tulis diagnostik via rawget(_G,"__hactUI") (bypass upvalue scope limit)
+-- v33.43: tulis diagnostik via _G.__hactNotifPanel + _G.__hactDbgLbl
 do
-    local ui = rawget(_G, "__hactUI")
     local wf = writefile and "OK" or "NIL"
     local rf = readfile and "OK" or "NIL"
     local inf = isfile and "OK" or "NIL"
     local hasFile = (isfile and isfile(SAVE_FILE)) and "ADA" or "KOSONG"
     local msg = "wf="..wf.." rf="..rf.." isf="..inf.."\nfile="..hasFile
-    if ui then
-        pcall(function() ui.dbg.Text = msg end)
-        pcall(function() ui.notif.Text = ("── "..VERSION.." ──\n"..msg.."\n"..SAVE_FILE) end)
-    end
+    pcall(function() _G.__hactDbgLbl.Text = msg end)
+    pcall(function() _G.__hactNotifPanel.Text = ("── "..VERSION.." ──\n"..msg.."\n"..SAVE_FILE) end)
 end
 -- refresh tampilan Config (egg checklist + sell rule) setelah load
 task.spawn(function()
