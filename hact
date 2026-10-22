@@ -11,6 +11,8 @@
 -- ║  v33.16: debug info fase HACT di dbgLbl (reduce/hatch/nunggu/jeda)    ║
 -- ║  v33.17: fix dbgLbl — pisah __hactDbgExtra (fase) vs __hactDbgStatus  ║
 -- ║  v33.18: dbgLbl tampil gr=globalRunning + "loop idle" kalau extra kosong║
+-- ║  v33.19: fix gr= baca _G.__hactGlobalRunning (closure lama gak bisa    ║
+-- ║          baca local globalRunning yg deklarasi di bawahnya)             ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -290,7 +292,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.18"
+local VERSION = "v33.19"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1423,7 +1425,7 @@ task.spawn(function()
                 local fps = _G.__ZenxFps or 0
                 local gcNext = math.max(0, math.ceil(GC_TTL - (tick() - _gcDumpTime)))
                 local gcLine = ("%s fps=%d next=%ds"):format(_gcDbg, fps, gcNext)
-                local gr = tostring(globalRunning)
+                local gr = tostring(_G.__hactGlobalRunning)
                 local fase = extra ~= "" and extra or ("loop idle | gr="..gr)
                 _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, acc, snap, gcLine)
             end
@@ -3531,6 +3533,7 @@ local gStopBtn = mk("TextButton", {
 corner(gStopBtn, 8); stroke(gStopBtn, C.border, 1)
 globalSetRunning = function(on)
     globalRunning = on
+    _G.__hactGlobalRunning = on  -- expose buat dbgLbl (local var gak bisa dibaca closure lama)
     gStartBtn.Text = on and "⚡ RUNNING." or "START"
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
         if teamData[tn] then teamData[tn].running = on end
