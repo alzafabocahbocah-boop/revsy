@@ -1,6 +1,7 @@
--- ══════════════════════════  HACT  v33.7  ══════════════════════════
+-- ══════════════════════════  HACT  v33.8  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v33.7: tambah debug log TEB kapan giftBusy di-set/reset Trade Egg  ║
+-- ║  v33.8: cek snapUuids setelah task.wait(5) — kalau sudah kosong      ║
+-- ║         jangan kirim sendReq (trade ticket kosong → window nyangkut) ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +281,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.7"
+local VERSION = "v33.8"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -8678,6 +8679,23 @@ end)()  -- tutup IIFE TAB TRADE
                                                 print(("[TradeEgg] v27.215 sendReq 1x -> addItem %d pet -> %s"):format(#batch, tPlr2.Name))
                                                 -- jeda 5s sebelum tiap send ticket
                                                 task.wait(5)
+                                                -- v33.8: cek ulang snapUuids masih ada yg di backpack setelah jeda
+                                                -- (selama wait, bisa aja semua sudah terkirim oleh batch sebelumnya)
+                                                local stillHas = false
+                                                local bp3c = player:FindFirstChild("Backpack")
+                                                if bp3c then
+                                                    for _, t3 in ipairs(bp3c:GetChildren()) do
+                                                        if t3:IsA("Tool") then
+                                                            local u3 = t3:GetAttribute("PET_UUID")
+                                                            local uc3 = u3 and tostring(u3):gsub("[{}]","")
+                                                            if uc3 and snapUuids[uc3] then stillHas = true; break end
+                                                        end
+                                                    end
+                                                end
+                                                if not stillHas then
+                                                    print("[TradeEgg] snap sudah kosong setelah jeda, skip sendReq")
+                                                    break
+                                                end
                                                 -- pegang ticket dulu
                                                 pcall(holdTradingTicket)
                                                 -- v27.215: 1 sendReq → addItem semua UUID batch sekaligus
