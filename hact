@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.58  ══════════════════════════
+-- ══════════════════════════  HACT  v33.59  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.58"
+local VERSION = "v33.59"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -4269,7 +4269,7 @@ local function getGameData()
     end)
     -- kalau ATTR sudah dapat maxPets, skip semua scan lain (paling akurat)
     if d.maxPets then
-        if _G.__hactPushNotifLog then
+        if _G.__hactPushNotifLog and not shared.__hactDbgMode then
             _G.__hactPushNotifLog("MAX", ("max=%d src=%s"):format(d.maxPets, d_src))
         end
         _gameDataCache = d; _gameDataTime = tick()
@@ -4355,7 +4355,7 @@ local function getGameData()
         end)
     end
     -- v30.5: log sumber max
-    if _G.__hactPushNotifLog and d.maxPets then
+    if _G.__hactPushNotifLog and d.maxPets and not shared.__hactDbgMode then
         _G.__hactPushNotifLog("MAX", ("max=%d src=%s"):format(d.maxPets, d_src))
     end
     _gameDataCache = d; _gameDataTime = tick()
@@ -9532,23 +9532,14 @@ _G.HactTelurSave = saveConfig
 shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD running..."
 local _loadOk, _loadErr = pcall(loadConfig)
 if not _loadOk then shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD ERR: "..tostring(_loadErr) end
--- v33.58: debug langsung set .Text via shared.__hactNotifPanel (bypass _G isolation)
-task.spawn(function()
-    task.wait(3)
-    local panel = shared.__hactNotifPanel
-    local wf = writefile and "OK" or "NIL"
-    local rf = readfile and "OK" or "NIL"
-    local isf = isfile and "OK" or "NIL"
-    local wfTest = writefile and (pcall(function() writefile("hact_dbg.txt","ok") end) and "OK" or "ERR") or "SKIP"
-    local saveOk, saveErr = false, "NIL"
-    if config.__save then
-        saveOk, saveErr = pcall(config.__save)
-        saveErr = saveOk and "OK" or tostring(saveErr):sub(1,30)
-    end
-    local msg = "── DBG "..VERSION.." ──\nwf="..wf.." rf="..rf.." isf="..isf.."\nwfTest="..wfTest.." save="..saveErr
-    print("[HactTelur] "..msg)
-    if panel then panel.Text = msg end
-end)
+-- v33.59: debug di main flow, pause MAX via shared.__hactDbgMode
+shared.__hactDbgMode = true
+shared.__hactPendingNotif = "DBG "..VERSION
+    .."\nwf="..(writefile and "OK" or "NIL")
+    .." rf="..(readfile and "OK" or "NIL")
+    .." isf="..(isfile and "OK" or "NIL")
+    .."\nsave="..(config.__save and (pcall(config.__save) and "OK" or "ERR") or "NIL")
+task.spawn(function() task.wait(10) shared.__hactDbgMode = false end)
 -- v27.16: tandai load selesai UNTUK GEN INI. save baru boleh jalan kalau
 -- _G.HactTelurLoadDoneGen == MY_GEN (instance ini). re-exec tanpa rejoin = gen baru,
 -- jadi flag lama gak kepake -> save dini ke-block sampai load gen baru kelar.
