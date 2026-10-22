@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.57  ══════════════════════════
+-- ══════════════════════════  HACT  v33.58  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.57"
+local VERSION = "v33.58"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -9532,19 +9532,22 @@ _G.HactTelurSave = saveConfig
 shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD running..."
 local _loadOk, _loadErr = pcall(loadConfig)
 if not _loadOk then shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD ERR: "..tostring(_loadErr) end
--- v33.57: debug via pushNotifLog (masuk ke log buffer, gak ketimpa)
+-- v33.58: debug langsung set .Text via shared.__hactNotifPanel (bypass _G isolation)
 task.spawn(function()
     task.wait(3)
-    local pnl = _G.__hactPushNotifLog
-    if pnl then
-        pnl("DBG", "wf="..(writefile and "OK" or "NIL").." rf="..(readfile and "OK" or "NIL").." isf="..(isfile and "OK" or "NIL"))
-        local wok = writefile and pcall(function() writefile("hact_dbg.txt","ok") end) or false
-        pnl("DBG", "wfTest="..(writefile and (wok and "OK" or "GAGAL") or "SKIP"))
-        local sok = config.__save and pcall(config.__save) or false
-        pnl("DBG", "save="..(config.__save and (sok and "OK" or "ERR") or "NIL"))
-    else
-        print("[HactTelur] DBG: pushNotifLog NIL")
+    local panel = shared.__hactNotifPanel
+    local wf = writefile and "OK" or "NIL"
+    local rf = readfile and "OK" or "NIL"
+    local isf = isfile and "OK" or "NIL"
+    local wfTest = writefile and (pcall(function() writefile("hact_dbg.txt","ok") end) and "OK" or "ERR") or "SKIP"
+    local saveOk, saveErr = false, "NIL"
+    if config.__save then
+        saveOk, saveErr = pcall(config.__save)
+        saveErr = saveOk and "OK" or tostring(saveErr):sub(1,30)
     end
+    local msg = "── DBG "..VERSION.." ──\nwf="..wf.." rf="..rf.." isf="..isf.."\nwfTest="..wfTest.." save="..saveErr
+    print("[HactTelur] "..msg)
+    if panel then panel.Text = msg end
 end)
 -- v27.16: tandai load selesai UNTUK GEN INI. save baru boleh jalan kalau
 -- _G.HactTelurLoadDoneGen == MY_GEN (instance ini). re-exec tanpa rejoin = gen baru,
