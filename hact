@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.25  ══════════════════════════
+-- ══════════════════════════  HACT  v33.26  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -20,6 +20,7 @@
 -- ║  v33.23: debug loadConfig pcall error tampil di dbgSave               ║
 -- ║  v33.24: fix save:? — set __hactDbgSave di semua exit point save/load ║
 -- ║  v33.25: fix _G isolation — simpan save status di StringValue Roblox  ║
+-- ║  v33.26: revert StringValue (crash executor); pakai shared[] instead  ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -299,7 +300,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.25"
+local VERSION = "v33.26"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1391,12 +1392,8 @@ local dbgLbl = mk("TextLabel", {
     TextWrapped = true, Parent = pillGui })
 corner(dbgLbl, 4)
 _G.__hactDbgLbl = dbgLbl
--- v33.25: SaveStatus StringValue di dalam dbgLbl — bisa dibaca dari semua coroutine/closure
-local _saveStatusVal = Instance.new("StringValue")
-_saveStatusVal.Name = "HactSaveStatus"
-_saveStatusVal.Value = "⏳ init..."
-_saveStatusVal.Parent = dbgLbl
-_G.__hactSaveStatusVal = _saveStatusVal
+-- v33.26: pakai shared[] buat bypass _G isolation antar coroutine
+shared.__hactSaveStatus = "⏳ init..."
 -- v28.7: panel notif terpisah di bawah dbgLbl — tampil semua notif dari server (Notification + TradeEvents)
 -- posisi Y mulai setelah dbgLbl (50 + 108 + 6 = 164), tinggi 200px buat ~10 baris
 local notifPanel = mk("TextLabel", {
@@ -1441,8 +1438,7 @@ task.spawn(function()
                 local gcLine = ("%s fps=%d next=%ds"):format(_gcDbg, fps, gcNext)
                 local gr = tostring(_G.__hactGlobalRunning)
                 local fase = extra ~= "" and extra or ("loop idle | gr="..gr)
-                local _ssv = _G.__hactSaveStatusVal
-                local saveDbg = (_ssv and _ssv.Value) or (_G.__hactDbgSave or "")  -- v33.25: baca StringValue dulu
+                local saveDbg = (shared.__hactSaveStatus) or (_G.__hactDbgSave or "")  -- v33.26: shared[] bypass _G isolation
                 _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, gcLine, saveDbg)
             end
         end)
@@ -9337,10 +9333,9 @@ end)
 -- ============ SAVE / LOAD CONFIG (biar gak pilih ulang pas rejoin) ============
 -- v33.25: helper set save status — tulis ke StringValue (bypass _G isolation) + _G fallback
 local function setSaveStatus(msg)
-    _G.__hactDbgSave = msg  -- fallback kalau StringValue belum ada
-    local ssv = _G.__hactSaveStatusVal
-    if ssv then ssv.Value = msg end
-    local _d = _G.__hactDbgLbl; if _d then _d.Text = msg end  -- langsung ke label juga
+    shared.__hactSaveStatus = msg  -- v33.26: shared[] bypass _G isolation
+    _G.__hactDbgSave = msg         -- fallback
+    local _d = _G.__hactDbgLbl; if _d then _d.Text = msg end
 end
 local SAVE_FILE = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
 local function saveConfig()
