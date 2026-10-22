@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v32.9  ══════════════════════════
+-- ══════════════════════════  HACT  v33.0  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v32.9: fix getGameData — player Attribute dulu sebelum GC scan      ║
+-- ║  v33.0: TRADE EGG Night Egg pakai gift, bukan trade ticket           ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v32.9"
+local VERSION = "v33.0"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -8578,11 +8578,13 @@ end)()  -- tutup IIFE TAB TRADE
                                     -- v27.194: pola up6kg — sendReq+addItem per UUID langsung, gak pakai
                                     -- tradePetsToTarget (yg punya 10s timeout → berhenti setelah 8s).
                                     -- kirim terus sampai semua pet sell dari snapUuids habis dari backpack.
-                                    if not TradeSys.ensure() then
+                                    -- v33.0: kalau preset Night Egg → pakai gift (gak perlu trade ticket)
+                                    local useGift = (teEggSel == "Night Egg")
+                                    if not useGift and not TradeSys.ensure() then
                                         teStatL.Text = "ERR: trade remote nil"
                                         print("[TradeEgg] trade remote nil, abort")
                                     else
-                                    -- v27.202: unfav → cek ulang → repeat sampai 0 yang fav, baru send ticket
+                                    -- v27.202: unfav → cek ulang → repeat sampai 0 yang fav, baru send
                                     teStatL.Text = "unfav pet sell..."
                                     do
                                         for attempt = 1, 10 do
@@ -8617,7 +8619,7 @@ end)()  -- tutup IIFE TAB TRADE
                                                     local uuid = t:GetAttribute("PET_UUID")
                                                     local uclean = uuid and tostring(uuid):gsub("[{}]","")
                                                     if uclean and snapUuids[uclean] then
-                                                        petTools[#petTools+1] = uclean
+                                                        petTools[#petTools+1] = {uuid=uclean, tool=t}
                                                     end
                                                 end
                                             end
@@ -8643,31 +8645,47 @@ end)()  -- tutup IIFE TAB TRADE
                                                 teStatL.Text = ("target %s sudah %d/%d, skip"):format(tPlr2.Name, teSentTotal[tIdx] or 0, maxForThis)
                                                 task.wait(0.2)
                                             else
-                                                -- ambil max 12 pet (limit per trade)
-                                                local batch = {}
-                                                for bi = 1, math.min(12, #petTools) do
-                                                    batch[#batch+1] = petTools[bi]
-                                                end
-                                                -- v28.9: progress terkirim/total snapshot
                                                 local sentSoFar = snapCount - #petTools
                                                 teStatL.Text = ("→ %s | %d/%d pet..."):format(tPlr2.Name, sentSoFar, snapCount)
-                                                print(("[TradeEgg] v27.215 sendReq 1x -> addItem %d pet -> %s"):format(#batch, tPlr2.Name))
-                                                -- jeda 5s sebelum tiap send ticket
-                                                task.wait(5)
-                                                -- pegang ticket dulu
-                                                pcall(holdTradingTicket)
-                                                -- v27.215: 1 sendReq → addItem semua UUID batch sekaligus
                                                 local goneBefore = countGone()
-                                                _G.__hactSending = true; _G.__hactPetsAdded = false
-                                                pcall(function() TradeSys.sendReqRE:FireServer(tPlr2) end)
-                                                task.wait(0.1)
-                                                for _, uclean in ipairs(batch) do
-                                                    if not teRunning then break end
-                                                    _G.__hactPetsAdded = true
-                                                    pcall(function() TradeSys.addItemRE:FireServer("Pet", "{"..uclean.."}") end)
-                                                    task.wait(0.15)
+                                                if useGift then
+                                                    -- v33.0: Night Egg — gift satu per satu (gak perlu trade ticket)
+                                                    local char2 = player.Character
+                                                    local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
+                                                    if hum2 then pcall(function() hum2:UnequipTools() end); task.wait(0.1) end
+                                                    for _, pt in ipairs(petTools) do
+                                                        if not teRunning then break end
+                                                        -- re-lookup tool (mungkin sudah stale)
+                                                        local freshTool = bp2 and bp2:FindFirstChild(pt.tool.Name) or pt.tool
+                                                        if freshTool and freshTool.Parent then
+                                                            giftPetToTarget(tPlr2, freshTool)
+                                                            task.wait(0.1)
+                                                        end
+                                                    end
+                                                    print(("[TradeEgg] gift Night Egg batch -> %s"):format(tPlr2.Name))
+                                                else
+                                                    -- trade ticket (preset lain)
+                                                    local batch = {}
+                                                    for bi = 1, math.min(12, #petTools) do
+                                                        batch[#batch+1] = petTools[bi].uuid
+                                                    end
+                                                    print(("[TradeEgg] v27.215 sendReq 1x -> addItem %d pet -> %s"):format(#batch, tPlr2.Name))
+                                                    -- jeda 5s sebelum tiap send ticket
+                                                    task.wait(5)
+                                                    -- pegang ticket dulu
+                                                    pcall(holdTradingTicket)
+                                                    -- v27.215: 1 sendReq → addItem semua UUID batch sekaligus
+                                                    _G.__hactSending = true; _G.__hactPetsAdded = false
+                                                    pcall(function() TradeSys.sendReqRE:FireServer(tPlr2) end)
+                                                    task.wait(0.1)
+                                                    for _, uclean in ipairs(batch) do
+                                                        if not teRunning then break end
+                                                        _G.__hactPetsAdded = true
+                                                        pcall(function() TradeSys.addItemRE:FireServer("Pet", "{"..uclean.."}") end)
+                                                        task.wait(0.15)
+                                                    end
+                                                    _G.__hactSending = false
                                                 end
-                                                _G.__hactSending = false
                                                 -- update sent count
                                                 local addedThisRound = countGone() - goneBefore
                                                 teSentTotal[tIdx] = teSentTotal[tIdx] + addedThisRound
@@ -8675,7 +8693,7 @@ end)()  -- tutup IIFE TAB TRADE
                                             end
                                         end
                                     end
-                                    end  -- TradeSys.ensure
+                                    end  -- TradeSys.ensure / useGift
                                     local names2 = {}
                                     for ti, p in ipairs(activeTgts) do
                                         local max = teTargetCount[ti] or 0
