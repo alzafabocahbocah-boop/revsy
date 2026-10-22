@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.12  ══════════════════════════
+-- ══════════════════════════  HACT  v33.13  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -6,6 +6,8 @@
 -- ║          file; auto-restore saat rejoin via teDoStart()               ║
 -- ║  v33.11: Trade Egg addItem — fire 3x per item + tunggu window 0.5s    ║
 -- ║  v33.12: EggDetect.scan() tiap loop iter biar eggHabis akurat         ║
+-- ║  v33.13: Kalau egg habis + masih ada egg di garden → skip reduce,     ║
+-- ║          langsung hatch sisa egg biar gak stuck di fase reduce         ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -285,7 +287,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.12"
+local VERSION = "v33.13"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -4998,11 +5000,19 @@ local function automationLoop()
 
         local nowPlaced = countEggPlaced()
 
+        -- v33.13: cek stok egg di inventory buat skip reduce kalau egg habis
+        pcall(function() EggDetect.scan() end)
+        local eggStockNow = 0
+        for _, c in pairs(EggDetect.counts or {}) do eggStockNow = eggStockNow + (tonumber(c) or 0) end
+        -- kalau egg habis + masih ada egg di garden → skip reduce, langsung hatch
+        local skipReduce = (eggStockNow == 0) and (nowPlaced > 0)
+
         if isPausedForGift() then
             -- v16.2: lagi gift/trade (terima/keluar/manual): jangan place/hatch/swap tim
             task.wait(0.4)
-        elseif nowPlaced < target then
+        elseif nowPlaced < target and not skipReduce then
             -- 1) slot belum penuh: terus place sampai 13 (dipanggil tiap iterasi)
+            -- v33.13: dilewati kalau egg habis tapi masih ada egg di garden (skipReduce)
             Auto.eggPhase = "reduce"  -- v26.5: fase reduce -> pencet egg tiap 3s
             equipTeam("Reduce Tim")
             -- v18.7: buang pet salah (bukan tim Reduce) dari garden kalau toggle aktif
