@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.24  ══════════════════════════
+-- ══════════════════════════  HACT  v33.25  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -19,6 +19,7 @@
 -- ║  v33.22: fix gr=nil sebelum START; saveDbg pindah baris atas di label ║
 -- ║  v33.23: debug loadConfig pcall error tampil di dbgSave               ║
 -- ║  v33.24: fix save:? — set __hactDbgSave di semua exit point save/load ║
+-- ║  v33.25: fix _G isolation — simpan save status di StringValue Roblox  ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -298,7 +299,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.24"
+local VERSION = "v33.25"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -990,8 +991,7 @@ pcall(function()
 end)
 -- matiin loop automation lama (kalau script di-run ulang)
 if _G.HactTelurStop then pcall(_G.HactTelurStop) end
-_G.__hactDbgSave = "⏳ init..."  -- v33.24: set awal biar render loop gak nil
-do local _dsl = _G.__hactDbgLbl; if _dsl then _dsl.Text = _G.__hactDbgSave end end
+_G.__hactDbgSave = "⏳ init..."  -- v33.25: fallback awal (sebelum StringValue siap)
 -- v21.0: generation guard — tiap run naikin gen. instance lama (gen beda) berhenti TOTAL
 -- (termasuk loop save), biar gak nimpa file save instance baru dgn config lama.
 _G.HactTelurGen = (_G.HactTelurGen or 0) + 1
@@ -1391,6 +1391,12 @@ local dbgLbl = mk("TextLabel", {
     TextWrapped = true, Parent = pillGui })
 corner(dbgLbl, 4)
 _G.__hactDbgLbl = dbgLbl
+-- v33.25: SaveStatus StringValue di dalam dbgLbl — bisa dibaca dari semua coroutine/closure
+local _saveStatusVal = Instance.new("StringValue")
+_saveStatusVal.Name = "HactSaveStatus"
+_saveStatusVal.Value = "⏳ init..."
+_saveStatusVal.Parent = dbgLbl
+_G.__hactSaveStatusVal = _saveStatusVal
 -- v28.7: panel notif terpisah di bawah dbgLbl — tampil semua notif dari server (Notification + TradeEvents)
 -- posisi Y mulai setelah dbgLbl (50 + 108 + 6 = 164), tinggi 200px buat ~10 baris
 local notifPanel = mk("TextLabel", {
@@ -1435,7 +1441,8 @@ task.spawn(function()
                 local gcLine = ("%s fps=%d next=%ds"):format(_gcDbg, fps, gcNext)
                 local gr = tostring(_G.__hactGlobalRunning)
                 local fase = extra ~= "" and extra or ("loop idle | gr="..gr)
-                local saveDbg = _G.__hactDbgSave or ""  -- v33.24: fallback kosong, bukan "save:?"
+                local _ssv = _G.__hactSaveStatusVal
+                local saveDbg = (_ssv and _ssv.Value) or (_G.__hactDbgSave or "")  -- v33.25: baca StringValue dulu
                 _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, gcLine, saveDbg)
             end
         end)
@@ -9328,18 +9335,24 @@ task.spawn(function()
 end)
 
 -- ============ SAVE / LOAD CONFIG (biar gak pilih ulang pas rejoin) ============
+-- v33.25: helper set save status — tulis ke StringValue (bypass _G isolation) + _G fallback
+local function setSaveStatus(msg)
+    _G.__hactDbgSave = msg  -- fallback kalau StringValue belum ada
+    local ssv = _G.__hactSaveStatusVal
+    if ssv then ssv.Value = msg end
+    local _d = _G.__hactDbgLbl; if _d then _d.Text = msg end  -- langsung ke label juga
+end
 local SAVE_FILE = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
 local function saveConfig()
     -- v33.20 diag: tampil di dbgLbl kenapa skip
-    if not writefile then _G.__hactDbgSave="💾 SAVE SKIP: writefile nil"; do local _d=_G.__hactDbgLbl; if _d then _d.Text=_G.__hactDbgSave end end return end
-    if not isCurrentGen() then _G.__hactDbgSave="💾 SAVE SKIP: gen beda"; do local _d=_G.__hactDbgLbl; if _d then _d.Text=_G.__hactDbgSave end end return end
+    if not writefile then setSaveStatus("💾 SAVE SKIP: writefile nil"); return end
+    if not isCurrentGen() then setSaveStatus("💾 SAVE SKIP: gen beda"); return end
     -- v27.16: guard per-INSTANCE (bukan global). dulu pakai _G.HactTelurLoadDone
     -- yg persist antar execute -> pas exe ulang TANPA rejoin, flag lama masih true,
     -- save dini instance baru (UI default false) nimpa file sebelum load. sekarang
     -- pakai local loadDone (fresh tiap execute) + cek isCurrentGen.
     if not (isCurrentGen() and _G.HactTelurLoadDoneGen == MY_GEN) then
-        _G.__hactDbgSave = "💾 SAVE SKIP: loadDone="..tostring(_G.HactTelurLoadDoneGen).."/"..tostring(MY_GEN)
-        local _dsl = _G.__hactDbgLbl; if _dsl then _dsl.Text = _G.__hactDbgSave end
+        setSaveStatus("💾 SAVE SKIP: loadDone="..tostring(_G.HactTelurLoadDoneGen).."/"..tostring(MY_GEN))
         return
     end
     local data = {
@@ -9402,20 +9415,18 @@ local function saveConfig()
     local ok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
     if ok and json then
         local wok = pcall(function() writefile(SAVE_FILE, json) end)
-        _G.__hactDbgSave = "💾 SAVE "..(wok and "OK ✓" or "GAGAL writefile err").." -> "..SAVE_FILE
-        local _dsl = _G.__hactDbgLbl; if _dsl then _dsl.Text = _G.__hactDbgSave end
+        setSaveStatus("💾 SAVE "..(wok and "OK ✓" or "GAGAL writefile err").." -> "..SAVE_FILE)
     else
-        _G.__hactDbgSave = "💾 SAVE GAGAL: JSONEncode err"
-        local _dsl = _G.__hactDbgLbl; if _dsl then _dsl.Text = _G.__hactDbgSave end
+        setSaveStatus("💾 SAVE GAGAL: JSONEncode err")
     end
 end
 local function loadConfig()
-    if not (readfile and isfile) then _G.__hactDbgSave="📂 LOAD SKIP: readfile/isfile nil"; do local _d=_G.__hactDbgLbl; if _d then _d.Text=_G.__hactDbgSave end end return end
-    if not isfile(SAVE_FILE) then _G.__hactDbgSave="📂 LOAD: file belum ada (first run)"; do local _d=_G.__hactDbgLbl; if _d then _d.Text=_G.__hactDbgSave end end return end
+    if not (readfile and isfile) then setSaveStatus("📂 LOAD SKIP: readfile/isfile nil"); return end
+    if not isfile(SAVE_FILE) then setSaveStatus("📂 LOAD: file belum ada (first run)"); return end
     local ok, raw = pcall(readfile, SAVE_FILE)
-    if not ok or not raw then _G.__hactDbgSave="📂 LOAD SKIP: readfile gagal"; do local _d=_G.__hactDbgLbl; if _d then _d.Text=_G.__hactDbgSave end end return end
+    if not ok or not raw then setSaveStatus("📂 LOAD SKIP: readfile gagal"); return end
     local ok2, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
-    if not ok2 or type(data) ~= "table" then _G.__hactDbgSave="📂 LOAD SKIP: JSON decode gagal"; do local _d=_G.__hactDbgLbl; if _d then _d.Text=_G.__hactDbgSave end end return end
+    if not ok2 or type(data) ~= "table" then setSaveStatus("📂 LOAD SKIP: JSON decode gagal"); return end
     -- restore
     if type(data.eggSelected) == "table" then config.eggSelected = data.eggSelected end
     if type(data.sellRules) == "table" then
@@ -9530,17 +9541,15 @@ local function loadConfig()
         end
     end
     local nEgg = 0; for _ in pairs(config.eggSelected) do nEgg = nEgg + 1 end
-    _G.__hactDbgSave = "📂 LOAD OK ✓ egg="..nEgg.." file="..SAVE_FILE
-    local _dsl = _G.__hactDbgLbl; if _dsl then _dsl.Text = _G.__hactDbgSave end
+    setSaveStatus("📂 LOAD OK ✓ egg="..nEgg.." file="..SAVE_FILE)
     print("[HactTelur] config dimuat dari "..SAVE_FILE)
 end
 -- expose biar bisa dipanggil dari tombol/aksi lain
 _G.HactTelurSave = saveConfig
 -- load saat startup
-_G.__hactDbgSave = "📂 LOAD running..."
-local _dsl0 = _G.__hactDbgLbl; if _dsl0 then _dsl0.Text = _G.__hactDbgSave end
+setSaveStatus("📂 LOAD running...")
 local _loadOk, _loadErr = pcall(loadConfig)
-if not _loadOk then _G.__hactDbgSave = "📂 LOAD ERR: "..tostring(_loadErr); local _dsl0=_G.__hactDbgLbl; if _dsl0 then _dsl0.Text=_G.__hactDbgSave end end
+if not _loadOk then setSaveStatus("📂 LOAD ERR: "..tostring(_loadErr)) end
 -- v27.16: tandai load selesai UNTUK GEN INI. save baru boleh jalan kalau
 -- _G.HactTelurLoadDoneGen == MY_GEN (instance ini). re-exec tanpa rejoin = gen baru,
 -- jadi flag lama gak kepake -> save dini ke-block sampai load gen baru kelar.
