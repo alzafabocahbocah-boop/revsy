@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.59  ══════════════════════════
+-- ══════════════════════════  HACT  v33.60  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.59"
+local VERSION = "v33.60"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -9364,16 +9364,12 @@ end
 local SAVE_FILE = "hact_telur_save_" .. tostring(player.Name) .. ".json"
 _G.__hactSaveFile = SAVE_FILE  -- v33.27: expose buat render loop
 local function saveConfig()
-    print("[HactTelur] saveConfig called wf="..(writefile and "OK" or "NIL"))
-    -- v33.31: skip isCurrentGen (test _G isolation)
-    -- if not isCurrentGen() then setSaveStatus("💾 SAVE SKIP: gen beda"); return end
-    -- v27.16: guard per-INSTANCE (bukan global). dulu pakai _G.HactTelurLoadDone
-    -- yg persist antar execute -> pas exe ulang TANPA rejoin, flag lama masih true,
-    -- save dini instance baru (UI default false) nimpa file sebelum load. sekarang
-    -- pakai local loadDone (fresh tiap execute) + cek isCurrentGen.
-    -- v33.30: skip guard loadDone (isolasi _G bisa bikin MY_GEN != HactTelurLoadDoneGen)
-    -- if not (isCurrentGen() and _G.HactTelurLoadDoneGen == MY_GEN) then return end
-    -- v33.48: data minimal dulu — isolasi field mana yg bikin JSONEncode gagal
+    -- v33.60: verbose debug — tulis status di setiap step ke notifPanel
+    if not writefile then
+        shared.__hactPendingNotif = VERSION.."\n💾 SKIP: writefile=NIL"
+        print("[HactTelur] saveConfig: writefile NIL")
+        return
+    end
     local eggList = {}
     for k, _ in pairs(config.eggSelected or {}) do eggList[#eggList+1] = k end
     local data = {
@@ -9389,15 +9385,15 @@ local function saveConfig()
         autoAccGift = config.autoAccGift,
         autoAccTrade = config.autoAccTrade,
     }
-    print("[HactTelur] SAVE eggSelected="..#eggList.." egg")
-    pcall(function()
-        if not writefile then print("[HactTelur] saveConfig: writefile NIL"); return end
-        local ok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
-        if not ok or not json then print("[HactTelur] saveConfig: JSONEncode GAGAL"); return end
-        local wok = pcall(function() writefile(SAVE_FILE, json) end)
-        print("[HactTelur] saveConfig: writefile "..(wok and "OK" or "GAGAL").." -> "..SAVE_FILE)
-        shared.__hactPendingNotif = "── "..VERSION.." ──\n💾 "..(wok and "SAVE OK ✓" or "SAVE GAGAL").." -> "..SAVE_FILE
-    end)
+    local jok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
+    if not jok or not json then
+        shared.__hactPendingNotif = VERSION.."\n💾 ERR: JSONEncode gagal\n"..tostring(json):sub(1,40)
+        print("[HactTelur] saveConfig: JSONEncode GAGAL")
+        return
+    end
+    local wok, werr = pcall(function() writefile(SAVE_FILE, json) end)
+    shared.__hactPendingNotif = VERSION.."\n💾 "..(wok and "SAVE OK ✓" or "SAVE ERR: "..tostring(werr):sub(1,35))
+    print("[HactTelur] saveConfig: "..(wok and "OK" or "ERR "..tostring(werr)).." -> "..SAVE_FILE)
 end
 config.__save = saveConfig  -- v33.50: bridge biar toggle di atas bisa panggil via config.__save
 local function loadConfig()
