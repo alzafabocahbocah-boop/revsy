@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.47  ══════════════════════════
+-- ══════════════════════════  HACT  v33.48  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -28,7 +28,7 @@
 -- ║  v33.32: setSaveStatus → pushNotifLog (panel bawah), bukan atas kanan  ║
 -- ║  v33.33: setSaveStatus tulis langsung ke _G.__hactNotifPanel + buf     ║
 -- ║  v33.38: shared.__hactNotifPanel bypass _G isolation di setSaveStatus  ║
--- ║  v33.47: ganti SAVE_FILE pakai player.Name (was UserId)                   ║
+-- ║  v33.48: save data minimal (eggSelected+toggles), strip field kompleks      ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.47"
+local VERSION = "v33.48"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -9373,6 +9373,9 @@ local function saveConfig()
     -- pakai local loadDone (fresh tiap execute) + cek isCurrentGen.
     -- v33.30: skip guard loadDone (isolasi _G bisa bikin MY_GEN != HactTelurLoadDoneGen)
     -- if not (isCurrentGen() and _G.HactTelurLoadDoneGen == MY_GEN) then return end
+    -- v33.48: data minimal dulu — isolasi field mana yg bikin JSONEncode gagal
+    local eggList = {}
+    for k, _ in pairs(config.eggSelected or {}) do eggList[#eggList+1] = k end
     local data = {
         eggSelected = config.eggSelected,
         sellRules = config.sellRules,
@@ -9385,51 +9388,8 @@ local function saveConfig()
         autoStart = config.autoStart,
         autoAccGift = config.autoAccGift,
         autoAccTrade = config.autoAccTrade,
-        autoUpdateServer = config.autoUpdateServer,  -- v20.4
-        eggESP = config.eggESP,  -- v20.7
-        trackPetType = config.trackPetType,  -- v22.1
-        webhookUrl = Webhook.url,
-        webhookEnabled = Webhook.enabled,
-        autoBuy = {
-            seed = { on = AutoBuy.seed.on, items = AutoBuy.seed.items },
-            egg  = { on = AutoBuy.egg.on,  items = AutoBuy.egg.items },
-            gear = { on = AutoBuy.gear.on, items = AutoBuy.gear.items },
-        },
-        promptBuy = { on = PromptBuy.on, item = PromptBuy.item, itemId = PromptBuy.itemId, payWith = PromptBuy.payWith },
-        teams = {},
     }
-    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-        local sel = {}
-        if teamData[tn] and teamData[tn].selected then
-            for uuid in pairs(teamData[tn].selected) do sel[#sel+1] = uuid end
-        end
-        data.teams[tn] = {
-            selected = sel,
-            delayEquip = teamData[tn] and teamData[tn].delayEquip or 0,
-            delayUnequip = teamData[tn] and teamData[tn].delayUnequip or 1,
-        }
-    end
-    -- giftCfgs: bikin salinan bersih (buang field runtime _running biar JSON aman)
-    local giftClean = {}
-    if _G.HactTelurGiftCfgs then
-        for i, c in ipairs(_G.HactTelurGiftCfgs) do
-            giftClean[i] = {
-                targets = c.targets or {}, pets = c.pets or {}, muts = c.muts or {},
-                age = c.age or 0, kg = c.kg or 0, method = c.method or "trade",
-                unfavFirst = c.unfavFirst or false, waitFull = c.waitFull or false,
-                minCount = c.minCount or 0,   -- v27.55: threshold min stok (trade nunggu jenis pet >= N)
-            }
-        end
-    end
-    data.giftCfgs = giftClean
-    -- v27.13 DIAG: log nilai toggle yg mau disimpan
-    do
-        local diag = {}
-        for i, c in ipairs(giftClean) do
-            diag[#diag+1] = "G"..i..":unfav="..tostring(c.unfavFirst).." bpfull="..tostring(c.waitFull)
-        end
-        print("[HactTelur] SAVE giftCfgs -> "..table.concat(diag, " "))
-    end
+    print("[HactTelur] SAVE eggSelected="..#eggList.." egg")
     pcall(function()
         if not writefile then print("[HactTelur] saveConfig: writefile NIL"); return end
         local ok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
