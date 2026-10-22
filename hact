@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.33  ══════════════════════════
+-- ══════════════════════════  HACT  v33.34  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -27,6 +27,7 @@
 -- ║  v33.31: skip isCurrentGen juga + print trace saveConfig dipanggil    ║
 -- ║  v33.32: setSaveStatus → pushNotifLog (panel bawah), bukan atas kanan  ║
 -- ║  v33.33: setSaveStatus tulis langsung ke _G.__hactNotifPanel + buf     ║
+-- ║  v33.34: _saveLog upvalue + render loop update notifPanel tiap 0.5s   ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -306,7 +307,9 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.33"
+local VERSION = "v33.34"
+-- v33.34: upvalue buat save trace — bisa diakses setSaveStatus & notifPanel render
+local _saveLog = {"(save log init...)"}  -- circular buffer upvalue, max 8 baris
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1420,8 +1423,9 @@ local function pushNotifLog(tag, msg)
     table.insert(buf, line)
     if #buf > 12 then table.remove(buf, 1) end
     if _G.__hactNotifPanel then
-        -- v29.2: header versi di baris pertama
-        _G.__hactNotifPanel.Text = ("── "..VERSION.." ──\n")..table.concat(buf, "\n")
+        -- v29.2: header versi di baris pertama; v33.34: append _saveLog di bawah
+        local saveSection = #_saveLog > 0 and ("\n── save ──\n"..table.concat(_saveLog, "\n")) or ""
+        _G.__hactNotifPanel.Text = ("── "..VERSION.." ──\n")..table.concat(buf, "\n")..saveSection
     end
 end
 _G.__hactPushNotifLog = pushNotifLog   -- expose buat hook di bawah
@@ -1445,6 +1449,13 @@ task.spawn(function()
                 local gr = tostring(_G.__hactGlobalRunning)
                 local fase = extra ~= "" and extra or ("loop idle | gr="..gr)
                 _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, gcLine)
+            end
+            -- v33.34: update notifPanel dengan _saveLog upvalue
+            if notifPanel and #_saveLog > 0 then
+                local buf = _G.__hactNotifLog or {}
+                local saveSection = "── save ──\n"..table.concat(_saveLog, "\n")
+                notifPanel.Text = ("── "..VERSION.." ──\n")..table.concat(buf, "\n")
+                    ..(#buf > 0 and "\n" or "")..saveSection
             end
         end)
     end
@@ -9340,16 +9351,10 @@ end)
 local function setSaveStatus(msg)
     shared.__hactSaveStatus = msg  -- v33.26: shared[] bypass _G isolation
     _G.__hactDbgSave = msg         -- fallback
-    -- v33.32: tulis ke notifPanel bawah langsung + via pushNotifLog
-    local np = _G.__hactNotifPanel
-    if np then
-        local buf = _G.__hactNotifLog or {}
-        local t = os.date("%H:%M:%S")
-        table.insert(buf, ("[%s] SAVE: %s"):format(t, msg))
-        if #buf > 12 then table.remove(buf, 1) end
-        _G.__hactNotifLog = buf
-        pcall(function() np.Text = ("── "..VERSION.." ──\n")..table.concat(buf, "\n") end)
-    end
+    -- v33.34: tulis ke _saveLog upvalue (pasti accessible, bukan _G)
+    local t = os.date("%H:%M:%S")
+    table.insert(_saveLog, ("[%s] %s"):format(t, msg))
+    if #_saveLog > 8 then table.remove(_saveLog, 1) end
 end
 local SAVE_FILE = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
 _G.__hactSaveFile = SAVE_FILE  -- v33.27: expose buat render loop
