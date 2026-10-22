@@ -22,6 +22,7 @@
 -- ║  v33.25: fix _G isolation — simpan save status di StringValue Roblox  ║
 -- ║  v33.26: revert StringValue (crash executor); pakai shared[] instead  ║
 -- ║  v33.27: render loop cek isfile() langsung — bypass semua isolation   ║
+-- ║  v33.28: SAVE_FILE_EARLY declare di atas sbg upvalue closure fix      ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -301,7 +302,9 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.27"
+local VERSION = "v33.28"
+-- v33.28: declare SAVE_FILE di atas biar bisa dibaca render loop (closure upvalue)
+local SAVE_FILE_EARLY = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1439,12 +1442,11 @@ task.spawn(function()
                 local gcLine = ("%s fps=%d next=%ds"):format(_gcDbg, fps, gcNext)
                 local gr = tostring(_G.__hactGlobalRunning)
                 local fase = extra ~= "" and extra or ("loop idle | gr="..gr)
-                -- v33.27: cek file langsung, bypass semua _G/shared isolation
+                -- v33.28: pakai SAVE_FILE_EARLY (upvalue closure, declare sebelum loop)
                 local saveDbg = ""
                 pcall(function()
-                    local sf = _G.__hactSaveFile
-                    if isfile and sf then
-                        saveDbg = isfile(sf) and ("💾 file OK: "..sf) or "📂 no save file"
+                    if isfile and SAVE_FILE_EARLY then
+                        saveDbg = isfile(SAVE_FILE_EARLY) and ("💾 "..SAVE_FILE_EARLY) or "📂 no save file"
                     end
                 end)
                 if saveDbg == "" then saveDbg = shared.__hactSaveStatus or _G.__hactDbgSave or "" end
