@@ -1,7 +1,7 @@
--- ══════════════════════════  HACT  v33.8  ══════════════════════════
+-- ══════════════════════════  HACT  v33.9  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v33.8: cek snapUuids setelah task.wait(5) — kalau sudah kosong      ║
--- ║         jangan kirim sendReq (trade ticket kosong → window nyangkut) ║
+-- ║  v33.9: Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
+-- ║         pet list (nama, kg, age, uuid) sebelum trade jalan           ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -281,7 +281,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.8"
+local VERSION = "v33.9"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -8768,24 +8768,51 @@ end)()
     local _ttBusy   = false   -- sedang proses trade
     local _ttStopReq = false  -- user minta stop
 
-    -- ===== PANEL =====
+    -- ===== PANEL — v33.9: ScrollingFrame biar gak ketutupan =====
     tradeTimContent = mk("Frame", {
         Size = UDim2.new(1, -141, 1, -45), Position = UDim2.new(0, 141, 0, 45),
         BackgroundTransparency = 1, Visible = false, Parent = main })
-    pad(tradeTimContent, 16)
 
-    local titleL = lbl(tradeTimContent, "TRADE TIM", 15, C.text)
-    titleL.Font = FONT_B
+    -- scroll container utama — semua konten di sini supaya bisa scroll kalau ketutupan
+    local ttScroll = mk("ScrollingFrame", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        ScrollBarThickness = 4,
+        ScrollBarImageColor3 = C.border,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Parent = tradeTimContent })
+    pad(ttScroll, 12)
+    mk("UIListLayout", {
+        Padding = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        FillDirection = Enum.FillDirection.Vertical,
+        Parent = ttScroll })
 
-    local subL = lbl(tradeTimContent, "gift semua pet tim ke 1 akun di server", 11, C.textDim)
+    -- title
+    local titleL = mk("TextLabel", {
+        BackgroundTransparency = 1, Text = "TRADE TIM", Font = FONT_B,
+        TextSize = 30, TextColor3 = C.text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Size = UDim2.new(1, 0, 0, 22), LayoutOrder = 1, Parent = ttScroll })
+
+    local subL = mk("TextLabel", {
+        BackgroundTransparency = 1, Text = "gift semua pet tim ke 1 akun di server",
+        Font = FONT, TextSize = 22, TextColor3 = C.textDim,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Size = UDim2.new(1, 0, 0, 16), LayoutOrder = 2, Parent = ttScroll })
 
     -- ===== PICKER AKUN =====
-    local pickLbl = lbl(tradeTimContent, "Pilih Akun Target:", 12, C.textDim)
+    local pickLbl = mk("TextLabel", {
+        BackgroundTransparency = 1, Text = "Pilih Akun Target:", Font = FONT,
+        TextSize = 24, TextColor3 = C.textDim,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Size = UDim2.new(1, 0, 0, 16), LayoutOrder = 3, Parent = ttScroll })
 
     local pickerFrame = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 140),
+        Size = UDim2.new(1, 0, 0, 110),
         BackgroundColor3 = C.card, BackgroundTransparency = 0.4,
-        BorderSizePixel = 0, Parent = tradeTimContent })
+        BorderSizePixel = 0, LayoutOrder = 4, Parent = ttScroll })
     corner(pickerFrame, 6)
 
     local pickerScroll = mk("ScrollingFrame", {
@@ -8800,19 +8827,54 @@ end)()
         Padding = UDim.new(0, 2),
         Parent = pickerScroll })
 
-    local statusL = lbl(tradeTimContent, "belum mulai", 11, C.textDim)
+    local statusL = mk("TextLabel", {
+        BackgroundTransparency = 1, Text = "belum mulai", Font = FONT,
+        TextSize = 22, TextColor3 = C.textDim,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Size = UDim2.new(1, 0, 0, 16), LayoutOrder = 5, Parent = ttScroll })
 
     -- toggle ON/OFF
     local toggle = mk("TextButton", {
         Size = UDim2.new(1, 0, 0, 36),
         BackgroundColor3 = C.card, BorderSizePixel = 0,
         Text = "OFF", TextColor3 = C.text,
-        Font = FONT_B, TextSize = 13,
-        AutoButtonColor = false, Parent = tradeTimContent })
+        Font = FONT_B, TextSize = 26,
+        AutoButtonColor = false, LayoutOrder = 6, Parent = ttScroll })
     corner(toggle, 6)
 
     -- progress label
-    local progL = lbl(tradeTimContent, "", 10, C.textDim)
+    local progL = mk("TextLabel", {
+        BackgroundTransparency = 1, Text = "", Font = FONT,
+        TextSize = 20, TextColor3 = C.textDim,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Size = UDim2.new(1, 0, 0, 14), LayoutOrder = 7, Parent = ttScroll })
+
+    -- ===== v33.9: PET LIST =====
+    local petListHeader = mk("TextLabel", {
+        BackgroundTransparency = 1, Text = "Pet tim yang akan di-gift:", Font = FONT_B,
+        TextSize = 24, TextColor3 = C.textDim,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Size = UDim2.new(1, 0, 0, 16), LayoutOrder = 8, Parent = ttScroll })
+
+    local petListFrame = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 160),
+        BackgroundColor3 = C.card, BackgroundTransparency = 0.5,
+        BorderSizePixel = 0, LayoutOrder = 9, Parent = ttScroll })
+    corner(petListFrame, 6)
+
+    local petListScroll = mk("ScrollingFrame", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        ScrollBarThickness = 4,
+        ScrollBarImageColor3 = C.border,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Parent = petListFrame })
+    mk("UIListLayout", {
+        Padding = UDim.new(0, 2),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent = petListScroll })
+    pad(petListScroll, 6)
 
     -- ===== HELPER: build picker =====
     local function buildPicker()
@@ -8856,6 +8918,95 @@ end)()
             local noRow = lbl(pickerScroll, "tidak ada pemain lain di server", 11, C.textDim)
         end
         pickerScroll.CanvasSize = UDim2.new(0, 0, 0, h + 4)
+    end
+
+    -- ===== v33.9: REFRESH PET LIST =====
+    local function refreshPetList()
+        -- bersihkan row lama
+        for _, c in ipairs(petListScroll:GetChildren()) do
+            if c:IsA("TextLabel") or c:IsA("Frame") then c:Destroy() end
+        end
+        local uuids = getAllTimUuids()
+        if #uuids == 0 then
+            local noRow = mk("TextLabel", {
+                BackgroundTransparency = 1,
+                Text = "  (tidak ada pet tim dipilih)",
+                Font = FONT, TextSize = 20, TextColor3 = C.textDim,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Size = UDim2.new(1, 0, 0, 20),
+                LayoutOrder = 1, Parent = petListScroll })
+            return
+        end
+        -- build uuidSet untuk lookup
+        local uuidSet = {}
+        for _, u in ipairs(uuids) do uuidSet[u] = true end
+        -- scan backpack — cocokkan dengan uuids tim
+        local found = {}
+        PetDetect.rebuild(true)
+        for _, p in ipairs(PetDetect.listBackpackPets(true)) do
+            local uclean = tostring(p.uuid):gsub("[{}]","")
+            if uuidSet[uclean] then
+                found[#found+1] = p
+                uuidSet[uclean] = nil  -- mark done (hindari duplikat)
+            end
+        end
+        -- pet tim yang ada di backpack → tampilkan dengan detail
+        local lo = 0
+        for _, p in ipairs(found) do
+            lo = lo + 1
+            local nm   = (p.name or "?"):sub(1, 22)
+            local kg   = p.kg   and ("%.1fkg"):format(p.kg)   or "?kg"
+            local age  = p.age  and ("age%d"):format(p.age)   or "age?"
+            local uuid = tostring(p.uuid):gsub("[{}]",""):sub(1, 28)
+            local row = mk("Frame", {
+                Size = UDim2.new(1, -4, 0, 32),
+                BackgroundColor3 = C.panel, BackgroundTransparency = 0.7,
+                BorderSizePixel = 0, LayoutOrder = lo, Parent = petListScroll })
+            corner(row, 4)
+            pad(row, 4)
+            -- nama + stats
+            mk("TextLabel", {
+                BackgroundTransparency = 1,
+                Text = nm .. "  " .. kg .. "  " .. age,
+                Font = FONT_B, TextSize = 21, TextColor3 = C.text,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Size = UDim2.new(1, 0, 0, 14),
+                Position = UDim2.new(0, 4, 0, 2),
+                Parent = row })
+            -- uuid kecil di bawah
+            mk("TextLabel", {
+                BackgroundTransparency = 1,
+                Text = "  " .. uuid,
+                Font = FONT, TextSize = 18, TextColor3 = C.textDim,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Size = UDim2.new(1, 0, 0, 12),
+                Position = UDim2.new(0, 4, 0, 18),
+                Parent = row })
+        end
+        -- pet tim yang TIDAK ada di backpack (sudah di-gift / gak ketemu)
+        local missing = 0
+        for _ in pairs(uuidSet) do missing = missing + 1 end
+        if missing > 0 then
+            lo = lo + 1
+            mk("TextLabel", {
+                BackgroundTransparency = 1,
+                Text = ("  + %d pet tim gak ada di backpack (sudah gift?)"):format(missing),
+                Font = FONT, TextSize = 19, TextColor3 = C.textDim,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Size = UDim2.new(1, 0, 0, 16),
+                LayoutOrder = lo, Parent = petListScroll })
+        end
+        if #found == 0 and missing == 0 then
+            mk("TextLabel", {
+                BackgroundTransparency = 1,
+                Text = "  (tidak ada pet tim di backpack)",
+                Font = FONT, TextSize = 20, TextColor3 = C.textDim,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Size = UDim2.new(1, 0, 0, 20),
+                LayoutOrder = 1, Parent = petListScroll })
+        end
+        -- update header
+        petListHeader.Text = ("Pet tim yang akan di-gift: %d/%d di backpack"):format(#found, #uuids)
     end
 
     -- ===== LOGIC TRADE TIM =====
@@ -8970,6 +9121,8 @@ end)()
             toggle.TextColor3 = C.text
             -- Kembalikan automation
             if wasRunning and Auto then Auto.running = true end
+            -- v33.9: refresh pet list setelah trade selesai (tampilkan sisa)
+            refreshPetList()
         end)
     end
 
@@ -8995,17 +9148,18 @@ end)()
         end
     end)
 
-    -- ===== REFRESH PICKER saat tab dibuka =====
-    -- connect visibility changed
+    -- ===== REFRESH PICKER + PET LIST saat tab dibuka =====
     tradeTimContent:GetPropertyChangedSignal("Visible"):Connect(function()
         if tradeTimContent.Visible then
             buildPicker()
+            refreshPetList()
         end
     end)
 
-    -- init label
+    -- init
     pickLbl.Text = "Pilih Akun Target:"
     buildPicker()
+    refreshPetList()
 
     -- progress loop
     task.spawn(function()
@@ -9019,7 +9173,7 @@ end)()
         end
     end)
 
-    print("[HactTelur] v32.7 TRADE TIM tab ready")
+    print("[HactTelur] v33.9 TRADE TIM tab ready")
 end)()
 
 -- ============ AUTO AFK (anti idle kick) ============
