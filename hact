@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.15  ══════════════════════════
+-- ══════════════════════════  HACT  v33.16  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -8,7 +8,7 @@
 -- ║  v33.12: EggDetect.scan() tiap loop iter biar eggHabis akurat         ║
 -- ║  v33.13: Kalau egg habis + masih ada egg di garden → skip reduce,     ║
 -- ║          langsung hatch sisa egg biar gak stuck di fase reduce         ║
--- ║  v33.15: bump versi                                                    ║
+-- ║  v33.16: debug info fase HACT di dbgLbl (reduce/hatch/nunggu/jeda)    ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -288,7 +288,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.15"
+local VERSION = "v33.16"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5009,31 +5009,40 @@ local function automationLoop()
 
         if isPausedForGift() then
             -- v16.2: lagi gift/trade (terima/keluar/manual): jangan place/hatch/swap tim
+            _G.__hactDbgExtra = ("⏸ jeda gift/trade | placed=%d/%d"):format(nowPlaced, target)
             task.wait(0.4)
         elseif nowPlaced < target and not skipReduce then
             -- 1) slot belum penuh: terus place sampai 13 (dipanggil tiap iterasi)
             -- v33.13: dilewati kalau egg habis tapi masih ada egg di garden (skipReduce)
             Auto.eggPhase = "reduce"  -- v26.5: fase reduce -> pencet egg tiap 3s
+            _G.__hactDbgExtra = ("🥚 reduce: place egg | placed=%d/%d stok=%d"):format(nowPlaced, target, eggStockNow)
             equipTeam("Reduce Tim")
             -- v18.7: buang pet salah (bukan tim Reduce) dari garden kalau toggle aktif
             if config.autoUnequipWrong and teamData["Reduce Tim"] then
                 unequipWrongGardenPets(teamData["Reduce Tim"].selected)
             end
             local need = target - nowPlaced
+            local areaDbg = getGardenArea()
+            if not areaDbg then
+                _G.__hactDbgExtra = ("❌ reduce: area garden nil | placed=%d/%d"):format(nowPlaced, target)
+            end
             placeEggs(need)
             task.wait(0.6)
             local after = countEggPlaced()
             print("[HactTelur] place egg: "..nowPlaced.." -> "..after.." (target "..target..")")
+            _G.__hactDbgExtra = ("🥚 reduce: placed %d→%d/%d"):format(nowPlaced, after, target)
         else
-            -- 2) slot penuh: cek ready
+            -- 2) slot penuh ATAU egg habis tapi ada di garden: cek ready
             local allReady, total, ready = allEggsReady()
             if isPausedForGift() then
                 -- v16.2: gift mulai sebelum hatch? batal, balik atas (jgn swap tim Hatch)
+                _G.__hactDbgExtra = ("⏸ jeda gift (pre-hatch) | ready=%d/%d"):format(ready, total)
                 task.wait(0.3)
             elseif allReady then
                 -- semua ready -> hatch bareng (efisien)
                 Auto.eggPhase = "hatch"  -- v26.5: fase hatch -> pencet egg tiap 6s
                 print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
+                _G.__hactDbgExtra = ("✅ hatch: semua ready %d/%d, pasang Koi..."):format(ready, total)
                 equipTeam("Hatch Tim")
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
                 local ok = waitTeamInGarden("Hatch Tim", 15)
@@ -5042,13 +5051,18 @@ local function automationLoop()
                 if not ok then
                     -- v24.6: balik Reduce + tunggu (jgn loop hatch terus / clearGarden async yg bentrok)
                     print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), balik Reduce, tunggu...")
+                    _G.__hactDbgExtra = ("❌ Koi gak lengkap ("..countGardenPets().."), balik reduce")
                     equipTeam("Reduce Tim")
                     task.wait(3)
                 else
                     print("[HactTelur] tim Koi LENGKAP ("..countGardenPets().."), tunggu "..hd.." detik...")
-                    do local t0=tick() while globalRunning and (tick()-t0)<hd do task.wait(0.2) end end  -- v28.2: interruptible
+                    do local t0=tick() while globalRunning and (tick()-t0)<hd do
+                        _G.__hactDbgExtra = ("⏳ hatch: tunggu %ds | Koi %d masuk"):format(math.ceil(hd-(tick()-t0)), countGardenPets())
+                        task.wait(0.2)
+                    end end  -- v28.2: interruptible
                     if not globalRunning then equipTeam("Reduce Tim") break end
                     print("[HactTelur] hatch all!")
+                    _G.__hactDbgExtra = "🐣 hatch all!"
                     hatchAllEggs()
                     task.wait(2)
                     equipTeam("Reduce Tim")
@@ -5060,18 +5074,24 @@ local function automationLoop()
                 -- sebagian besar ready (sisanya egg balik dari Koi yg CD) -> hatch yg ready aja
                 Auto.eggPhase = "hatch"  -- v26.5: fase hatch -> pencet egg tiap 6s
                 print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
+                _G.__hactDbgExtra = ("⏳ hatch sebagian: %d/%d ready"):format(ready, total)
                 equipTeam("Hatch Tim")
                 local ok = waitTeamInGarden("Hatch Tim", 12)
                 if not ok then
                     -- v24.6: tim Koi gak lengkap -> BALIK ke Reduce + TUNGGU (jgn loop hatch terus).
                     -- dulu cuma clearGarden async -> bentrok sama equipTeam berikutnya -> 0 pet -> loop.
                     print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), balik Reduce, tunggu egg sisanya...")
+                    _G.__hactDbgExtra = ("❌ Koi gak lengkap, nunggu sisa %d egg"):format(total-ready)
                     equipTeam("Reduce Tim")
                     task.wait(3)  -- kasih waktu egg sisa ready / Koi CD selesai
                 else
                     print("[HactTelur] Koi LENGKAP ("..countGardenPets().."), tunggu 6 detik...")
-                    do local t0=tick() while globalRunning and (tick()-t0)<6 do task.wait(0.2) end end  -- v28.2: interruptible
+                    do local t0=tick() while globalRunning and (tick()-t0)<6 do
+                        _G.__hactDbgExtra = ("⏳ hatch sebagian: tunggu %ds"):format(math.ceil(6-(tick()-t0)))
+                        task.wait(0.2)
+                    end end  -- v28.2: interruptible
                     if not globalRunning then equipTeam("Reduce Tim") break end
+                    _G.__hactDbgExtra = ("🐣 hatch sebagian %d/%d"):format(ready, total)
                     hatchAllEggs()
                     task.wait(2)
                     equipTeam("Reduce Tim")
@@ -5079,6 +5099,7 @@ local function automationLoop()
                 end
             else
                 -- masih banyak CD -> Reduce, tunggu
+                _G.__hactDbgExtra = ("⏳ nunggu egg CD | ready=%d/%d stok=%d"):format(ready, total, eggStockNow)
                 equipTeam("Reduce Tim")
                 task.wait(1.5)
             end
