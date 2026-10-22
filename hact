@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.49  ══════════════════════════
+-- ══════════════════════════  HACT  v33.50  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.49"
+local VERSION = "v33.50"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1196,7 +1196,6 @@ verTxt.TextXAlignment = Enum.TextXAlignment.Left
 -- tapi `local config` aslinya di ~1023 (SETELAH picker) -> dulu closure baca config GLOBAL (nil)
 -- -> error/gak ke-save. forward-declare biar closure nangkep upvalue lokal yg bener.
 local config
-local saveConfig  -- v33.49: forward-declare biar toggle di atas bisa panggil langsung
 -- v21.5: tombol pilih jenis pet di title bar — klik -> pilih jenis -> verTxt tampil "<jumlah> <jenis>"
 local trackPetType = nil  -- jenis pet yg lagi di-track di title bar
 -- v22.1: setter buat restore dari loadConfig (loadConfig gak bisa akses local ini langsung)
@@ -1287,7 +1286,7 @@ trackBtn.MouseButton1Click:Connect(function()
             b.MouseButton1Click:Connect(function()
                 if name == "(stop track)" then trackPetType = nil else trackPetType = name end
                 config.trackPetType = trackPetType  -- v22.1: simpan biar persist
-                pcall(saveConfig)
+                if config.__save then pcall(config.__save) end
                 pk:Destroy()
                 updateVerTxt()
             end)
@@ -5364,14 +5363,14 @@ local function makeConfigPanel()
         if v < 0 then v = 0 end
         config.maxEggManual = v
         maxBox.Text = tostring(v)
-        pcall(saveConfig)
+        if config.__save then pcall(config.__save) end
     end)
     -- update juga saat teks berubah (jaga2 FocusLost gak ke-trigger di mobile)
     maxBox:GetPropertyChangedSignal("Text"):Connect(function()
         local v = tonumber(maxBox.Text)
         if v and v >= 0 then
             config.maxEggManual = v
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
         end
     end)
     _G.HactTelurSetMaxEggUI = function() maxBox.Text = tostring(config.maxEggManual or 0) end
@@ -5390,7 +5389,7 @@ local function makeConfigPanel()
         if not v or v < 0 then v = 6 end
         config.hatchDelay = v
         hdBox.Text = tostring(v)
-        pcall(saveConfig)
+        if config.__save then pcall(config.__save) end
     end)
     -- v20.6: GetPropertyChangedSignal DIHAPUS — dia auto-save saat UI pertama dibuat
     -- (Text di-set default "6"), nimpa file save jadi 6 SEBELUM loadConfig jalan.
@@ -5498,7 +5497,7 @@ local function makeConfigPanel()
                     check.TextColor3 = on and C.text or C.textMute
                     nameL.TextColor3 = on and C.text or C.textDim
                     refreshCounter()
-                    pcall(saveConfig)
+                    if config.__save then pcall(config.__save) end
                 end)
                 table.insert(rows, row)
             end
@@ -5508,11 +5507,11 @@ local function makeConfigPanel()
     btnAll.MouseButton1Click:Connect(function()
         for _, e in ipairs(EGG_LIST) do config.eggSelected[e] = true end
         buildList(searchBox.Text); refreshCounter()
-        pcall(saveConfig)  -- v33.20: save setelah pilih semua
+        if config.__save then pcall(config.__save) end  -- v33.20: save setelah pilih semua
     end)
     btnNone.MouseButton1Click:Connect(function()
         config.eggSelected = {}; buildList(searchBox.Text); refreshCounter()
-        pcall(saveConfig)  -- v33.20: save setelah clear semua
+        if config.__save then pcall(config.__save) end  -- v33.20: save setelah clear semua
     end)
     ddBtn.MouseButton1Click:Connect(function()
         dim.Visible = true
@@ -5576,7 +5575,7 @@ local function makeConfigPanel()
                 local v = tonumber(kgIn.Text) or 0
                 config.sellRules[petType].kg = v
                 kgIn.Text = tostring(v)
-                pcall(saveConfig)
+                if config.__save then pcall(config.__save) end
                 task.spawn(function() if not isGiftRunning() then pcall(syncFavByRules) end end)
             end)
             local kgL = lbl(row, "KG", 10, C.text)
@@ -5601,7 +5600,7 @@ local function makeConfigPanel()
                 local r = config.sellRules[petType]
                 r.action = (r.action == "keep") and "sell" or "keep"
                 refreshAct()
-                pcall(saveConfig)
+                if config.__save then pcall(config.__save) end
                 task.spawn(function() if not isGiftRunning() then pcall(syncFavByRules) end end)
             end)
             refreshAct()
@@ -5613,7 +5612,7 @@ local function makeConfigPanel()
             corner(del, 5)
             del.MouseButton1Click:Connect(function()
                 config.sellRules[petType] = nil; refreshRules()
-                pcall(saveConfig)
+                if config.__save then pcall(config.__save) end
             end)
             table.insert(ruleRows, row)
         end
@@ -5659,7 +5658,7 @@ local function makeConfigPanel()
             chosenPets = {}
             petDdLabel.Text = "Select Pet..."; petDdLabel.TextColor3 = C.textDim
             refreshRules()
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
             task.spawn(function() if not isGiftRunning() then pcall(syncFavByRules) end end)
         end
     end)
@@ -5683,7 +5682,7 @@ local function makeConfigPanel()
     end
     tog.MouseButton1Click:Connect(function()
         config.autoSell = not config.autoSell; refreshTog()
-        pcall(saveConfig)
+        if config.__save then pcall(config.__save) end
     end)
     refreshTog()
     _G.HactTelurSetAutoSellUI = refreshTog  -- v16.6: biar toggle autoSell ikut ter-update setelah rejoin
@@ -6259,7 +6258,7 @@ local function makeFruitPanel()
                         b.TextColor3 = nowOn and Color3.fromRGB(17,17,17) or C.text
                         b.Text = (nowOn and "\u{2713} " or "   ")..name
                         if onChange then onChange() end
-                        pcall(saveConfig)
+                        if config.__save then pcall(config.__save) end
                     end)
                 end
             end
@@ -6340,7 +6339,7 @@ local function makeFruitPanel()
             end
             cfg.on = not cfg.on
             refreshSw()
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
         end)
 
         header.MouseButton1Click:Connect(function()
@@ -6390,7 +6389,7 @@ local function makeFruitPanel()
         payBtn.MouseButton1Click:Connect(function()
             PromptBuy.payWith = (PromptBuy.payWith == "token") and "robux" or "token"
             payBtn.Text = PromptBuy.payWith == "robux" and "Robux" or "Token"
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
         end)
 
         -- Select Item (dev product)
@@ -6466,7 +6465,7 @@ local function makeFruitPanel()
                             PromptBuy.item = it.name
                             PromptBuy.itemId = it.id
                             selBtn.Text = it.name; selBtn.TextColor3 = C.text
-                            pcall(saveConfig)
+                            if config.__save then pcall(config.__save) end
                             dim:Destroy()
                         end)
                     end
@@ -6493,7 +6492,7 @@ local function makeFruitPanel()
                 PromptBuy.itemId = v
                 PromptBuy.item = "ID: "..tostring(v)
                 selBtn.Text = "ID: "..tostring(v); selBtn.TextColor3 = C.text
-                pcall(saveConfig)
+                if config.__save then pcall(config.__save) end
             end
         end)
 
@@ -6572,7 +6571,7 @@ local function makeFruitPanel()
             end
             b.MouseButton1Click:Connect(function()
                 AutoBoost.sizes[size] = not AutoBoost.sizes[size]; upd()
-                pcall(saveConfig)
+                if config.__save then pcall(config.__save) end
             end)
             upd(); sizeBtns[size] = b
         end
@@ -6918,7 +6917,7 @@ openPetPicker = function(tabName)
         for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
             if teamData[tn] and teamData[tn].refreshPct then teamData[tn].refreshPct() end
         end
-        pcall(saveConfig)
+        if config.__save then pcall(config.__save) end
     end
     closeBtn.MouseButton1Click:Connect(close)
     doneBtn.MouseButton1Click:Connect(close)
@@ -7367,7 +7366,7 @@ do
                             cfg.targets[pl.Name] = (not cfg.targets[pl.Name]) or nil
                             buildPlayers()
                             _G.HactTelurGiftTargetLabels[idx]()
-                            pcall(saveConfig)
+                            if config.__save then pcall(config.__save) end
                         end)
                     end
                 end
@@ -7444,7 +7443,7 @@ do
         corner(aBox, 6); stroke(aBox, C.border, 1)
         aBox.FocusLost:Connect(function()
             cfg.age = tonumber(aBox.Text) or 0; aBox.Text = tostring(cfg.age)
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
         end)
         mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 160),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
@@ -7458,7 +7457,7 @@ do
         corner(kBox, 6); stroke(kBox, C.border, 1)
         kBox.FocusLost:Connect(function()
             cfg.kg = tonumber(kBox.Text) or 0; kBox.Text = tostring(cfg.kg)
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
         end)
         mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 194),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
@@ -7473,7 +7472,7 @@ do
         mBtn.MouseButton1Click:Connect(function()
             cfg.method = (cfg.method == "gift") and "trade" or "gift"
             mBtn.Text = (cfg.method == "gift") and "Gift Biasa" or "Trade (Tiket)"
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
         end)
         mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 232),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
@@ -7494,7 +7493,7 @@ do
             uSw.BackgroundColor3 = cfg.unfavFirst and C.accent or C.input
             uKnob.BackgroundColor3 = cfg.unfavFirst and Color3.fromRGB(17,17,17) or C.textDim
             uKnob.Position = cfg.unfavFirst and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
         end)
         mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 248),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
@@ -7525,7 +7524,7 @@ do
             wKnob.BackgroundColor3 = cfg.waitFull and Color3.fromRGB(17,17,17) or C.textDim
             wKnob.Position = cfg.waitFull and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
             syncWaitFullFlag()
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
         end)
         mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 286),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
@@ -7564,7 +7563,7 @@ do
         mIn.FocusLost:Connect(function()
             cfg.minCount = tonumber(mIn.Text) or 0
             mIn.Text = tostring(cfg.minCount)
-            pcall(saveConfig)
+            if config.__save then pcall(config.__save) end
         end)
         -- tombol Gift (toggle auto-loop)
         local gBtn = mk("TextButton", {
@@ -7788,7 +7787,7 @@ do
     -- v20.4: helper simpan ke config
     local function saveAUS()
         config.autoUpdateServer = { on = AUS.on, interval = AUS.interval }
-        pcall(saveConfig)
+        if config.__save then pcall(config.__save) end
     end
     iBox.FocusLost:Connect(function()
         local v = tonumber(iBox.Text)
@@ -7870,41 +7869,41 @@ miscToggleRow(12.4, "ESP Egg", "Tampilkan nama + waktu netas di atas egg", funct
     config.eggESP = on
     if not on then clearEggESP() end
     print("[HactTelur] ESP Egg "..(on and "ON" or "OFF"))
-    pcall(saveConfig)
+    if config.__save then pcall(config.__save) end
 end, function() return config.eggESP end)
 -- Auto Accept Gift masuk
 miscToggleRow(12.5, "Auto Accept Gift", "Terima gift masuk otomatis", function(on)
     AutoAcc.gift = on
     config.autoAccGift = on
     print("[HactTelur] Auto Accept Gift "..(on and "ON" or "OFF"))
-    pcall(saveConfig)
+    if config.__save then pcall(config.__save) end
 end, function() return config.autoAccGift end)
 -- Auto Accept Trade masuk
 miscToggleRow(12.7, "Auto Accept Trade", "Terima trade masuk otomatis", function(on)
     AutoAcc.trade = on
     config.autoAccTrade = on
     print("[HactTelur] Auto Accept Trade "..(on and "ON" or "OFF"))
-    pcall(saveConfig)
+    if config.__save then pcall(config.__save) end
 end, function() return config.autoAccTrade end)
 -- v19.1: auto start setelah rejoin (tanpa pencet START)
 miscToggleRow(12.55, "Auto Start", "Mulai otomatis setelah rejoin/load (tanpa pencet START)", function(on)
     config.autoStart = on
     print("[HactTelur] Auto Start "..(on and "ON" or "OFF"))
-    pcall(saveConfig)
+    if config.__save then pcall(config.__save) end
 end, function() return config.autoStart end)
 
 -- v19.0: syarat Koi% & Seal% >= 50% buat start & auto-stop kalau turun
 miscToggleRow(12.6, "Syarat Koi & Seal >=50%", "Start cuma kalau Koi & Seal >=50%, stop kalau turun", function(on)
     config.reqKoiSeal = on
     print("[HactTelur] Syarat Koi&Seal 50% "..(on and "ON" or "OFF"))
-    pcall(saveConfig)
+    if config.__save then pcall(config.__save) end
 end, function() return config.reqKoiSeal end)
 
 -- v18.7: buang pet salah (bukan tim Reduce) dari garden
 miscToggleRow(12.9, "Auto Unequip Pet Salah", "Buang pet bukan tim Reduce dari garden saat hatch", function(on)
     config.autoUnequipWrong = on
     print("[HactTelur] Auto Unequip Pet Salah "..(on and "ON" or "OFF"))
-    pcall(saveConfig)
+    if config.__save then pcall(config.__save) end
 end, function() return config.autoUnequipWrong end)
 
 -- v18.9: debug print nilai seal/koi per pet (buat cek kenapa % segitu)
@@ -7949,7 +7948,7 @@ do
     corner(urlBox, 6); stroke(urlBox, C.border, 1); pad(urlBox, 8)
     urlBox.FocusLost:Connect(function()
         Webhook.url = urlBox.Text:gsub("%s+", "")
-        pcall(saveConfig)
+        if config.__save then pcall(config.__save) end
     end)
     _G.HactTelurSetWebhookUI = function(url)
         urlBox.Text = url or ""
@@ -9365,6 +9364,7 @@ end
 local SAVE_FILE = "hact_telur_save_" .. tostring(player.Name) .. ".json"
 _G.__hactSaveFile = SAVE_FILE  -- v33.27: expose buat render loop
 local function saveConfig()
+    config.__save = saveConfig  -- v33.49: bridge biar toggle di atas bisa panggil via config.__save
     print("[HactTelur] saveConfig called wf="..(writefile and "OK" or "NIL"))
     -- v33.31: skip isCurrentGen (test _G isolation)
     -- if not isCurrentGen() then setSaveStatus("💾 SAVE SKIP: gen beda"); return end
@@ -9566,7 +9566,7 @@ end)
 task.spawn(function()
     while true do
         task.wait(20)
-        pcall(saveConfig)
+        if config.__save then pcall(config.__save) end
     end
 end)
 
