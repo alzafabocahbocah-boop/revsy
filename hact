@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.75  ══════════════════════════
+-- ══════════════════════════  HACT  v33.76  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.75"
+local VERSION = "v33.76"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5084,11 +5084,18 @@ local function automationLoop()
                 _G.__hactDbgExtra = ("⏸ jeda gift (pre-hatch) | ready=%d/%d"):format(ready, total)
                 task.wait(0.3)
             elseif allReady then
+                -- v33.75: jeda trade aktif? tunggu dulu, jangan equip Hatch Tim (bolak-balik reduce)
+                if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then
+                    local sisa = math.ceil(30 - (tick() - _G.__hactTradeAktif))
+                    _G.__hactDbgExtra = ("⏸ egg ready, tunggu jeda trade %ds"):format(sisa)
+                    task.wait(1)
+                else
                 -- semua ready -> hatch bareng (efisien)
                 Auto.eggPhase = "hatch"  -- v26.5: fase hatch -> pencet egg tiap 6s
                 print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
                 _G.__hactDbgExtra = ("✅ hatch: semua ready %d/%d, pasang Koi..."):format(ready, total)
                 equipTeam("Hatch Tim")
+                task.wait(1.5)  -- v33.76: kasih waktu pet Reduce keluar garden dulu
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
                 local ok = waitTeamInGarden("Hatch Tim", 15)
                 local hd = config.hatchDelay or 6
@@ -5121,12 +5128,20 @@ local function automationLoop()
                     -- biar lanjut place egg, bukan nyangkut megang pet.
                     pcall(holdEggTool)
                 end
+                end  -- v33.75: tutup else (jeda trade guard)
             elseif ready > 0 and ready >= math.floor(total * 0.6) then
+                -- v33.75: jeda trade? tunggu dulu
+                if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then
+                    local sisa = math.ceil(30 - (tick() - _G.__hactTradeAktif))
+                    _G.__hactDbgExtra = ("⏸ egg ready sebagian, tunggu jeda trade %ds"):format(sisa)
+                    task.wait(1)
+                else
                 -- sebagian besar ready (sisanya egg balik dari Koi yg CD) -> hatch yg ready aja
                 Auto.eggPhase = "hatch"  -- v26.5: fase hatch -> pencet egg tiap 6s
                 print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
                 _G.__hactDbgExtra = ("⏳ hatch sebagian: %d/%d ready"):format(ready, total)
                 equipTeam("Hatch Tim")
+                task.wait(1.5)  -- v33.76: kasih waktu pet Reduce keluar garden dulu
                 local ok = waitTeamInGarden("Hatch Tim", 12)
                 -- v33.72: min 5 koi di garden
                 if ok and countGardenPets() < 5 then
