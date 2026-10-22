@@ -9321,13 +9321,17 @@ end)
 -- ============ SAVE / LOAD CONFIG (biar gak pilih ulang pas rejoin) ============
 local SAVE_FILE = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
 local function saveConfig()
-    if not writefile then return end
-    if not isCurrentGen() then return end  -- v21.0: instance lama jgn nimpa file
+    -- v33.20 diag: print kenapa skip
+    if not writefile then print("[HactTelur] SAVE SKIP: writefile nil") return end
+    if not isCurrentGen() then print("[HactTelur] SAVE SKIP: gen beda") return end
     -- v27.16: guard per-INSTANCE (bukan global). dulu pakai _G.HactTelurLoadDone
     -- yg persist antar execute -> pas exe ulang TANPA rejoin, flag lama masih true,
     -- save dini instance baru (UI default false) nimpa file sebelum load. sekarang
     -- pakai local loadDone (fresh tiap execute) + cek isCurrentGen.
-    if not (isCurrentGen() and _G.HactTelurLoadDoneGen == MY_GEN) then return end
+    if not (isCurrentGen() and _G.HactTelurLoadDoneGen == MY_GEN) then
+        print("[HactTelur] SAVE SKIP: loadDoneGen="..tostring(_G.HactTelurLoadDoneGen).." MY_GEN="..tostring(MY_GEN))
+        return
+    end
     local data = {
         eggSelected = config.eggSelected,
         sellRules = config.sellRules,
@@ -9396,12 +9400,12 @@ local function saveConfig()
     end
 end
 local function loadConfig()
-    if not (readfile and isfile) then return end
-    if not isfile(SAVE_FILE) then return end
+    if not (readfile and isfile) then print("[HactTelur] LOAD SKIP: readfile/isfile nil") return end
+    if not isfile(SAVE_FILE) then print("[HactTelur] LOAD SKIP: file not found -> "..SAVE_FILE) return end
     local ok, raw = pcall(readfile, SAVE_FILE)
-    if not ok or not raw then return end
+    if not ok or not raw then print("[HactTelur] LOAD SKIP: readfile gagal") return end
     local ok2, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
-    if not ok2 or type(data) ~= "table" then return end
+    if not ok2 or type(data) ~= "table" then print("[HactTelur] LOAD SKIP: JSON decode gagal") return end
     -- restore
     if type(data.eggSelected) == "table" then config.eggSelected = data.eggSelected end
     if type(data.sellRules) == "table" then
