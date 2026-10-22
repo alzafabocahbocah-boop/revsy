@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v33.61  ══════════════════════════
+-- ══════════════════════════  HACT  v33.62  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.61"
+local VERSION = "v33.62"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -9364,48 +9364,41 @@ end
 local SAVE_FILE = "hact_telur_save_" .. tostring(player.Name) .. ".json"
 _G.__hactSaveFile = SAVE_FILE  -- v33.27: expose buat render loop
 local function saveConfig()
-    -- v33.60: verbose debug — tulis status di setiap step ke notifPanel
-    if not writefile then
-        shared.__hactPendingNotif = VERSION.."\n💾 SKIP: writefile=NIL"
-        print("[HactTelur] saveConfig: writefile NIL")
-        return
-    end
-    local eggList = {}
-    for k, _ in pairs(config.eggSelected or {}) do eggList[#eggList+1] = k end
-    local data = {
-        eggSelected = config.eggSelected,
-        sellRules = config.sellRules,
-        autoSell = config.autoSell,
-        maxEggManual = config.maxEggManual,
-        hatchDelay = config.hatchDelay,
-        autoUnequipWrong = config.autoUnequipWrong,
-        reqKoiSeal = config.reqKoiSeal,
-        minKoiSeal = config.minKoiSeal,
-        autoStart = config.autoStart,
-        autoAccGift = config.autoAccGift,
-        autoAccTrade = config.autoAccTrade,
-    }
-    local jok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
-    if not jok or not json then
-        shared.__hactPendingNotif = VERSION.."\n💾 ERR: JSONEncode gagal\n"..tostring(json):sub(1,40)
-        print("[HactTelur] saveConfig: JSONEncode GAGAL")
-        return
-    end
-    local wok, werr = pcall(function() writefile(SAVE_FILE, json) end)
-    shared.__hactPendingNotif = VERSION.."\n💾 "..(wok and "SAVE OK ✓" or "SAVE ERR: "..tostring(werr):sub(1,35))
-    print("[HactTelur] saveConfig: "..(wok and "OK" or "ERR "..tostring(werr)).." -> "..SAVE_FILE)
+    -- v33.62: ikut pola market — satu pcall, warn() biar gak ketimpa MAX
+    local ok, err = pcall(function()
+        if not writefile then
+            warn("[HactTelur] saveConfig SKIP: writefile nil")
+            return
+        end
+        local data = {
+            eggSelected = config.eggSelected,
+            sellRules = config.sellRules,
+            autoSell = config.autoSell,
+            maxEggManual = config.maxEggManual,
+            hatchDelay = config.hatchDelay,
+            autoUnequipWrong = config.autoUnequipWrong,
+            reqKoiSeal = config.reqKoiSeal,
+            minKoiSeal = config.minKoiSeal,
+            autoStart = config.autoStart,
+            autoAccGift = config.autoAccGift,
+            autoAccTrade = config.autoAccTrade,
+        }
+        writefile(SAVE_FILE, game:GetService("HttpService"):JSONEncode(data))
+        warn("[HactTelur] saveConfig OK -> "..SAVE_FILE)
+    end)
+    if not ok then warn("[HactTelur] saveConfig ERR: "..tostring(err)) end
 end
 config.__save = saveConfig  -- v33.50: bridge biar toggle di atas bisa panggil via config.__save
 local function loadConfig()
-    print("[HactTelur] loadConfig rf="..(readfile and "OK" or "NIL").." isf="..(isfile and "OK" or "NIL"))
-    -- v33.61: isfile optional (ikut up6kg) — kalau nil, langsung coba readfile aja
-    if not readfile then shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD SKIP: readfile nil"; return end
-    if isfile and not isfile(SAVE_FILE) then shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD: first run (no file)"; return end
-    local ok, raw = pcall(readfile, SAVE_FILE)
-    if not ok or not raw then shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD SKIP: readfile gagal"; return end
-    local ok2, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
-    if not ok2 or type(data) ~= "table" then shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD SKIP: JSON decode gagal"; return end
-    print("[HactTelur] loadConfig: file ada, decode OK")
+    -- v33.62: ikut pola market — isfile optional, satu pcall besar, warn() biar gak ketimpa MAX
+    warn("[HactTelur] loadConfig rf="..(readfile and "OK" or "NIL").." isf="..(isfile and "OK" or "NIL").." wf="..(writefile and "OK" or "NIL"))
+    if not readfile then warn("[HactTelur] loadConfig SKIP: readfile nil"); return end
+    if isfile and not isfile(SAVE_FILE) then warn("[HactTelur] loadConfig: first run (no file)"); return end
+    local ok, data = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(readfile(SAVE_FILE))
+    end)
+    if not ok or type(data) ~= "table" then warn("[HactTelur] loadConfig SKIP: read/decode gagal -> "..tostring(data)); return end
+    warn("[HactTelur] loadConfig: file ada, decode OK")
     -- restore
     if type(data.eggSelected) == "table" then config.eggSelected = data.eggSelected end
     if type(data.sellRules) == "table" then
@@ -9529,14 +9522,8 @@ _G.HactTelurSave = saveConfig
 shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD running..."
 local _loadOk, _loadErr = pcall(loadConfig)
 if not _loadOk then shared.__hactPendingNotif = "── "..VERSION.." ──\n📂 LOAD ERR: "..tostring(_loadErr) end
--- v33.59: debug di main flow, pause MAX via shared.__hactDbgMode
-shared.__hactDbgMode = true
-shared.__hactPendingNotif = "DBG "..VERSION
-    .."\nwf="..(writefile and "OK" or "NIL")
-    .." rf="..(readfile and "OK" or "NIL")
-    .." isf="..(isfile and "OK" or "NIL")
-    .."\nsave="..(config.__save and (pcall(config.__save) and "OK" or "ERR") or "NIL")
-task.spawn(function() task.wait(10) shared.__hactDbgMode = false end)
+-- v33.62: log ke warn() biar gak ketimpa MAX di notifPanel
+warn("[HactTelur] startup "..VERSION.." wf="..(writefile and "OK" or "NIL").." rf="..(readfile and "OK" or "NIL").." isf="..(isfile and "OK" or "NIL"))
 -- v27.16: tandai load selesai UNTUK GEN INI. save baru boleh jalan kalau
 -- _G.HactTelurLoadDoneGen == MY_GEN (instance ini). re-exec tanpa rejoin = gen baru,
 -- jadi flag lama gak kepake -> save dini ke-block sampai load gen baru kelar.
