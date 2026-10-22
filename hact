@@ -1429,7 +1429,8 @@ task.spawn(function()
                 local gcLine = ("%s fps=%d next=%ds"):format(_gcDbg, fps, gcNext)
                 local gr = tostring(_G.__hactGlobalRunning)
                 local fase = extra ~= "" and extra or ("loop idle | gr="..gr)
-                _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, acc, snap, gcLine)
+                local saveDbg = _G.__hactDbgSave or ""  -- v33.20: status save/load (gak ditimpa loop)
+                _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, acc, snap, gcLine, saveDbg)
             end
         end)
     end
@@ -9322,14 +9323,14 @@ end)
 local SAVE_FILE = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
 local function saveConfig()
     -- v33.20 diag: tampil di dbgLbl kenapa skip
-    if not writefile then _G.__hactDbgExtra = "💾 SAVE SKIP: writefile nil" return end
-    if not isCurrentGen() then _G.__hactDbgExtra = "💾 SAVE SKIP: gen beda" return end
+    if not writefile then _G.__hactDbgSave = "💾 SAVE SKIP: writefile nil" return end
+    if not isCurrentGen() then _G.__hactDbgSave = "💾 SAVE SKIP: gen beda" return end
     -- v27.16: guard per-INSTANCE (bukan global). dulu pakai _G.HactTelurLoadDone
     -- yg persist antar execute -> pas exe ulang TANPA rejoin, flag lama masih true,
     -- save dini instance baru (UI default false) nimpa file sebelum load. sekarang
     -- pakai local loadDone (fresh tiap execute) + cek isCurrentGen.
     if not (isCurrentGen() and _G.HactTelurLoadDoneGen == MY_GEN) then
-        _G.__hactDbgExtra = "💾 SAVE SKIP: loadDone="..tostring(_G.HactTelurLoadDoneGen).."/"..tostring(MY_GEN)
+        _G.__hactDbgSave = "💾 SAVE SKIP: loadDone="..tostring(_G.HactTelurLoadDoneGen).."/"..tostring(MY_GEN)
         return
     end
     local data = {
@@ -9392,18 +9393,18 @@ local function saveConfig()
     local ok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
     if ok and json then
         local wok = pcall(function() writefile(SAVE_FILE, json) end)
-        _G.__hactDbgExtra = "💾 SAVE "..(wok and "OK ✓" or "GAGAL writefile err").." -> "..SAVE_FILE
+        _G.__hactDbgSave = "💾 SAVE "..(wok and "OK ✓" or "GAGAL writefile err").." -> "..SAVE_FILE
     else
-        _G.__hactDbgExtra = "💾 SAVE GAGAL: JSONEncode err"
+        _G.__hactDbgSave = "💾 SAVE GAGAL: JSONEncode err"
     end
 end
 local function loadConfig()
-    if not (readfile and isfile) then _G.__hactDbgExtra = "📂 LOAD SKIP: readfile/isfile nil" return end
-    if not isfile(SAVE_FILE) then _G.__hactDbgExtra = "📂 LOAD: file belum ada (first run)" return end
+    if not (readfile and isfile) then _G.__hactDbgSave = "📂 LOAD SKIP: readfile/isfile nil" return end
+    if not isfile(SAVE_FILE) then _G.__hactDbgSave = "📂 LOAD: file belum ada (first run)" return end
     local ok, raw = pcall(readfile, SAVE_FILE)
-    if not ok or not raw then _G.__hactDbgExtra = "📂 LOAD SKIP: readfile gagal" return end
+    if not ok or not raw then _G.__hactDbgSave = "📂 LOAD SKIP: readfile gagal" return end
     local ok2, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
-    if not ok2 or type(data) ~= "table" then _G.__hactDbgExtra = "📂 LOAD SKIP: JSON decode gagal" return end
+    if not ok2 or type(data) ~= "table" then _G.__hactDbgSave = "📂 LOAD SKIP: JSON decode gagal" return end
     -- restore
     if type(data.eggSelected) == "table" then config.eggSelected = data.eggSelected end
     if type(data.sellRules) == "table" then
@@ -9518,7 +9519,7 @@ local function loadConfig()
         end
     end
     local nEgg = 0; for _ in pairs(config.eggSelected) do nEgg = nEgg + 1 end
-    _G.__hactDbgExtra = "📂 LOAD OK ✓ egg="..nEgg.." file="..SAVE_FILE
+    _G.__hactDbgSave = "📂 LOAD OK ✓ egg="..nEgg.." file="..SAVE_FILE
     print("[HactTelur] config dimuat dari "..SAVE_FILE)
 end
 -- expose biar bisa dipanggil dari tombol/aksi lain
