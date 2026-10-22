@@ -1,6 +1,6 @@
--- ══════════════════════════  HACT  v33.2  ══════════════════════════
+-- ══════════════════════════  HACT  v33.3  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v33.2: revert Night Egg ke trade ticket; fix giftBusy anti nyangkut ║
+-- ║  v33.3: ATTR jadi source pertama maxPets, skip scan lain kalau dapat  ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.2"
+local VERSION = "v33.3"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -4215,6 +4215,21 @@ local function getGameData()
     local d_src = "none"
     -- v31.5: hitung cur dulu sebelum semua source, pakai countTotalPets (bukan listBackpackPets cache)
     local _curTotal = countTotalPets()
+    -- v33.3: PERTAMA — player Attribute, pasti milik LocalPlayer, gak bisa kontaminasi dari akun lain
+    pcall(function()
+        local mp = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+        if type(mp) == "number" and mp > 0 then
+            d.maxPets = mp; d_src = "ATTR="..tostring(mp)
+        end
+    end)
+    -- kalau ATTR sudah dapat maxPets, skip semua scan lain (paling akurat)
+    if d.maxPets then
+        if _G.__hactPushNotifLog then
+            _G.__hactPushNotifLog("MAX", ("max=%d src=%s"):format(d.maxPets, d_src))
+        end
+        _gameDataCache = d; _gameDataTime = tick()
+        return d
+    end
     -- v27.190: port cara up6kg — lebih reliable dari terbesar/terkecil
     -- 1) baca dari UI "Pet Items (X/Y)" -> Y = max ASLI akun (paling akurat, gak ke-kontaminasi getgc)
     pcall(function()
