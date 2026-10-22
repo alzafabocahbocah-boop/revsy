@@ -1,7 +1,9 @@
--- ══════════════════════════  HACT  v33.9  ══════════════════════════
--- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
--- ║  v33.9: Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
--- ║         pet list (nama, kg, age, uuid) sebelum trade jalan           ║
+-- ══════════════════════════  HACT  v33.10  ══════════════════════════
+-- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
+-- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
+-- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
+-- ║  v33.10: Trade Egg — persist egg/target/count/running per-akun ke     ║
+-- ║          file; auto-restore saat rejoin via teDoStart()               ║
 -- ══════════════════════════════════════════════════════════════════════
 
 -- v27.23: DENYUT UNCONDITIONAL di PALING ATAS (copy dari market v8.344). Tulis
@@ -281,7 +283,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.9"
+local VERSION = "v33.10"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -8246,10 +8248,42 @@ end)()  -- tutup IIFE TAB TRADE
 
     ;(function()
         local Players = game:GetService("Players")
+        local HS_TE = game:GetService("HttpService")
 
         local teFrame = tradeEggContent
 
         -- (divider dihapus, sekarang panel sendiri)
+
+        -- ===== v33.9: PERSIST Trade Egg config =====
+        local _tePlr = Players.LocalPlayer and Players.LocalPlayer.Name or "x"
+        local TE_CFG_FILE = "zenx_hact_tradeegg_" .. _tePlr .. ".json"
+        local _teCfg = { egg = "Dinosaur Egg", targets = {nil, nil}, counts = {0, 0}, running = false }
+        pcall(function()
+            if isfile and isfile(TE_CFG_FILE) and readfile then
+                local c = HS_TE:JSONDecode(readfile(TE_CFG_FILE))
+                if type(c.egg) == "string" and c.egg ~= "" then _teCfg.egg = c.egg end
+                if type(c.targets) == "table" then
+                    _teCfg.targets[1] = (type(c.targets[1]) == "string" and c.targets[1] ~= "") and c.targets[1] or nil
+                    _teCfg.targets[2] = (type(c.targets[2]) == "string" and c.targets[2] ~= "") and c.targets[2] or nil
+                end
+                if type(c.counts) == "table" then
+                    _teCfg.counts[1] = tonumber(c.counts[1]) or 0
+                    _teCfg.counts[2] = tonumber(c.counts[2]) or 0
+                end
+                _teCfg.running = (c.running == true)
+            end
+        end)
+        local function saveTeCfg()
+            pcall(function()
+                if not writefile then return end
+                writefile(TE_CFG_FILE, HS_TE:JSONEncode({
+                    egg     = teEggSel or "Dinosaur Egg",
+                    targets = { teTargetNames[1] or false, teTargetNames[2] or false },
+                    counts  = { teTargetCount[1] or 0,    teTargetCount[2] or 0 },
+                    running = teRunning or false
+                }))
+            end)
+        end
 
         local yE = 8
         local function elbl(parent, txt, sz, col, ax) local l = lbl(parent, txt, sz, col or C.text, ax); return l end
@@ -8266,22 +8300,24 @@ end)()  -- tutup IIFE TAB TRADE
         local teEggBtn = mk("TextButton", {
             Size = UDim2.new(1,-86,0,28), Position = UDim2.new(0,86,0,yE),
             BackgroundColor3 = C.card, BorderSizePixel = 0,
-            Text = "Dinosaur Egg", TextColor3 = C.text, Font = FONT, TextSize = 12,
+            Text = _teCfg.egg, TextColor3 = C.text, Font = FONT, TextSize = 12,
             AutoButtonColor = false, Parent = teFrame })
         Instance.new("UICorner", teEggBtn).CornerRadius = UDim.new(0,5)
-        local teEggSel = "Dinosaur Egg"   -- default
+        local teEggSel = _teCfg.egg   -- load dari file
         yE = yE + 34
 
         -- PLAYER PICKER (online di server ini, kecuali self) — 2 target
-        local teTargetNames = {nil, nil}   -- max 2 target
+        local teTargetNames = { _teCfg.targets[1], _teCfg.targets[2] }   -- load dari file
 
         local function makeTargetRow(idx)
             local label = elbl(teFrame, "Target "..idx, 12, C.textDim)
             label.Position = UDim2.new(0,0,0,yE); label.Size = UDim2.new(0,80,0,28)
+            -- v33.9: init text dari config tersimpan
+            local initName = _teCfg.targets[idx]
             local btn = mk("TextButton", {
                 Size = UDim2.new(1,-86,0,28), Position = UDim2.new(0,86,0,yE),
                 BackgroundColor3 = C.card, BorderSizePixel = 0,
-                Text = "pilih player...", TextColor3 = C.textDim, Font = FONT, TextSize = 12,
+                Text = initName or "pilih player...", TextColor3 = initName and C.text or C.textDim, Font = FONT, TextSize = 12,
                 AutoButtonColor = false, Parent = teFrame })
             Instance.new("UICorner", btn).CornerRadius = UDim.new(0,5)
             -- tombol hapus (×) di sisi kanan dalam
@@ -8294,6 +8330,7 @@ end)()  -- tutup IIFE TAB TRADE
                 teTargetNames[idx] = nil
                 btn.Text = "pilih player..."
                 btn.TextColor3 = C.textDim
+                saveTeCfg()  -- v33.9: simpan setelah clear
             end)
             yE = yE + 34
 
@@ -8331,6 +8368,7 @@ end)()  -- tutup IIFE TAB TRADE
                             btn.Text = pl.Name
                             btn.TextColor3 = C.text
                             dim3:Destroy()
+                            saveTeCfg()  -- v33.9: simpan setelah pilih target
                         end)
                     end
                 end
@@ -8347,7 +8385,8 @@ end)()  -- tutup IIFE TAB TRADE
         makeTargetRow(2)
 
         -- v27.179: TARGET COUNT per player (0 = unlimited)
-        local teTargetCount = {0, 0}   -- max pet per target (0 = unlimited)
+        -- v33.9: load dari config tersimpan
+        local teTargetCount = { _teCfg.counts[1], _teCfg.counts[2] }
         local teSentTotal = {0, 0}     -- total pet terkirim ke target[i] akumulatif (reset waktu stop)
         local teOrigAutoAccTrade = nil -- v27.216: simpan AutoAcc.trade asli sebelum Trade Egg ubah
 
@@ -8357,14 +8396,17 @@ end)()  -- tutup IIFE TAB TRADE
             local box = mk("TextBox", {
                 Size = UDim2.new(1,-86,0,28), Position = UDim2.new(0,86,0,yE),
                 BackgroundColor3 = C.card, BorderSizePixel = 0,
-                Text = "0", TextColor3 = C.text, Font = FONT, TextSize = 12,
+                Text = tostring(_teCfg.counts[idx]),  -- v33.9: load dari config
+                TextColor3 = C.text, Font = FONT, TextSize = 12,
                 PlaceholderText = "0 = unlimited",
                 PlaceholderColor3 = C.textDim, ClearTextOnFocus = false,
                 Parent = teFrame })
             Instance.new("UICorner", box).CornerRadius = UDim.new(0,5)
             box.FocusLost:Connect(function()
                 local n = tonumber(box.Text)
-                if n and n >= 0 then teTargetCount[idx] = math.floor(n)
+                if n and n >= 0 then
+                    teTargetCount[idx] = math.floor(n)
+                    saveTeCfg()  -- v33.9: simpan setelah ubah count
                 else box.Text = tostring(teTargetCount[idx]) end
             end)
             yE = yE + 34
@@ -8379,11 +8421,14 @@ end)()  -- tutup IIFE TAB TRADE
         teStatL.Position = UDim2.new(0,0,0,yE+40); teStatL.Size = UDim2.new(1,0,0,0)
 
         -- START/STOP button
+        -- v33.9: init running dari config (auto-restore state ON setelah rejoin)
         local teRunning = false
         local teBtn = mk("TextButton", {
             Size = UDim2.new(1,0,0,34), Position = UDim2.new(0,0,0,yE),
-            BackgroundColor3 = C.card, BorderSizePixel = 0,
-            Text = "START TRADE EGG", TextColor3 = C.text, Font = FONT_B, TextSize = 13,
+            BackgroundColor3 = _teCfg.running and C.danger or C.card, BorderSizePixel = 0,
+            Text = _teCfg.running and "STOP TRADE EGG" or "START TRADE EGG",
+            TextColor3 = _teCfg.running and Color3.new(1,1,1) or C.text,
+            Font = FONT_B, TextSize = 13,
             AutoButtonColor = false, Parent = teFrame })
         Instance.new("UICorner", teBtn).CornerRadius = UDim.new(0,6)
 
@@ -8415,6 +8460,7 @@ end)()  -- tutup IIFE TAB TRADE
                         teEggSel = nm
                         teEggBtn.Text = nm
                         dim2:Destroy()
+                        saveTeCfg()  -- v33.9: simpan setelah pilih egg
                     end)
                 end
             end
@@ -8485,34 +8531,22 @@ end)()  -- tutup IIFE TAB TRADE
         end
 
         -- START / STOP
-        teBtn.MouseButton1Click:Connect(function()
-            if teRunning then
-                -- STOP
-                teRunning = false
-                _G.__hactTradeEggAktif = false
-                _G.__hactTradeEggSnapUuids = nil  -- v27.210: clear snap, auto-fav normal lagi
-                if teOrigAutoAccTrade ~= nil then  -- v27.216: restore AutoAcc.trade
-                    AutoAcc.trade = teOrigAutoAccTrade
-                    teOrigAutoAccTrade = nil
-                end
-                teBtn.Text = "START TRADE EGG"
-                teBtn.BackgroundColor3 = C.card
-                teBtn.TextColor3 = C.text
-                teStatL.Text = "dihentikan"
-                return
-            end
+        -- v33.10: fungsi START di-extract supaya bisa dipanggil dari auto-restore juga
+        local function teDoStart()
             -- validasi: minimal 1 target
             local hasTarget = teTargetNames[1] or teTargetNames[2]
             if not hasTarget then teStatL.Text = "pilih minimal 1 target player"; return end
             if not PRESET_HACT[teEggSel] then teStatL.Text = "preset "..teEggSel.." gak ada"; return end
+            if teRunning then return end  -- sudah jalan, skip
             -- START — reset counter akumulatif
             teSentTotal = {0, 0}
-            teOrigAutoAccTrade = AutoAcc.trade  -- v27.216: simpan original sebelum kita ubah
+            teOrigAutoAccTrade = AutoAcc and AutoAcc.trade  -- simpan original sebelum kita ubah
             teRunning = true
             _G.__hactTradeEggAktif = true
             teBtn.Text = "STOP TRADE EGG"
             teBtn.BackgroundColor3 = C.danger
             teBtn.TextColor3 = Color3.new(1,1,1)
+            saveTeCfg()  -- simpan state ON
             teStatL.Text = "aktif — nunggu inv full..."
             local teGen = ((_G.__hactTradeEggGen or 0) + 1); _G.__hactTradeEggGen = teGen
             task.spawn(function()
@@ -8755,7 +8789,46 @@ end)()  -- tutup IIFE TAB TRADE
                     task.wait(1.5)
                 end
             end)
+        end  -- teDoStart
+
+        teBtn.MouseButton1Click:Connect(function()
+            if teRunning then
+                -- STOP
+                teRunning = false
+                _G.__hactTradeEggAktif = false
+                _G.__hactTradeEggSnapUuids = nil
+                if teOrigAutoAccTrade ~= nil then
+                    AutoAcc.trade = teOrigAutoAccTrade
+                    teOrigAutoAccTrade = nil
+                end
+                teBtn.Text = "START TRADE EGG"
+                teBtn.BackgroundColor3 = C.card
+                teBtn.TextColor3 = C.text
+                teStatL.Text = "dihentikan"
+                saveTeCfg()  -- simpan state OFF
+                return
+            end
+            teDoStart()
         end)
+
+        -- v33.10: auto-restore state ON setelah rejoin — panggil teDoStart langsung
+        if _teCfg.running then
+            local hasTarget2 = teTargetNames[1] or teTargetNames[2]
+            if hasTarget2 and PRESET_HACT[teEggSel] then
+                task.spawn(function()
+                    task.wait(3)  -- tunggu sistem siap dulu
+                    if not teRunning then
+                        teStatL.Text = "auto-restore..."
+                        teDoStart()  -- spawn loop trade yang sebenarnya
+                    end
+                end)
+            else
+                -- target offline / preset gak ada → reset saved running state
+                _teCfg.running = false
+                saveTeCfg()
+            end
+        end
+
     -- ======= END TRADE EGG =======
     end)()
 end)()
