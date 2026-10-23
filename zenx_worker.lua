@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.553 — UP6KG: denyut beneran dimatiin (return 999999, bukan fallback 360s)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.554"
+local VERSION = "9.555"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -12178,25 +12178,40 @@ if PERINTAH == "cookie" then
 
     local function ambil_cookie(pkg)
         local d = '/data/data/' .. pkg
-        -- coba sqlite3 dulu (app_webview/Default/Cookies — format Chrome WebView)
+        -- coba baca SQLite WebView (app_webview/Default/Cookies)
         local db = d .. '/app_webview/Default/Cookies'
-        local sq = sh("which sqlite3 2>/dev/null") or ""
-        sq = sq:match("^%s*(.-)%s*$") or ""
-        if sq ~= "" then
+        local ckwal = sh("su -c 'test -f " .. shq(db) .. " && echo y' 2>/dev/null") or ""
+        if ckwal:match("y") then
             local tmp = "/data/local/tmp/ck_" .. pkg:gsub("[^%w]","_") .. ".db"
-            local ckwal = sh("su -c 'test -f " .. shq(db) .. " && echo y' 2>/dev/null") or ""
-            if ckwal:match("y") then
-                -- copy dulu (WAL mungkin terbuka), query dari copy
-                sh("su -c 'cp " .. shq(db) .. " " .. shq(tmp) .. " 2>/dev/null; " ..
-                   "cp " .. shq(db .. "-wal") .. " " .. shq(tmp .. "-wal") .. " 2>/dev/null; " ..
-                   "cp " .. shq(db .. "-shm") .. " " .. shq(tmp .. "-shm") .. " 2>/dev/null' 2>/dev/null")
-                local val = sh("su -c " .. shq(sq .. " " .. tmp ..
-                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY' LIMIT 1\"") .. " 2>/dev/null") or ""
-                sh("su -c 'rm -f " .. shq(tmp) .. " " .. shq(tmp.."-wal") .. " " .. shq(tmp.."-shm") .. "' 2>/dev/null")
-                val = val:match("^%s*(.-)%s*$") or ""
-                if val:match("_|WARNING") then
-                    return {db}, val
-                end
+            -- copy + WAL/SHM dulu biar gak locked
+            sh("su -c 'cp " .. shq(db) .. " " .. shq(tmp) .. " 2>/dev/null; " ..
+               "cp " .. shq(db.."-wal") .. " " .. shq(tmp.."-wal") .. " 2>/dev/null; " ..
+               "cp " .. shq(db.."-shm") .. " " .. shq(tmp.."-shm") .. " 2>/dev/null; " ..
+               "chmod 644 " .. shq(tmp) .. " 2>/dev/null' 2>/dev/null")
+            -- cari sqlite3: Termux path, /system, /usr/bin
+            local sq = ""
+            for _, p in ipairs({"/data/data/com.termux/files/usr/bin/sqlite3",
+                                 "/system/bin/sqlite3", "/usr/bin/sqlite3",
+                                 "/data/local/tmp/sqlite3"}) do
+                local t = sh("test -x " .. shq(p) .. " && echo y") or ""
+                if t:match("y") then sq = p; break end
+            end
+            -- fallback: python3 baca SQLite binary langsung
+            local val = ""
+            if sq ~= "" then
+                val = sh(sq .. " " .. shq(tmp) ..
+                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY' LIMIT 1\" 2>/dev/null") or ""
+            else
+                -- python3: baca file binary, cari string _|WARNING
+                local py = "import sys,re; d=open(sys.argv[1],'rb').read(); " ..
+                           "m=re.search(rb'(_[|]WARNING[\\x20-\\x7e]+)', d); " ..
+                           "print(m.group(1).decode()) if m else None"
+                val = sh("python3 -c " .. shq(py) .. " " .. shq(tmp) .. " 2>/dev/null") or ""
+            end
+            sh("rm -f " .. shq(tmp) .. " " .. shq(tmp.."-wal") .. " " .. shq(tmp.."-shm") .. " 2>/dev/null")
+            val = val:match("^%s*(.-)%s*$") or ""
+            if val:match("_|WARNING") then
+                return {db}, val
             end
         end
         -- fallback: grep plaintext (format lama / file lain)
