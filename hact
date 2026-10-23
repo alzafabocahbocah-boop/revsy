@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.4  ══════════════════════════
+-- ══════════════════════════  HACT  v34.5  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.4"
+local VERSION = "v34.5"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -3264,6 +3264,89 @@ local function petFate(p)
     end
     return "keep"  -- KEEP rule atau gak ada rule
 end
+
+-- v34.5: STAT PANEL kanan atas — 4 kartu: total pet / egg / pet keep / pet sell
+-- Mirip up6kg stat panel, tapi data dari hact: PetDetect + petFate + totalEggNow
+do
+    local ok, err = pcall(function()
+        local plr = game:GetService("Players").LocalPlayer
+        local par = (gethui and gethui()) or plr:WaitForChild("PlayerGui")
+        pcall(function() local o = par:FindFirstChild("ZenxHactStat"); if o then o:Destroy() end end)
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "ZenxHactStat"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.DisplayOrder = 999997
+        sg.Parent = par
+        local owrap = Instance.new("Frame"); owrap.Size = UDim2.new(1,0,1,0); owrap.BackgroundTransparency = 1; owrap.BorderSizePixel = 0; owrap.Parent = sg
+        local oscale = Instance.new("UIScale"); oscale.Scale = 1.95; oscale.Parent = owrap
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(0, 280, 0, 200)
+        frame.AnchorPoint = Vector2.new(1, 0)
+        frame.Position = UDim2.new(1/1.95, -14/1.95, 0, 14/1.95)
+        frame.BackgroundColor3 = Color3.fromRGB(0,0,0); frame.BackgroundTransparency = 0.08
+        frame.BorderSizePixel = 0; frame.Parent = owrap
+        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 14)
+        local st1 = Instance.new("UIStroke"); st1.Color = Color3.fromRGB(38,38,38); st1.Thickness = 1.5; st1.Parent = frame
+        local pad = Instance.new("UIPadding"); pad.PaddingTop = UDim.new(0,10); pad.PaddingBottom = UDim.new(0,10); pad.PaddingLeft = UDim.new(0,10); pad.PaddingRight = UDim.new(0,10); pad.Parent = frame
+        local vlist = Instance.new("UIListLayout"); vlist.FillDirection = Enum.FillDirection.Vertical; vlist.Padding = UDim.new(0,8); vlist.SortOrder = Enum.SortOrder.LayoutOrder; vlist.Parent = frame
+        -- header
+        local hdr = Instance.new("Frame"); hdr.Size = UDim2.new(1,0,0,20); hdr.BackgroundTransparency = 1; hdr.BorderSizePixel = 0; hdr.LayoutOrder = 1; hdr.Parent = frame
+        local dot = Instance.new("Frame"); dot.Size = UDim2.new(0,8,0,8); dot.Position = UDim2.new(0,2,0.5,-4); dot.BackgroundColor3 = Color3.fromRGB(165,180,252); dot.BorderSizePixel = 0; dot.Parent = hdr
+        Instance.new("UICorner", dot).CornerRadius = UDim.new(1,0)
+        local ttl = Instance.new("TextLabel"); ttl.BackgroundTransparency = 1; ttl.Font = Enum.Font.GothamBold; ttl.TextSize = 14; ttl.TextColor3 = Color3.fromRGB(165,180,252); ttl.Text = "HACT"; ttl.Position = UDim2.new(0,16,0,0); ttl.Size = UDim2.new(1,-16,1,0); ttl.TextXAlignment = Enum.TextXAlignment.Left; ttl.Parent = hdr
+        -- grid 2x2
+        local gridF = Instance.new("Frame"); gridF.Size = UDim2.new(1,0,1,-34); gridF.BackgroundTransparency = 1; gridF.BorderSizePixel = 0; gridF.LayoutOrder = 2; gridF.Parent = frame
+        local grid = Instance.new("UIGridLayout"); grid.CellSize = UDim2.new(0.5,-5,0.5,-5); grid.CellPadding = UDim2.new(0,10,0,10); grid.SortOrder = Enum.SortOrder.LayoutOrder; grid.Parent = gridF
+        local WH = Color3.fromRGB(255,255,255)
+        local AQ = Color3.fromRGB(94,234,212)   -- teal (egg)
+        local GR = Color3.fromRGB(134,239,172)   -- hijau (keep)
+        local RD = Color3.fromRGB(252,165,165)   -- merah (sell)
+        local function makeCard(col, labelTxt, lo)
+            local c = Instance.new("Frame"); c.BackgroundColor3 = Color3.fromRGB(20,20,20); c.BorderSizePixel = 0; c.LayoutOrder = lo; c.Parent = gridF
+            Instance.new("UICorner", c).CornerRadius = UDim.new(0,10)
+            local v = Instance.new("TextLabel"); v.BackgroundTransparency = 1; v.Font = Enum.Font.GothamBold; v.TextSize = 30; v.TextColor3 = col
+            v.Position = UDim2.new(0,12,0,10); v.Size = UDim2.new(1,-12,0,34); v.TextXAlignment = Enum.TextXAlignment.Left; v.Text = "0"; v.Parent = c
+            local l = Instance.new("TextLabel"); l.BackgroundTransparency = 1; l.Font = Enum.Font.GothamSemibold; l.TextSize = 13; l.TextColor3 = Color3.fromRGB(100,100,100)
+            l.Position = UDim2.new(0,12,1,-22); l.Size = UDim2.new(1,-12,0,16); l.TextXAlignment = Enum.TextXAlignment.Left; l.Text = labelTxt; l.Parent = c
+            return v
+        end
+        local vTotal = makeCard(WH,  "total pet", 1)
+        local vEgg   = makeCard(AQ,  "egg",       2)
+        local vKeep  = makeCard(GR,  "pet keep",  3)
+        local vSell  = makeCard(RD,  "pet sell",  4)
+        -- shrink pas touch (sama kayak up6kg)
+        local kecilSampai = 0
+        local UIS = game:GetService("UserInputService")
+        UIS.InputBegan:Connect(function(input, gpe)
+            if gpe then return end
+            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                kecilSampai = tick() + 8
+            end
+        end)
+        -- update loop tiap 1s
+        task.spawn(function()
+            while frame and frame.Parent do
+                task.wait(1)
+                pcall(function()
+                    local now = tick()
+                    local scale = (now < kecilSampai) and 0.7 or 1.0
+                    oscale.Scale = 1.95 * scale
+                    local pets = PetDetect.listBackpackPets()
+                    local total = #pets
+                    local egg = totalEggNow()
+                    local keep, sell = 0, 0
+                    for _, p in ipairs(pets) do
+                        if p and petFate(p) == "keep" then keep = keep + 1 else sell = sell + 1 end
+                    end
+                    vTotal.Text = tostring(total)
+                    vEgg.Text   = tostring(egg)
+                    vKeep.Text  = tostring(keep)
+                    vSell.Text  = tostring(sell)
+                end)
+            end
+        end)
+    end)
+    if not ok then warn("[HactStat] gagal buat stat panel: " .. tostring(err)) end
+end
+
 -- AUTO FAV: favoritkan semua pet yg ada di pemilihan tim (Reduce/Hatch/Sell)
 -- biar selalu kelindungi dari Sell All
 function favTeamPets()
