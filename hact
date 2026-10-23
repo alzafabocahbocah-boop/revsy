@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.8  ══════════════════════════
+-- ══════════════════════════  HACT  v34.9  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.8"
+local VERSION = "v34.9"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -3449,8 +3449,9 @@ do
             end
         end)
 
-        -- ── FPS counter (sama persis kayak up6kg: RenderStepped hitung frame/s) ──
+        -- ── FPS counter: coba RenderStepped dulu, fallback Heartbeat ──
         local _fpsCount, _fpsTick, lastFps = 0, tick(), 0
+        local _fpsConnected = false
         pcall(function()
             game:GetService("RunService").RenderStepped:Connect(function()
                 _fpsCount = _fpsCount + 1
@@ -3458,11 +3459,22 @@ do
                     lastFps = _fpsCount; _fpsCount = 0; _fpsTick = tick()
                 end
             end)
+            _fpsConnected = true
         end)
+        if not _fpsConnected then
+            pcall(function()
+                game:GetService("RunService").Heartbeat:Connect(function()
+                    _fpsCount = _fpsCount + 1
+                    if tick() - _fpsTick >= 1 then
+                        lastFps = _fpsCount; _fpsCount = 0; _fpsTick = tick()
+                    end
+                end)
+            end)
+        end
 
         -- ── UPDATE LOOP (while sg.Parent, sama kayak up6kg) ──
         local _lastScTick = 0
-        local _lastStatTick = 0
+        local _lastStatTick = -999  -- force update pertama langsung
         while sg.Parent do
             task.wait(0.5)
             pcall(function()
@@ -3473,9 +3485,13 @@ do
                 -- update stat tiap 1s
                 if now - _lastStatTick >= 1 then
                     _lastStatTick = now
-                    local pets = PetDetect.listBackpackPets()
+                    local pets, petsErr = {}, nil
+                    local ok2, e2 = pcall(function() pets = PetDetect.listBackpackPets(true) end)
+                    if not ok2 then petsErr = tostring(e2); pcall(function() pushLog("[stat] listBackpackPets err: "..petsErr) end) end
                     local total = #pets
-                    local egg = totalEggNow()
+                    local egg = 0
+                    local ok3, e3 = pcall(function() egg = totalEggNow() end)
+                    if not ok3 then pcall(function() pushLog("[stat] totalEggNow err: "..tostring(e3)) end) end
                     local keep, sell = 0, 0
                     for _, p in ipairs(pets) do
                         if p and petFate(p) == "keep" then keep = keep + 1 else sell = sell + 1 end
