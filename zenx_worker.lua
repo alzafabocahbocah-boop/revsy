@@ -12177,6 +12177,29 @@ if PERINTAH == "cookie" then
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
 
     local function ambil_cookie(pkg)
+        local d = '/data/data/' .. pkg
+        -- coba sqlite3 dulu (app_webview/Default/Cookies — format Chrome WebView)
+        local db = d .. '/app_webview/Default/Cookies'
+        local sq = sh("which sqlite3 2>/dev/null") or ""
+        sq = sq:match("^%s*(.-)%s*$") or ""
+        if sq ~= "" then
+            local tmp = "/data/local/tmp/ck_" .. pkg:gsub("[^%w]","_") .. ".db"
+            local ckwal = sh("su -c 'test -f " .. shq(db) .. " && echo y' 2>/dev/null") or ""
+            if ckwal:match("y") then
+                -- copy dulu (WAL mungkin terbuka), query dari copy
+                sh("su -c 'cp " .. shq(db) .. " " .. shq(tmp) .. " 2>/dev/null; " ..
+                   "cp " .. shq(db .. "-wal") .. " " .. shq(tmp .. "-wal") .. " 2>/dev/null; " ..
+                   "cp " .. shq(db .. "-shm") .. " " .. shq(tmp .. "-shm") .. " 2>/dev/null' 2>/dev/null")
+                local val = sh("su -c " .. shq(sq .. " " .. tmp ..
+                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY' LIMIT 1\"") .. " 2>/dev/null") or ""
+                sh("su -c 'rm -f " .. shq(tmp) .. " " .. shq(tmp.."-wal") .. " " .. shq(tmp.."-shm") .. "' 2>/dev/null")
+                val = val:match("^%s*(.-)%s*$") or ""
+                if val:match("_|WARNING") then
+                    return {db}, val
+                end
+            end
+        end
+        -- fallback: grep plaintext (format lama / file lain)
         local skrip =
             'd=/data/data/' .. pkg .. '; ' ..
             'echo @FILES; ' ..
