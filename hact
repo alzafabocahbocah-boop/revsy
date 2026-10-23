@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.19  ══════════════════════════
+-- ══════════════════════════  HACT  v34.20  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.19"
+local VERSION = "v34.20"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -4756,18 +4756,30 @@ local function getGameData()
                     local mp = rawget(obj, "MaxPetsInInventory")
                     local me = rawget(obj, "MaxEggsInFarm")
                     local mq = rawget(obj, "MaxEquippedPets")
-                    -- v34.19: ambil pertama yang ketemu, range wajar saja
+                    -- v34.20: hitung kemunculan tiap nilai — yang double = milik sendiri
                     if type(mp) == "number" and mp > 0 and mp <= 2000
                     and type(me) == "number" and me > 0
                     and type(mq) == "number" and mq > 0 then
-                        if not d.maxPets then
-                            d.maxPets = mp; d_src = "GC="..tostring(mp)
-                            d.maxEggs  = me
-                            d.maxEquip = mq
-                            if not PetDetect._mutableStats then PetDetect._mutableStats = obj end
-                            break
-                        end
+                        if not _gcVotes then _gcVotes = {} end
+                        _gcVotes[mp] = (_gcVotes[mp] or 0) + 1
+                        if not _gcObjs then _gcObjs = {} end
+                        if not _gcObjs[mp] then _gcObjs[mp] = {obj=obj, me=me, mq=mq} end
                     end
+                end
+            end
+            -- ambil mp yang muncul paling banyak (double = milik sendiri)
+            if _gcVotes then
+                local bestMp, bestCount = nil, 0
+                for mp, cnt in pairs(_gcVotes) do
+                    if cnt > bestCount then bestMp = mp; bestCount = cnt end
+                end
+                if bestMp then
+                    local best = _gcObjs[bestMp]
+                    d.maxPets  = d.maxPets  or bestMp
+                    d_src = "GC(x"..bestCount..")="..tostring(bestMp)
+                    d.maxEggs  = d.maxEggs  or best.me
+                    d.maxEquip = d.maxEquip or best.mq
+                    if not PetDetect._mutableStats then PetDetect._mutableStats = best.obj end
                 end
             end
         end)
