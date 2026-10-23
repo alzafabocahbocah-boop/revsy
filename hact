@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.92"
+local VERSION = "v33.94"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1708,7 +1708,7 @@ config = {
     sellRunning = false,
     maxEggManual = 0,   -- 0 = auto (deteksi maks asli akun), >0 = pakai angka ini
     hatchDelay = 3,     -- detik jeda setelah tim hatch (Koi) masuk, sebelum hatch
-    autoUnequipWrong = false,  -- buang pet salah (bukan tim Reduce) dari garden
+    autoUnequipWrong = true,   -- v33.94: buang pet salah (bukan tim Reduce) dari garden
     reqKoiSeal = false,        -- syarat Koi% & Seal% >= min buat start & lanjut
     minKoiSeal = 50,           -- batas minimum % (default 50)
     autoStart = false,         -- mulai automation otomatis setelah load/rejoin
@@ -4390,8 +4390,32 @@ local function getGameData()
             end
         end)
     end
-    -- v30.5: log sumber max
-    if _G.__hactPushNotifLog and d.maxPets and not shared.__hactDbgMode then
+    -- v33.94: debug — log sumber yang GAGAL sebelum sampai GC
+    if _G.__hactPushNotifLog and shared.__hactDbgMode then
+        local fails = {}
+        -- cek kenapa ATTR gagal
+        local ok, attrVal = pcall(function()
+            return player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+        end)
+        if not ok then table.insert(fails, "ATTR:err")
+        elseif not attrVal then table.insert(fails, "ATTR:nil")
+        elseif type(attrVal)~="number" or attrVal<=0 then table.insert(fails, "ATTR:bad="..tostring(attrVal)) end
+        -- cek kenapa MS gagal
+        local ms = PetDetect._mutableStats
+        if not ms then table.insert(fails, "MS:nil")
+        else
+            local mp = rawget(ms,"MaxPetsInInventory")
+            if not mp then table.insert(fails,"MS:nokey")
+            elseif type(mp)~="number" then table.insert(fails,"MS:type")
+            elseif mp < _curTotal then table.insert(fails,"MS:low="..tostring(mp))
+            elseif mp < 10 or mp > 2000 then table.insert(fails,"MS:range="..tostring(mp)) end
+        end
+        if #fails > 0 then
+            _G.__hactPushNotifLog("DBG", "maxFail: "..table.concat(fails," | "))
+        end
+    end
+    -- v30.5: log sumber max (selalu, bukan cuma dbgMode)
+    if _G.__hactPushNotifLog and d.maxPets then
         _G.__hactPushNotifLog("MAX", ("max=%d src=%s"):format(d.maxPets, d_src))
     end
     _gameDataCache = d; _gameDataTime = tick()
