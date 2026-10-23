@@ -308,7 +308,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v33.94"
+local VERSION = "v33.95"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -3567,6 +3567,15 @@ local panelArea = mk("Frame", {
 
 -- ============ START / STOP GLOBAL (1 tombol buat semua tim) ============
 local globalRunning = false
+local globalGen = 0  -- v33.95: increment tiap STOP → interrupt semua task.wait panjang
+-- v33.95: task.wait yang bisa di-interrupt pas STOP (cek globalRunning tiap 0.1s)
+local function waitInterrupt(secs)
+    local myGen = globalGen
+    local t0 = tick()
+    while globalRunning and globalGen == myGen and (tick()-t0) < secs do
+        task.wait(0.1)
+    end
+end
 local globalSetRunning  -- forward (diisi di bawah)
 local gBtnRow = mk("Frame", {
     Size = UDim2.new(1, 0, 0, 34), Position = UDim2.new(0, 0, 1, -34),
@@ -3584,7 +3593,9 @@ local gStopBtn = mk("TextButton", {
 corner(gStopBtn, 8); stroke(gStopBtn, C.border, 1)
 globalSetRunning = function(on)
     globalRunning = on
+    if not on then globalGen = globalGen + 1 end  -- v33.95: interrupt semua wait panjang
     _G.__hactGlobalRunning = on  -- expose buat dbgLbl (local var gak bisa dibaca closure lama)
+    _G.__hactGlobalGen = globalGen
     gStartBtn.Text = on and "⚡ RUNNING." or "START"
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
         if teamData[tn] then teamData[tn].running = on end
@@ -3592,8 +3603,9 @@ globalSetRunning = function(on)
 end
 -- v33.22: init expose globalRunning biar dbgLbl gak nil sebelum START pertama
 _G.__hactGlobalRunning = globalRunning
+_G.__hactGlobalGen = globalGen
 -- biar loop lama bisa dimatiin kalau script di-run ulang
-_G.HactTelurStop = function() globalRunning = false end
+_G.HactTelurStop = function() globalRunning = false; globalGen = globalGen + 1; _G.__hactGlobalGen = globalGen end
 
 -- ============ AUTOMATION ============
 -- Auto sudah dideklarasi di atas (sebelum giftPetsByFilter). Di sini cuma isi field-nya.
@@ -5151,7 +5163,8 @@ local function automationLoop()
                 print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
                 _G.__hactDbgExtra = ("✅ hatch: semua ready %d/%d, pasang Koi..."):format(ready, total)
                 equipTeam("Hatch Tim")
-                task.wait(3)  -- v33.76: kasih waktu pet Reduce keluar garden dulu
+                waitInterrupt(3)  -- v33.95: interruptible (kasih waktu pet Reduce keluar garden)
+                if not globalRunning then equipTeam("Reduce Tim") break end
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
                 local ok = waitTeamInGarden("Hatch Tim", 15)
                 local hd = config.hatchDelay or 3
@@ -5167,7 +5180,7 @@ local function automationLoop()
                     print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), balik Reduce, tunggu...")
                     _G.__hactDbgExtra = ("❌ Koi gak lengkap ("..countGardenPets().."), balik reduce")
                     equipTeam("Reduce Tim")
-                    task.wait(3)
+                    waitInterrupt(3)  -- v33.95: interruptible
                 else
                     print("[HactTelur] tim Koi LENGKAP ("..countGardenPets().."), tunggu "..hd.." detik...")
                     do local t0=tick() while globalRunning and (tick()-t0)<hd do
@@ -5178,7 +5191,7 @@ local function automationLoop()
                     print("[HactTelur] hatch all!")
                     _G.__hactDbgExtra = "🐣 hatch all!"
                     hatchAllEggs()
-                    task.wait(2)
+                    waitInterrupt(2)  -- v33.95: interruptible
                     equipTeam("Reduce Tim")
                     -- v25.3: balik pegang EGG tool (pet baru hasil hatch sering auto-equip ke tangan).
                     -- biar lanjut place egg, bukan nyangkut megang pet.
@@ -5197,7 +5210,8 @@ local function automationLoop()
                 print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
                 _G.__hactDbgExtra = ("⏳ hatch sebagian: %d/%d ready"):format(ready, total)
                 equipTeam("Hatch Tim")
-                task.wait(3)  -- v33.76: kasih waktu pet Reduce keluar garden dulu
+                waitInterrupt(3)  -- v33.95: interruptible (kasih waktu pet Reduce keluar garden)
+                if not globalRunning then equipTeam("Reduce Tim") break end
                 local ok = waitTeamInGarden("Hatch Tim", 12)
                 -- v33.72: min 5 koi di garden
                 if ok and countGardenPets() < 5 then
@@ -5211,7 +5225,7 @@ local function automationLoop()
                     print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), balik Reduce, tunggu egg sisanya...")
                     _G.__hactDbgExtra = ("❌ Koi gak lengkap, nunggu sisa %d egg"):format(total-ready)
                     equipTeam("Reduce Tim")
-                    task.wait(3)  -- kasih waktu egg sisa ready / Koi CD selesai
+                    waitInterrupt(3)  -- v33.95: interruptible (kasih waktu egg sisa ready)
                 else
                     print("[HactTelur] Koi LENGKAP ("..countGardenPets().."), tunggu 6 detik...")
                     do local t0=tick() while globalRunning and (tick()-t0)<6 do
@@ -5221,7 +5235,7 @@ local function automationLoop()
                     if not globalRunning then equipTeam("Reduce Tim") break end
                     _G.__hactDbgExtra = ("🐣 hatch sebagian %d/%d"):format(ready, total)
                     hatchAllEggs()
-                    task.wait(2)
+                    waitInterrupt(2)  -- v33.95: interruptible
                     equipTeam("Reduce Tim")
                     pcall(holdEggTool)  -- v25.3: balik pegang egg
                 end
@@ -5230,7 +5244,7 @@ local function automationLoop()
                 -- masih banyak CD -> Reduce, tunggu
                 _G.__hactDbgExtra = ("⏳ nunggu egg CD | ready=%d/%d stok=%d"):format(ready, total, eggStockNow)
                 equipTeam("Reduce Tim")
-                task.wait(1.5)
+                waitInterrupt(1.5)  -- v33.95: interruptible
             end
         end
         task.wait(0.5)
