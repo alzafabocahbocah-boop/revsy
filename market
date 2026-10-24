@@ -1,4 +1,4 @@
--- ZENX MARKET v8.487 — getInventoryCapacity 4-layer (HactTelurGetMaxPets+skip TradingUI+GetAttribute+folder); popup leveling 400x380, font 15/13; age500+; nama RF di popup
+-- ZENX MARKET v8.488 — getInventoryCapacity 4-layer (HactTelurGetMaxPets+skip TradingUI+GetAttribute+folder); popup leveling 400x380, font 15/13; age500+; nama RF di popup
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -591,34 +591,52 @@ task.spawn(function()
                     while #pjArr > 80 do table.remove(pjArr) end
                     petJenisTerakhir = pjArr
                 end
-                -- v8.357: maxInv dari UI "Pet Items (X/Y)" (kayak up6kg) -> Y = max ASLI akun.
-                -- attribute (getInventoryCapacity) = fallback kalo UI belum ke-load.
-                -- v8.487: skip TradingUI (biar gak baca max akun lawan pas trade, sama cara hact/up6kg)
-                local mxUI = nil
-                pcall(function()
-                    local pg = plr:FindFirstChild("PlayerGui")
-                    if pg then
-                        local tradeUI = pg:FindFirstChild("TradingUI")
-                        for _, d in ipairs(pg:GetDescendants()) do
-                            if tradeUI and d:IsDescendantOf(tradeUI) then continue end
-                            if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
-                                local low = d.Text:lower()
-                                if low:find("pet") and low:find("item") then   -- "Pet Items" (BUKAN "All Items")
-                                    local aa, bb = d.Text:match("(%d+)%s*/%s*(%d+)")
-                                    if aa and bb then aa, bb = tonumber(aa), tonumber(bb)
-                                        if bb and bb > 0 then mxUI = bb; break end
+                -- v8.488: maxInv — sama cara hact:
+                -- 1) HactTelurGetMaxPets() (pointer langsung, paling akurat, no getgc)
+                -- 2) UI scan "Pet Items X/Y" SKIP TradingUI (biar gak baca max lawan)
+                --    + hanya update kalau nilai lebih besar dari tersimpan (gak ke-overwrite sama nilai kecil)
+                -- 3) fallback _G.__ZenxMaxInv (di-set startup via file/getgc)
+                do
+                    local mxNew = nil
+                    -- layer 1: HactTelurGetMaxPets pointer (sama persis cara hact)
+                    pcall(function()
+                        if _G.HactTelurGetMaxPets then
+                            local d = _G.HactTelurGetMaxPets()
+                            local v = nil
+                            if type(d) == "number" then v = d
+                            elseif type(d) == "table" then v = d.maxPets or d.MaxPets end
+                            if v and v > 0 then mxNew = v end
+                        end
+                    end)
+                    -- layer 2: UI scan skip TradingUI
+                    if not mxNew then pcall(function()
+                        local pg = plr:FindFirstChild("PlayerGui")
+                        if pg then
+                            local tradeUI = pg:FindFirstChild("TradingUI")
+                            for _, d in ipairs(pg:GetDescendants()) do
+                                if tradeUI and d:IsDescendantOf(tradeUI) then continue end
+                                if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
+                                    local low = d.Text:lower()
+                                    if low:find("pet") and low:find("item") then
+                                        local aa, bb = d.Text:match("(%d+)%s*/%s*(%d+)")
+                                        if aa and bb then bb = tonumber(bb)
+                                            if bb and bb > 0 then mxNew = bb; break end
+                                        end
                                     end
                                 end
                             end
                         end
+                    end) end
+                    -- apply: hanya update kalau lebih besar dari tersimpan (anti-overwrite nilai kecil)
+                    if mxNew and mxNew > 0 then
+                        if mxNew > (maxInvTerakhir or 0) then
+                            maxInvTerakhir = mxNew; _G.__ZenxMaxInv = mxNew
+                        end
+                    else
+                        -- layer 3: fallback tersimpan
+                        local mi = tonumber(_G.__ZenxMaxInv)
+                        if mi and mi > 0 then maxInvTerakhir = mi end
                     end
-                end)
-                if mxUI and mxUI > 0 then
-                    maxInvTerakhir = mxUI; _G.__ZenxMaxInv = mxUI
-                else
-                    -- v8.460: baca dari _G.__ZenxMaxInv (di-set startup via file/getgc)
-                    local mi = tonumber(_G.__ZenxMaxInv)
-                    if mi and mi > 0 then maxInvTerakhir = mi end
                 end
                 -- v8.368: BALIK HOME pas FULL di GARDEN (leveling). Akun market di-oper ke leveling
                 -- buat diisi bahan; pas totalPet >= maxInv (full) -> minta worker balikin ke market.
