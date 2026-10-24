@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.491"
+local VERSION = "8.492"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -488,12 +488,32 @@ task.spawn(function()
     --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
     local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
     local totalPetTerakhir, maxInvTerakhir = 0, 0   -- v8.354: total pet backpack + maxInv (buat panel)
-    -- v8.460: detect maxInv SEKALI saat startup (UI atau getgc), simpan ke file.
-    -- Di server manapun (market/garden) tinggal baca file -> selalu valid.
+    -- v8.492: detect maxInv startup — port cara hact (attribute LocalPlayer paling reliable)
+    -- 1) HactTelurGetMaxPets pointer (kalau hact running bareng)
+    -- 2) player:GetAttribute("MaxPets"/"MaxPetsInInventory") — PASTI milik sendiri, anti-kontaminasi
+    -- 3) UI scan "Pet Items (X/Y)" skip TradingUI
+    -- 4) getgc voting (fallback)
+    -- 5) file lama (cache terakhir)
+    -- simpan ke file hanya kalau nilai >= file lama
     local _maxInvFile = plr and plr.Name and ("zenx_maxinv_" .. plr.Name .. ".txt")
     pcall(function()
         if not _maxInvFile then return end
-        -- 1) detect segar: UI "Pet Items (X/Y)" skip TradingUI + min 100 (biar gak simpan nilai lawan)
+        -- 1) HactTelurGetMaxPets pointer (kalau hact running bareng)
+        if maxInvTerakhir <= 0 then pcall(function()
+            if _G.HactTelurGetMaxPets then
+                local d = _G.HactTelurGetMaxPets()
+                local v = nil
+                if type(d) == "number" then v = d
+                elseif type(d) == "table" then v = d.maxPets or d.MaxPets end
+                if v and v > 0 then maxInvTerakhir = v end
+            end
+        end) end
+        -- 2) attribute LocalPlayer — pasti milik sendiri (cara hact v32.9)
+        if maxInvTerakhir <= 0 then pcall(function()
+            local mp = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory")
+            if type(mp) == "number" and mp > 0 then maxInvTerakhir = mp end
+        end) end
+        -- 3) UI scan "Pet Items (X/Y)" skip TradingUI
         if maxInvTerakhir <= 0 then
             local pg2 = plr:FindFirstChild("PlayerGui")
             if pg2 then
@@ -513,7 +533,7 @@ task.spawn(function()
                 end
             end
         end
-        -- 3) fallback getgc (reliable di garden maupun market)
+        -- 4) fallback getgc voting (reliable di garden maupun market)
         if maxInvTerakhir <= 0 and getgc then
             local tally = {}
             for _, obj in ipairs(getgc(true)) do
@@ -532,13 +552,13 @@ task.spawn(function()
             end
             if mx and mx > 0 then maxInvTerakhir = mx end
         end
-        -- 4) fallback: baca file lama
+        -- 5) fallback: baca file lama
         if maxInvTerakhir <= 0 and readfile then
             local ok, mi = pcall(function() return tonumber(readfile(_maxInvFile)) end)
             if ok and mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
         end
-        -- 5) simpan ke file kalau berhasil detect
-        -- v8.491: simpan HANYA nilai yang >= tersimpan (gak overwrite file dengan nilai lebih kecil)
+        -- 6) simpan ke file kalau berhasil detect
+        -- v8.492: simpan HANYA nilai yang >= tersimpan (gak overwrite file dengan nilai lebih kecil)
         if maxInvTerakhir > 0 then
             _G.__ZenxMaxInv = maxInvTerakhir
             local fileLama = 0
@@ -597,14 +617,15 @@ task.spawn(function()
                     while #pjArr > 80 do table.remove(pjArr) end
                     petJenisTerakhir = pjArr
                 end
-                -- v8.488: maxInv — sama cara hact:
-                -- 1) HactTelurGetMaxPets() (pointer langsung, paling akurat, no getgc)
-                -- 2) UI scan "Pet Items X/Y" SKIP TradingUI (biar gak baca max lawan)
-                --    + hanya update kalau nilai lebih besar dari tersimpan (gak ke-overwrite sama nilai kecil)
-                -- 3) fallback _G.__ZenxMaxInv (di-set startup via file/getgc)
+                -- v8.492: maxInv — port penuh cara hact (tanpa file):
+                -- 1) HactTelurGetMaxPets() — pointer shared dari hact kalau jalan bareng
+                -- 2) player:GetAttribute("MaxPets"/"MaxPetsInInventory") — PASTI milik sendiri, anti-kontaminasi
+                -- 3) UI scan "Pet Items X/Y" skip TradingUI
+                -- 4) fallback _G.__ZenxMaxInv dari startup getgc
+                -- hanya update kalau nilai baru > tersimpan (anti-overwrite nilai kecil)
                 do
                     local mxNew = nil
-                    -- layer 1: HactTelurGetMaxPets pointer (sama persis cara hact)
+                    -- layer 1: HactTelurGetMaxPets pointer (kalau hact running bareng)
                     pcall(function()
                         if _G.HactTelurGetMaxPets then
                             local d = _G.HactTelurGetMaxPets()
@@ -614,7 +635,12 @@ task.spawn(function()
                             if v and v > 0 then mxNew = v end
                         end
                     end)
-                    -- layer 2: UI scan skip TradingUI
+                    -- layer 2: attribute LocalPlayer — pasti milik sendiri (cara hact v32.9)
+                    if not mxNew then pcall(function()
+                        local mp = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory")
+                        if type(mp) == "number" and mp > 0 then mxNew = mp end
+                    end) end
+                    -- layer 3: UI scan skip TradingUI
                     if not mxNew then pcall(function()
                         local pg = plr:FindFirstChild("PlayerGui")
                         if pg then
@@ -633,15 +659,14 @@ task.spawn(function()
                             end
                         end
                     end) end
-                    -- apply: hanya update kalau lebih besar dari tersimpan (anti-overwrite nilai kecil)
+                    -- apply: hanya update kalau lebih besar dari tersimpan
                     if mxNew and mxNew > 0 then
                         if mxNew > (maxInvTerakhir or 0) then
                             maxInvTerakhir = mxNew; _G.__ZenxMaxInv = mxNew
-                            -- v8.491: update file kalau nilai baru lebih besar (koreksi file basi)
                             if _maxInvFile then pcall(function() if writefile then writefile(_maxInvFile, tostring(mxNew)) end end) end
                         end
                     else
-                        -- layer 3: fallback tersimpan
+                        -- layer 4: fallback tersimpan
                         local mi = tonumber(_G.__ZenxMaxInv)
                         if mi and mi > 0 then maxInvTerakhir = mi end
                     end
