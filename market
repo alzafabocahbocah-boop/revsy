@@ -1,4 +1,4 @@
--- ZENX MARKET v8.470 — fix kartu leveling nol: deteksi scAssign "leveling", hapus filter ageP
+-- ZENX MARKET v8.471 — debug print leveling fetch + simplify isLevel logic
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.470"
+local VERSION = "8.471"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1053,28 +1053,38 @@ do
         local MKEY = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
         local function fetchLevelingData()
             local list = {}
-            pcall(function()
+            local ok3, err3 = pcall(function()
                 local r = httpRequest({ Url=MURL.."/stat", Method="GET",
                     Headers={["X-Kunci"]=MKEY} })
                 local body = r and (r.Body or r.body) or ""
+                print("[LVL-DBG] body len="..#body.." | status="..(r and tostring(r.StatusCode or r.statusCode) or "?"))
                 local ok2, data = pcall(function() return HS:JSONDecode(body) end)
-                if not ok2 or type(data) ~= "table" then return end
+                if not ok2 or type(data) ~= "table" then
+                    print("[LVL-DBG] JSONDecode gagal: "..tostring(data))
+                    return
+                end
                 local akuns = data.akun or data.akuns or data
-                if type(akuns) ~= "table" then return end
+                if type(akuns) ~= "table" then
+                    print("[LVL-DBG] akuns bukan table: "..type(akuns))
+                    return
+                end
+                print("[LVL-DBG] total akun="..#akuns)
                 for _, a in ipairs(akuns) do
-                    -- v8.470: sc bisa null (jadi string "null") -> cek scAssign terpisah
+                    -- v8.471: deteksi scAssign leveling
                     local sc1 = tostring(a.sc or ""):upper()
                     local sc2 = tostring(a.scAssign or ""):upper()
-                    local isLevel = (sc1:find("LEVEL") or sc1:find("LVL") or sc2:find("LEVEL") or sc2:find("LVL"))
-                        and sc1 ~= "NULL"  -- skip kalau sc="null" dan scAssign kosong
-                    if not isLevel and (sc2:find("LEVEL") or sc2:find("LVL")) then isLevel = true end
+                    local isLevel = (sc2:find("LEVEL") or sc2:find("LVL")) or
+                                    (sc1:find("LEVEL") or sc1:find("LVL"))
                     if isLevel then
                         local timNm = tostring(a.tim or a.timAssign or a.timName or "?")
                         local akunNm = tostring(a.nama or a.akun or a.name or a.username or "?")
+                        print("[LVL-DBG] FOUND leveling: "..akunNm.." | sc1="..sc1.." | sc2="..sc2)
                         table.insert(list, {akun=akunNm, tim=timNm, ageP=0})
                     end
                 end
+                print("[LVL-DBG] total leveling="..#list)
             end)
+            if not ok3 then print("[LVL-DBG] error: "..tostring(err3)) end
             return list
         end
 
