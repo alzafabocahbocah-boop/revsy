@@ -1,4 +1,4 @@
--- ZENX MARKET v8.510 — fix rule gak ke-apply setelah rejoin: clear rulesVer+snipeVer saat boot
+-- ZENX MARKET v8.511 — log tiap step fetchRuleFromPanel kenapa gak ke-apply
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.510"
+local VERSION = "8.511"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
+local VERSION_DATE = "v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -2741,20 +2741,45 @@ do
             local r = _req({ Url = PANEL_URL .. "/market-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
             return r and (r.Body or r.body)
         end)
-        if okF then body = b end
-        if type(body) ~= "string" or body == "" then return false end
+        -- v8.510: log tiap step kenapa gak ke-apply
+        if not okF then
+            warn("[fetchRule] ❌ HTTP gagal: " .. tostring(b))
+            return false
+        end
+        body = b
+        if type(body) ~= "string" or body == "" then
+            warn("[fetchRule] ❌ body kosong/nil (type=" .. type(body) .. ")")
+            return false
+        end
         local ok2, data = pcall(function() return _HS:JSONDecode(body) end)
-        if not ok2 or type(data) ~= "table" then return false end
+        if not ok2 or type(data) ~= "table" then
+            warn("[fetchRule] ❌ JSON decode gagal: " .. tostring(data))
+            return false
+        end
         local ver = tonumber(data.ver) or 0
         local rules = data.rules
-        if ver <= 0 or type(rules) ~= "table" then return false end
+        if ver <= 0 then
+            warn("[fetchRule] ❌ ver panel = " .. ver .. " (panel kosong / belum pernah disave)")
+            return false
+        end
+        if type(rules) ~= "table" then
+            warn("[fetchRule] ❌ rules bukan table (type=" .. type(rules) .. ")")
+            return false
+        end
         -- v8.509: hapus guard #rules==0 — panel bisa set 0 rule (clear semua)
-        if _BH.marketState.rulesVer == ver then return false end   -- udah ke-apply
+        if _BH.marketState.rulesVer == ver then
+            print("[fetchRule] ✓ skip — rulesVer sudah sama (ver=" .. ver .. ")")
+            return false
+        end
+        print("[fetchRule] → apply " .. #rules .. " rule (ver panel=" .. ver .. " vs lokal=" .. tostring(_BH.marketState.rulesVer) .. ")")
         local st = {}
         for k, v in pairs(_BH.marketState) do st[k] = v end
         st.listingRules = rules
         st.rulesVer = ver
-        local ok3 = pcall(_BH.applyState, st)
+        local ok3, applyErr = pcall(_BH.applyState, st)
+        if not ok3 then
+            warn("[fetchRule] ❌ applyState error: " .. tostring(applyErr))
+        end
         -- v8.504: set rulesVer + save setelah apply
         _BH.marketState.rulesVer = ver
         pcall(_BH.saveMarketState, _BH.marketState)
@@ -2762,7 +2787,7 @@ do
         _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
         table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  « PANEL: update list → " .. #rules .. " rule »")
         if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
-        return true
+        return ok3
     end
     BH.fetchRuleFromPanel = fetchRuleFromPanel
 
