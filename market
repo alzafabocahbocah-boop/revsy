@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.508"
+local VERSION = "8.509"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.508: INFO tab label permanen tim aktif | v8.507: fix loop lookup BH fresh + kill loop lama saat reload | v8.506: fix INFO tambah POST /tim | v8.505: fix INFO pakai executor req"
+local VERSION_DATE = "v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif | v8.507: fix loop lookup BH fresh + kill loop lama saat reload"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -2742,7 +2742,8 @@ do
         if not ok2 or type(data) ~= "table" then return false end
         local ver = tonumber(data.ver) or 0
         local rules = data.rules
-        if ver <= 0 or type(rules) ~= "table" or #rules == 0 then return false end
+        if ver <= 0 or type(rules) ~= "table" then return false end
+        -- v8.509: hapus guard #rules==0 — panel bisa set 0 rule (clear semua)
         if _BH.marketState.rulesVer == ver then return false end   -- udah ke-apply
         local st = {}
         for k, v in pairs(_BH.marketState) do st[k] = v end
@@ -2884,17 +2885,18 @@ do
     local _loopId = os.time()
     _G.__ZenxMarketLoopId = _loopId
     task.spawn(function()
-        -- v8.464: fetch sekali awal (retry 10s sampai dapat), lalu tiap 5 menit terus
+        -- v8.509: fix — doneRule cek return value fetchRule (bukan pcall ok status)
+        -- retry tiap 30s sampai rule ke-apply, lalu tiap 5 menit
         -- v8.507: cek loopId tiap iterasi — kalau udah diganti (reload), loop ini exit
         task.wait(6)
         while _G.__ZenxMarketLoopId == _loopId do
             local _BH = getgenv and getgenv().ZenxMarketBH
             if _BH then
-                local doneRule = pcall(_BH.fetchRuleFromPanel)
-                pcall(_BH.fetchSnipeFromPanel)
-                if doneRule then break end
+                local ok1, doneRule = pcall(_BH.fetchRuleFromPanel)
+                local ok2, doneSnipe = pcall(_BH.fetchSnipeFromPanel)
+                if ok1 and doneRule then break end   -- v8.509: break hanya kalau rule beneran ke-apply
             end
-            task.wait(10)
+            task.wait(30)   -- v8.509: retry tiap 30s (bukan 10s) biar gak spam
         end
         while _G.__ZenxMarketLoopId == _loopId do
             task.wait(300)
