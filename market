@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.494"
+local VERSION = "8.495"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -488,12 +488,13 @@ task.spawn(function()
     --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
     local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
     local totalPetTerakhir, maxInvTerakhir = 0, 0   -- v8.354: total pet backpack + maxInv (buat panel)
-    -- v8.492: detect maxInv startup — port cara hact (attribute LocalPlayer paling reliable)
+    -- v8.495: detect maxInv startup — port cara hact (leaderstats/Data folder paling langsung)
     -- 1) HactTelurGetMaxPets pointer (kalau hact running bareng)
-    -- 2) player:GetAttribute("MaxPets"/"MaxPetsInInventory") — PASTI milik sendiri, anti-kontaminasi
-    -- 3) UI scan "Pet Items (X/Y)" skip TradingUI
-    -- 4) getgc voting (fallback)
-    -- 5) file lama (cache terakhir)
+    -- 2) player:GetAttribute("MaxPets"/"MaxPetsInInventory")
+    -- 3) leaderstats/Data/PlayerData folder (IntValue — cara hact, langsung tanpa getgc)
+    -- 4) UI scan "Pet Items (X/Y)" skip TradingUI
+    -- 5) getgc voting + validasi mp >= totalPet
+    -- 6) file lama (cache terakhir)
     -- simpan ke file hanya kalau nilai >= file lama
     local _maxInvFile = plr and plr.Name and ("zenx_maxinv_" .. plr.Name .. ".txt")
     pcall(function()
@@ -508,10 +509,27 @@ task.spawn(function()
                 if v and v > 0 then maxInvTerakhir = v end
             end
         end) end
-        -- 2) attribute LocalPlayer — pasti milik sendiri (cara hact v32.9)
+        -- 2) attribute LocalPlayer
         if maxInvTerakhir <= 0 then pcall(function()
             local mp = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory")
             if type(mp) == "number" and mp > 0 then maxInvTerakhir = mp end
+        end) end
+        -- 3) v8.495: leaderstats/Data/PlayerData folder (IntValue) — cara hact, paling langsung
+        if maxInvTerakhir <= 0 then pcall(function()
+            local folders = {"Data", "leaderstats", "PlayerData"}
+            local keys = {"MaxPets", "PetLimit", "max_pets", "MaxPet", "MaxPetsInInventory"}
+            for _, fn in ipairs(folders) do
+                local f = plr:FindFirstChild(fn)
+                if f then
+                    for _, k in ipairs(keys) do
+                        local vv = f:FindFirstChild(k)
+                        if vv and vv.Value and type(vv.Value) == "number" and vv.Value > 0 then
+                            maxInvTerakhir = vv.Value; break
+                        end
+                    end
+                end
+                if maxInvTerakhir > 0 then break end
+            end
         end) end
         -- 3) UI scan "Pet Items (X/Y)" skip TradingUI
         if maxInvTerakhir <= 0 then
@@ -636,15 +654,12 @@ task.spawn(function()
                     while #pjArr > 80 do table.remove(pjArr) end
                     petJenisTerakhir = pjArr
                 end
-                -- v8.492: maxInv — port penuh cara hact (tanpa file):
-                -- 1) HactTelurGetMaxPets() — pointer shared dari hact kalau jalan bareng
-                -- 2) player:GetAttribute("MaxPets"/"MaxPetsInInventory") — PASTI milik sendiri, anti-kontaminasi
-                -- 3) UI scan "Pet Items X/Y" skip TradingUI
-                -- 4) fallback _G.__ZenxMaxInv dari startup getgc
-                -- hanya update kalau nilai baru > tersimpan (anti-overwrite nilai kecil)
+                -- v8.495: maxInv per-tick — sama urutan startup
+                -- 1) HactTelurGetMaxPets, 2) Attribute, 3) leaderstats/Data folder, 4) UI skip TradingUI
+                -- hanya update kalau nilai baru > tersimpan
                 do
                     local mxNew = nil
-                    -- layer 1: HactTelurGetMaxPets pointer (kalau hact running bareng)
+                    -- layer 1: HactTelurGetMaxPets
                     pcall(function()
                         if _G.HactTelurGetMaxPets then
                             local d = _G.HactTelurGetMaxPets()
@@ -654,12 +669,29 @@ task.spawn(function()
                             if v and v > 0 then mxNew = v end
                         end
                     end)
-                    -- layer 2: attribute LocalPlayer — pasti milik sendiri (cara hact v32.9)
+                    -- layer 2: attribute
                     if not mxNew then pcall(function()
                         local mp = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory")
                         if type(mp) == "number" and mp > 0 then mxNew = mp end
                     end) end
-                    -- layer 3: UI scan skip TradingUI
+                    -- layer 3: leaderstats/Data/PlayerData folder (IntValue) — cara hact
+                    if not mxNew then pcall(function()
+                        local folders = {"Data", "leaderstats", "PlayerData"}
+                        local keys = {"MaxPets", "PetLimit", "max_pets", "MaxPet", "MaxPetsInInventory"}
+                        for _, fn in ipairs(folders) do
+                            local f = plr:FindFirstChild(fn)
+                            if f then
+                                for _, k in ipairs(keys) do
+                                    local vv = f:FindFirstChild(k)
+                                    if vv and vv.Value and type(vv.Value)=="number" and vv.Value>0 then
+                                        mxNew = vv.Value; break
+                                    end
+                                end
+                            end
+                            if mxNew then break end
+                        end
+                    end) end
+                    -- layer 4: UI scan skip TradingUI
                     if not mxNew then pcall(function()
                         local pg = plr:FindFirstChild("PlayerGui")
                         if pg then
