@@ -1,4 +1,4 @@
--- ZENX MARKET v8.506 — fix INFO kirim ke panel: tambah POST /tim seperti hact
+-- ZENX MARKET v8.507 — fix loop: lookup BH fresh tiap iterasi + kill loop lama saat reload
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.506"
+local VERSION = "8.507"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.506: fix INFO tambah POST /tim seperti hact | v8.505: fix INFO pakai executor req | v8.504: fix fetchRuleFromPanel lookup BH fresh | v8.503: FPS label di header"
+local VERSION_DATE = "v8.507: fix loop lookup BH fresh + kill loop lama saat reload | v8.506: fix INFO tambah POST /tim | v8.505: fix INFO pakai executor req | v8.504: fix fetchRuleFromPanel lookup BH fresh"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -2872,20 +2872,29 @@ do
     end
     BH.laporHargaPasar = laporHargaPasar
 
+    -- v8.507: loop ID buat kill loop lama kalau script di-reload
+    local _loopId = os.time()
+    _G.__ZenxMarketLoopId = _loopId
     task.spawn(function()
         -- v8.464: fetch sekali awal (retry 10s sampai dapat), lalu tiap 5 menit terus
-        -- v8.500: pakai BH.fetchRuleFromPanel/BH.fetchSnipeFromPanel (bukan upvalue) supaya bisa di-patch dari luar
+        -- v8.507: cek loopId tiap iterasi — kalau udah diganti (reload), loop ini exit
         task.wait(6)
-        while true do
-            local doneRule = pcall(BH.fetchRuleFromPanel)
-            pcall(BH.fetchSnipeFromPanel)  -- v8.501: snipe boleh gagal, jangan blok loop
-            if doneRule then break end
+        while _G.__ZenxMarketLoopId == _loopId do
+            local _BH = getgenv and getgenv().ZenxMarketBH
+            if _BH then
+                local doneRule = pcall(_BH.fetchRuleFromPanel)
+                pcall(_BH.fetchSnipeFromPanel)
+                if doneRule then break end
+            end
             task.wait(10)
         end
-        while true do
+        while _G.__ZenxMarketLoopId == _loopId do
             task.wait(300)
-            pcall(BH.fetchRuleFromPanel)
-            pcall(BH.fetchSnipeFromPanel)
+            local _BH = getgenv and getgenv().ZenxMarketBH
+            if _BH then
+                pcall(_BH.fetchRuleFromPanel)
+                pcall(_BH.fetchSnipeFromPanel)
+            end
         end
     end)
     -- Riset harga pasar tetap jalan tiap 15s (laporan ke panel, bukan fetch)
