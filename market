@@ -1,4 +1,4 @@
--- ZENX MARKET v8.488 — getInventoryCapacity 4-layer (HactTelurGetMaxPets+skip TradingUI+GetAttribute+folder); popup leveling 400x380, font 15/13; age500+; nama RF di popup
+-- ZENX MARKET v8.489 — getInventoryCapacity 4-layer (HactTelurGetMaxPets+skip TradingUI+GetAttribute+folder); popup leveling 400x380, font 15/13; age500+; nama RF di popup
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.488"
+local VERSION = "8.489"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -493,19 +493,20 @@ task.spawn(function()
     local _maxInvFile = plr and plr.Name and ("zenx_maxinv_" .. plr.Name .. ".txt")
     pcall(function()
         if not _maxInvFile then return end
-        -- 1) detect segar: UI "Pet Items (X/Y)" (cuma ada kalau di market)
-        -- (file dibaca SETELAH detect segar, dipakai cuma kalau detect gagal)
+        -- 1) detect segar: UI "Pet Items (X/Y)" skip TradingUI + min 100 (biar gak simpan nilai lawan)
         if maxInvTerakhir <= 0 then
             local pg2 = plr:FindFirstChild("PlayerGui")
             if pg2 then
+                local tradeUI2 = pg2:FindFirstChild("TradingUI")
                 for _, d in ipairs(pg2:GetDescendants()) do
+                    if tradeUI2 and d:IsDescendantOf(tradeUI2) then continue end
                     if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text)=="string" then
                         local low = d.Text:lower()
                         if low:find("pet") and low:find("item") then
                             local aa, bb = d.Text:match("(%d+)%s*/%s*(%d+)")
                             if aa and bb then
-                                aa, bb = tonumber(aa), tonumber(bb)
-                                if bb and bb > 0 then maxInvTerakhir = bb; break end
+                                bb = tonumber(bb)
+                                if bb and bb >= 100 then maxInvTerakhir = bb; break end  -- min 100 biar gak simpan nilai akun lawan
                             end
                         end
                     end
@@ -531,10 +532,10 @@ task.spawn(function()
             end
             if mx and mx > 0 then maxInvTerakhir = mx end
         end
-        -- 4) fallback: baca file lama kalau detect segar + getgc dua-duanya gagal
+        -- 4) fallback: baca file lama (min 100 biar gak pakai nilai basi dari akun lawan)
         if maxInvTerakhir <= 0 and readfile then
             local ok, mi = pcall(function() return tonumber(readfile(_maxInvFile)) end)
-            if ok and mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
+            if ok and mi and mi >= 100 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
         end
         -- 5) simpan ke file kalau berhasil detect
         if maxInvTerakhir > 0 then
