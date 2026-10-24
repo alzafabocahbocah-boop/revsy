@@ -1,4 +1,4 @@
--- ZENX MARKET v8.515 — hapus loop laporHargaPasar tiap 15s (gak dipakai)
+-- ZENX MARKET v8.516 — hitung totalPet sekali di boot sebelum loop kirim jalan
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.515"
+local VERSION = "8.516"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.515: hapus loop laporHargaPasar tiap 15s | v8.514: skin booth ke atas di manual snipe list (sort isSkin first) | v8.513: fix snipe gak ke-apply — merge logic baca r.type padahal panel+lokal pakai r.petType | v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
+local VERSION_DATE = "v8.516: hitung totalPet sekali di boot sebelum loop kirim (fix panel 0 pet sampai 60s) | v8.515: hapus loop laporHargaPasar tiap 15s | v8.514: skin booth ke atas di manual snipe list (sort isSkin first) | v8.513: fix snipe gak ke-apply — merge logic baca r.type padahal panel+lokal pakai r.petType | v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -466,6 +466,23 @@ task.spawn(function()
     local lamaDetail = 0   -- v8.460: kapan terakhir kirim payload detail (tiap 5 menit)
     task.wait(8)   -- tunggu UI + BH kebangun
     print("[MarketBridge] jalan | " .. plr.Name)
+    -- v8.516: hitung totalPet sekali di boot — biar langsung ada nilai saat kirim pertama
+    -- (loop hitung normalnya baru jalan setelah 60s, jadi panel dapet 0 selama itu)
+    pcall(function()
+        local bp = plr:FindFirstChild("Backpack")
+        if bp then
+            local nn = 0
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
+                    nn = nn + 1
+                end
+            end
+            if nn > 0 then
+                totalPetTerakhir = nn
+                _G.ZenxMarketTotalPet = nn
+            end
+        end
+    end)
 
     -- v8.329: kirim daftar SEMUA nama pet dari game (PetRegistry, ~421) ke Worker
     -- SEKALI. Panel pakai buat picker jenis pet di editor rule. Jarang berubah,
