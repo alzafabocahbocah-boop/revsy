@@ -1,4 +1,4 @@
--- ZENX MARKET v8.511 — log tiap step fetchRuleFromPanel kenapa gak ke-apply
+-- ZENX MARKET v8.512 — fix PANEL_URL nil: define di dalam fetchRuleFromPanel
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.511"
+local VERSION = "8.512"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
+local VERSION_DATE = "v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -2731,6 +2731,10 @@ do
     -- Startup + periodik 120s. pcall total biar gak ganggu loop. Backend kosong
     -- / gagal -> biarin rule lokal (default hardcoded jadi fallback).
     local function fetchRuleFromPanel()
+        -- v8.512: define ulang URL+KUNCI di sini — PANEL_URL/PANEL_KUNCI yg di atas
+        -- adalah local di scope bridge yg berbeda, jadi nil di sini (beda closure scope)
+        local _URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+        local _KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
         -- v8.504: lookup BH fresh tiap panggil — bukan upvalue — biar gak stale closure
         local _BH = getgenv and getgenv().ZenxMarketBH or BH
         local _req = (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or http_request or request or httprequest
@@ -2738,7 +2742,7 @@ do
         local _HS = game:GetService("HttpService")
         local body
         local okF, b = pcall(function()
-            local r = _req({ Url = PANEL_URL .. "/market-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+            local r = _req({ Url = _URL .. "/market-rules", Method = "GET", Headers = { ["X-Kunci"] = _KUNCI } })
             return r and (r.Body or r.body)
         end)
         -- v8.510: log tiap step kenapa gak ke-apply
@@ -2795,10 +2799,13 @@ do
     -- timpa autoSnipe.rules + rebuild UI snipe. BH.autoSnipe dibikin belakangan
     -- (dicek runtime), jadi aman dipanggil dari loop yg jalan setelah script load.
     local function fetchSnipeFromPanel()
+        -- v8.512: define ulang URL+KUNCI di sini (sama alasan kayak fetchRuleFromPanel)
+        local _URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+        local _KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
         -- v8.463: langsung ke panel (bypass worker)
         local body
         local okF, b = pcall(function()
-            local r = req({ Url = PANEL_URL .. "/snipe-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+            local r = req({ Url = _URL .. "/snipe-rules", Method = "GET", Headers = { ["X-Kunci"] = _KUNCI } })
             return r and (r.Body or r.body)
         end)
         if okF then body = b end
@@ -2867,9 +2874,12 @@ do
     -- SEMUA listing pet itu di server ini (harga + base kg + mutasi) -> PUT ke slot server sendiri
     -- (/market-pricedata). Panel gabung dari semua server. Cuma lapor kalo ADA yg diminta.
     local function laporHargaPasar()
+        -- v8.512: define ulang (sama alasan, PANEL_URL nil di scope ini)
+        local _URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+        local _KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
         local reqPet = ""
         pcall(function()
-            local r = req({ Url = PANEL_URL .. "/market-pricereq", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+            local r = req({ Url = _URL .. "/market-pricereq", Method = "GET", Headers = { ["X-Kunci"] = _KUNCI } })
             reqPet = (r and (r.Body or r.body)) or ""
         end)
         reqPet = tostring(reqPet):gsub("^%s+", ""):gsub("%s+$", "")
