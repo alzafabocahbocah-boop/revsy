@@ -1165,18 +1165,20 @@ export default {
         if (!nama) return salah("akun kosong");
         // simpan di tabel akun (upsert), tokens & petRule masuk kolom sendiri.
         // place tetap dilapor biar panel tau ini GAG 1.
+        await db.prepare("ALTER TABLE akun ADD COLUMN mktpet INTEGER").run().catch(() => {});
         await db
           .prepare(
-            `INSERT INTO akun (nama, ts, place, tokens, petrule, nrule, upkgstat)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            `INSERT INTO akun (nama, ts, place, tokens, petrule, nrule, upkgstat, mktpet)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(nama) DO UPDATE SET
-               ts=?2, place=?3, tokens=?4, petrule=?5, nrule=?6, upkgstat=?7`
+               ts=?2, place=?3, tokens=?4, petrule=?5, nrule=?6, upkgstat=?7, mktpet=?8`
           )
           .bind(nama, skrg, teks(b.place, 24), angka(b.tokens), angka(b.petRule), angka(b.nRule),
                 JSON.stringify({ totalPet: angka(b.totalPet), maxInv: angka(b.maxInv), snipe: angka(b.snipe),
                                  snipeTok: angka(b.snipeTok),
                                  snipeJenis: Array.isArray(b.snipeJenis) ? b.snipeJenis.slice(0,40).map((x)=>({ n: teks(x.n,40)||"?", j: angka(x.j), t: angka(x.t) })) : [],
-                                 petJenis: Array.isArray(b.petJenis) ? b.petJenis.slice(0,80).map((x)=>({ n: teks(x.n,48)||"?", j: angka(x.j), kg: Array.isArray(x.kg) ? x.kg.slice(0,12).map((v)=>angka(v)) : [] })) : [] }))
+                                 petJenis: Array.isArray(b.petJenis) ? b.petJenis.slice(0,80).map((x)=>({ n: teks(x.n,48)||"?", j: angka(x.j), kg: Array.isArray(x.kg) ? x.kg.slice(0,12).map((v)=>angka(v)) : [] })) : [] }),
+                angka(b.totalPet))
           .run();
         // v4.78: simpen ringkasan penjualan akun ini (kalau dikirim)
         if (b.jual && typeof b.jual === "object") {
