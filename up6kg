@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.226 (stat panel: gabung 6kg-/6kg+ 1 kartu, hact)║
+-- ║  UP KG — v10.227 (popup hact: klik kartu -> list akun+RF+keep+max)║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -156,23 +156,108 @@ task.spawn(function()
         end
     end)
 
-    -- fetch jumlah akun hact dari panel tiap 60s -> _G.ZenxHactCount
+    -- fetch jumlah akun hact dari panel tiap 60s -> _G.ZenxHactCount + _G.ZenxHactList
+    -- v10.227: simpan raw list buat popup detail (format: "akun=total:max:keep:namaRF")
     task.spawn(function()
         local HS = game:GetService("HttpService")
-        local PANEL = "https://star-panel-baru-v675.petagee5.workers.dev"
+        local PANEL = "https://dry-glitter-63e4.petagee5.workers.dev"
         while sg.Parent do
             pcall(function()
                 local res = HS:GetAsync(PANEL .. "/hactakun")
-                local data = HS:JSONDecode(res)
-                if type(data) == "table" then
-                    local n = 0
-                    for _ in ipairs(data) do n = n + 1 end
-                    _G.ZenxHactCount = n
+                -- coba parse JSON dulu, kalau gagal parse sebagai string "k=v,k=v"
+                local parsed = {}
+                local ok = pcall(function()
+                    local data = HS:JSONDecode(res)
+                    if type(data) == "table" then
+                        -- format JSON: [{akun="nm", data="tot:max:keep:rf"}, ...]
+                        for _, row in ipairs(data) do
+                            local nm = row.akun or row.nm or row.name or ""
+                            local val = row.data or row.value or ""
+                            if nm ~= "" then parsed[#parsed+1] = {nm=nm, raw=val} end
+                        end
+                    end
+                end)
+                if not ok or #parsed == 0 then
+                    -- fallback: plain text "akun=tot:max:keep:rf,akun2=..."
+                    for pair in tostring(res):gmatch("[^,]+") do
+                        local nm, val = pair:match("^%s*(.-)%s*=%s*(.-)%s*$")
+                        if nm and nm ~= "" then parsed[#parsed+1] = {nm=nm, raw=val or ""} end
+                    end
                 end
+                _G.ZenxHactCount = #parsed
+                _G.ZenxHactList  = parsed  -- v10.227: simpan untuk popup
             end)
             task.wait(60)
         end
     end)
+
+    -- v10.227: popup detail hact (klik kartu "hact")
+    local function bukaPopupHact()
+        -- hapus popup lama kalau ada
+        local pg = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return end
+        local old = pg:FindFirstChild("ZenxHactPopup")
+        if old then old:Destroy() end
+
+        local list = _G.ZenxHactList or {}
+        -- parse tiap entry: raw = "total:max:keep:namaRF"
+        local items = {}
+        for _, row in ipairs(list) do
+            local raw = tostring(row.raw or "")
+            local tot, mx, keep, rf = raw:match("^(%d+):(%d+):(%d+):?(.*)$")
+            if not tot then tot, mx = raw:match("^(%d+):(%d+)$") end
+            items[#items+1] = {
+                akun  = tostring(row.nm or ""),
+                tot   = tonumber(tot) or 0,
+                mx    = tonumber(mx) or 0,
+                keep  = tonumber(keep) or 0,
+                rf    = tostring(rf or "")
+            }
+        end
+
+        -- buat ScreenGui popup
+        local sGui = Instance.new("ScreenGui"); sGui.Name = "ZenxHactPopup"; sGui.ResetOnSpawn = false; sGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; sGui.Parent = pg
+        local overlay = Instance.new("Frame"); overlay.Size = UDim2.new(1,0,1,0); overlay.BackgroundColor3 = Color3.fromRGB(0,0,0); overlay.BackgroundTransparency = 0.5; overlay.BorderSizePixel = 0; overlay.Parent = sGui
+
+        local popup = Instance.new("Frame"); popup.Size = UDim2.new(0,400,0,380); popup.AnchorPoint = Vector2.new(0.5,0.5); popup.Position = UDim2.new(0.5,0,0.5,0); popup.BackgroundColor3 = Color3.fromRGB(18,18,22); popup.BorderSizePixel = 0; popup.Parent = sGui
+        Instance.new("UICorner", popup).CornerRadius = UDim.new(0,12)
+
+        -- judul
+        local titleL = Instance.new("TextLabel"); titleL.Size = UDim2.new(1,0,0,42); titleL.BackgroundColor3 = Color3.fromRGB(139,92,246); titleL.BorderSizePixel = 0; titleL.Font = Enum.Font.GothamBold; titleL.TextSize = 16; titleL.TextColor3 = Color3.fromRGB(255,255,255); titleL.Text = "HACT — "..#items.." akun"; titleL.Parent = popup
+        Instance.new("UICorner", titleL).CornerRadius = UDim.new(0,12)
+        -- tutup rounded bottom di judul
+        local fix = Instance.new("Frame"); fix.Size = UDim2.new(1,0,0,12); fix.Position = UDim2.new(0,0,1,-12); fix.BackgroundColor3 = Color3.fromRGB(139,92,246); fix.BorderSizePixel = 0; fix.Parent = titleL
+
+        -- tombol tutup
+        local closeBtn = Instance.new("TextButton"); closeBtn.Size = UDim2.new(0,32,0,32); closeBtn.Position = UDim2.new(1,-38,0,5); closeBtn.BackgroundTransparency = 1; closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 20; closeBtn.TextColor3 = Color3.fromRGB(255,255,255); closeBtn.Text = "✕"; closeBtn.Parent = popup
+        closeBtn.MouseButton1Click:Connect(function() sGui:Destroy() end)
+        overlay.InputBegan:Connect(function(inp) if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then sGui:Destroy() end end)
+
+        -- scroll frame
+        local scrollF = Instance.new("ScrollingFrame"); scrollF.Size = UDim2.new(1,0,1,-44); scrollF.Position = UDim2.new(0,0,0,44); scrollF.BackgroundTransparency = 1; scrollF.BorderSizePixel = 0; scrollF.ScrollBarThickness = 4; scrollF.ScrollBarImageColor3 = Color3.fromRGB(139,92,246); scrollF.CanvasSize = UDim2.new(0,0,0, #items * 56 + 8); scrollF.Parent = popup
+        local layout = Instance.new("UIListLayout"); layout.Padding = UDim.new(0,4); layout.SortOrder = Enum.SortOrder.LayoutOrder; layout.Parent = scrollF
+        local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0,8); pad.PaddingRight = UDim.new(0,8); pad.PaddingTop = UDim.new(0,6); pad.Parent = scrollF
+
+        for i, item in ipairs(items) do
+            local row = Instance.new("Frame"); row.Size = UDim2.new(1,0,0,48); row.BackgroundColor3 = Color3.fromRGB(28,28,34); row.BorderSizePixel = 0; row.LayoutOrder = i; row.Parent = scrollF
+            Instance.new("UICorner", row).CornerRadius = UDim.new(0,8)
+
+            -- nama akun + nama RF
+            local rfLabel = (item.rf and item.rf ~= "") and (" ("..item.rf..")") or ""
+            local akunL = Instance.new("TextLabel"); akunL.Size = UDim2.new(0.62,0,0,24); akunL.Position = UDim2.new(0,10,0,4); akunL.BackgroundTransparency = 1; akunL.Font = Enum.Font.GothamBold; akunL.TextSize = 15; akunL.TextColor3 = Color3.fromRGB(255,255,255); akunL.TextXAlignment = Enum.TextXAlignment.Left; akunL.TextTruncate = Enum.TextTruncate.AtEnd; akunL.Text = item.akun..rfLabel; akunL.Parent = row
+
+            -- keep (kiri bawah)
+            local keepL = Instance.new("TextLabel"); keepL.Size = UDim2.new(0.5,0,0,18); keepL.Position = UDim2.new(0,10,0,26); keepL.BackgroundTransparency = 1; keepL.Font = Enum.Font.Gotham; keepL.TextSize = 13; keepL.TextColor3 = Color3.fromRGB(139,92,246); keepL.TextXAlignment = Enum.TextXAlignment.Left; keepL.Text = "keep: "..tostring(item.keep); keepL.Parent = row
+
+            -- max (kanan)
+            local maxL = Instance.new("TextLabel"); maxL.Size = UDim2.new(0.38,0,1,0); maxL.Position = UDim2.new(0.62,0,0,0); maxL.BackgroundTransparency = 1; maxL.Font = Enum.Font.GothamBold; maxL.TextSize = 15; maxL.TextColor3 = Color3.fromRGB(78,214,204); maxL.TextXAlignment = Enum.TextXAlignment.Right; maxL.Text = "max: "..tostring(item.mx); maxL.Parent = row
+            Instance.new("UIPadding", maxL).PaddingRight = UDim.new(0,10)
+        end
+
+        if #items == 0 then
+            local emptyL = Instance.new("TextLabel"); emptyL.Size = UDim2.new(1,0,0,60); emptyL.Position = UDim2.new(0,0,0,50); emptyL.BackgroundTransparency = 1; emptyL.Font = Enum.Font.Gotham; emptyL.TextSize = 14; emptyL.TextColor3 = Color3.fromRGB(120,120,140); emptyL.Text = "belum ada data hact"; emptyL.Parent = popup
+        end
+    end
 
     -- GRID container
     local gridF = Instance.new("Frame"); gridF.Size = UDim2.new(1,0,1,-66); gridF.BackgroundTransparency = 1; gridF.BorderSizePixel = 0; gridF.LayoutOrder = 2; gridF.Parent = frame
@@ -197,6 +282,9 @@ task.spawn(function()
     nextF.Visible = false
     local fpsLbl = Instance.new("TextLabel"); fpsLbl.BackgroundTransparency = 1; fpsLbl.Font = Enum.Font.GothamBold; fpsLbl.TextSize = 13; fpsLbl.TextColor3 = Color3.fromRGB(78,214,204)
     fpsLbl.Position = UDim2.new(1, -68, 1, -25); fpsLbl.Size = UDim2.new(0, 62, 0, 18); fpsLbl.TextXAlignment = Enum.TextXAlignment.Right; fpsLbl.Text = "0 fps"; fpsLbl.Parent = cHact
+    -- v10.227: klik kartu hact -> popup detail akun
+    local hactBtn = Instance.new("TextButton"); hactBtn.Size = UDim2.new(1,0,1,0); hactBtn.BackgroundTransparency = 1; hactBtn.Text = ""; hactBtn.Parent = cHact
+    hactBtn.MouseButton1Click:Connect(bukaPopupHact)
     -- FPS counter
     do
         local RunService = game:GetService("RunService")

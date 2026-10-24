@@ -5062,12 +5062,15 @@ async function pushUp6kgAkun(){
     if(str) await api("/up6kgakun","PUT",{data:str});
   }catch(e){}
 }
-// v688: push daftar akun HACT "akun=total:max" -> /hactakun (tab INFO hact tampil list akun+inv)
+// v694: push daftar akun HACT "akun=total:max:keep:namaRF" -> /hactakun
 async function pushHactAkun(){
   try{
     const m = {};
     const tims = (typeof STAT_TIM!=="undefined"?STAT_TIM:[]).filter(t=>{ const sc=(t.sc||"").toUpperCase(); return sc.includes("HACT")||sc.includes("CAMPUR"); });
     tims.forEach(t=>{
+      // ambil nama RF dari CATAT_RF
+      const rfRaw = (CATAT_RF&&CATAT_RF["#"+t.id]) || t.devnama || "";
+      const rfNm = rfRaw.replace(/[,=:]/g,"");
       (t.clients||[]).forEach(c=>{
         const nm = c.akun||c.nm; if(!nm) return;
         const a = _akunFresh(nm)||{};
@@ -5075,7 +5078,12 @@ async function pushHactAkun(){
         if(typeof st==="string"){ try{ st=JSON.parse(st); }catch(e){ st={}; } }
         const tot=Number(st.totalAll)||Number(st.totalPet)||Number(st.total)||0, mxRaw=Number(st.maxInv)||0;
         const mx=mxRaw>0?mxRaw:200;
-        if(!m[nm]) m[nm]=tot+":"+mx;
+        // hitung pet keep dari hactstat
+        let keep = 0;
+        let hs = a.hactstat || c.hactstat;
+        try{ if(typeof hs==="string") hs=JSON.parse(hs); }catch(e){ hs=null; }
+        if(hs && hs.keep){ for(const k in hs.keep){ keep += Number((hs.keep[k]||{}).total)||0; } }
+        if(!m[nm]) m[nm]=tot+":"+mx+":"+keep+(rfNm?":"+rfNm:"");
       });
     });
     const str=Object.keys(m).map(k=>k+"="+m[k]).join(",");
