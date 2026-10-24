@@ -1,4 +1,4 @@
--- ZENX MARKET v8.501 — fix loop stuck: snipe boleh gagal, break cukup doneRule (doneSnipe false bikin loop awal gak pernah break)
+-- ZENX MARKET v8.502 — INFO: kirim ke panel langsung (POST assign-tim+sc-set), bukan salin URL
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.501"
+local VERSION = "8.502"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.501: fix loop stuck (snipe false blok break) | v8.500: fix loop pakai BH.fetch* | v8.499: fix applyState upvalue"
+local VERSION_DATE = "v8.502: INFO kirim ke panel langsung | v8.501: fix loop stuck (snipe false blok break) | v8.500: fix loop pakai BH.fetch*"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -1029,7 +1029,7 @@ do
         btnInfoMkt.TextColor3=Color3.fromRGB(251,191,36); btnInfoMkt.Text="INFO"; btnInfoMkt.ZIndex=12; btnInfoMkt.Parent=hdr
         local btnInfoSt = Instance.new("UIStroke"); btnInfoSt.Color=Color3.fromRGB(251,191,36); btnInfoSt.Thickness=1; btnInfoSt.Transparency=0.6; btnInfoSt.Parent=btnInfoMkt
 
-        -- ── MODAL INFO market v8.501 ──
+        -- ── MODAL INFO market v8.502 ──
         local function mkModalMkt(title, accentCol)
             local ov = Instance.new("Frame"); ov.Size=UDim2.new(1,0,1,0); ov.BackgroundColor3=Color3.fromRGB(0,0,0); ov.BackgroundTransparency=0.35; ov.BorderSizePixel=0; ov.Visible=false; ov.ZIndex=10; ov.Parent=sg
             local box = Instance.new("Frame"); box.Size=UDim2.new(0.45,0,0,0); box.AutomaticSize=Enum.AutomaticSize.Y; box.AnchorPoint=Vector2.new(0.5,0.5); box.Position=UDim2.new(0.5,0,0.5,0)
@@ -1050,7 +1050,7 @@ do
             xBtn.MouseButton1Click:Connect(function() ov.Visible=false end)
             return ov, box
         end
-        local ovInfoMkt, boxInfoMkt = mkModalMkt("INFO  ·  market v8.501", Color3.fromRGB(251,191,36))
+        local ovInfoMkt, boxInfoMkt = mkModalMkt("INFO  ·  market v8.502", Color3.fromRGB(251,191,36))
         btnInfoMkt.MouseButton1Click:Connect(function() ovInfoMkt.Visible=not ovInfoMkt.Visible end)
 
         -- ── STAT BAR dalam modal: 4 col (total pet / token / snipe / leveling) ──
@@ -1099,20 +1099,42 @@ do
         Instance.new("UICorner",kYaM).CornerRadius=UDim.new(0,4)
         local kTidakM=Instance.new("TextButton",konfirmM); kTidakM.Size=UDim2.new(0,50,0,20); kTidakM.Position=UDim2.new(0,56,1,-22); kTidakM.BackgroundColor3=Color3.fromRGB(25,25,25); kTidakM.BorderSizePixel=0; kTidakM.Text="Tidak"; kTidakM.TextColor3=Color3.fromRGB(160,160,160); kTidakM.Font=Enum.Font.GothamSemibold; kTidakM.TextSize=10; kTidakM.AutoButtonColor=false; kTidakM.ZIndex=13
         Instance.new("UICorner",kTidakM).CornerRadius=UDim.new(0,4)
-        local pendingUrlM=nil
+        local pendingNmM=nil
+        local HS_MKT=game:GetService("HttpService")
+        local ZENX_URL_MKT="https://dry-glitter-63e4.petagee5.workers.dev"
+        local ZENX_KUNCI_MKT="nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+        local TAB_MAPM={["HACT"]="hatch",["6KG"]="up6kg",["LVL"]="level",["MKT"]="market"}
         btnKirimM.MouseButton1Click:Connect(function()
             local nm=rfBoxM.Text:gsub("^%s+",""):gsub("%s+$","")
-            if nm=="" then kTxtM.Text="⚠ isi NAMA RF dulu"; kTxtM.TextColor3=Color3.fromRGB(220,80,80); konfirmM.Visible=true; pendingUrlM=nil; return end
-            local TAB_MAPM={["HACT"]="hatch",["6KG"]="up6kg",["LVL"]="level",["MKT"]="market"}
-            pendingUrlM="https://star-panel-baru-v675.petagee5.workers.dev#"..(TAB_MAPM[selTujM] or "market").."-"..nm
+            if nm=="" then kTxtM.Text="⚠ isi NAMA RF dulu"; kTxtM.TextColor3=Color3.fromRGB(220,80,80); konfirmM.Visible=true; pendingNmM=nil; return end
+            pendingNmM=nm
             kTxtM.Text="Yakin pakai "..nm.." · "..selTujM.."?"; kTxtM.TextColor3=Color3.fromRGB(200,200,200); konfirmM.Visible=true
         end)
-        kTidakM.MouseButton1Click:Connect(function() konfirmM.Visible=false; pendingUrlM=nil end)
+        kTidakM.MouseButton1Click:Connect(function() konfirmM.Visible=false; pendingNmM=nil end)
         kYaM.MouseButton1Click:Connect(function()
             konfirmM.Visible=false
-            if not pendingUrlM then return end
-            local ok2=pcall(function() setclipboard(pendingUrlM) end)
-            if ok2 then kTxtM.Text="✓ URL disalin!"; kTxtM.TextColor3=Color3.fromRGB(60,200,80); konfirmM.Visible=true; task.delay(2,function() konfirmM.Visible=false end) end
+            if not pendingNmM then return end
+            local nm=pendingNmM; pendingNmM=nil
+            local sc=TAB_MAPM[selTujM] or "market"
+            kTxtM.Text="⏳ mengirim..."; kTxtM.TextColor3=Color3.fromRGB(200,200,200); konfirmM.Visible=true
+            task.spawn(function()
+                local ok1=pcall(function()
+                    HS_MKT:RequestAsync({Url=ZENX_URL_MKT.."/assign-tim",Method="POST",
+                        Headers={["Content-Type"]="application/json",["X-Kunci"]=ZENX_KUNCI_MKT},
+                        Body=HS_MKT:JSONEncode({tim=nm,akun={nm},game="GAG 1",isi_kosong=false})})
+                end)
+                local ok2=pcall(function()
+                    HS_MKT:RequestAsync({Url=ZENX_URL_MKT.."/sc-set",Method="POST",
+                        Headers={["Content-Type"]="application/json",["X-Kunci"]=ZENX_KUNCI_MKT},
+                        Body=HS_MKT:JSONEncode({akun=nm,sc=sc})})
+                end)
+                if ok1 and ok2 then
+                    kTxtM.Text="✓ "..nm.." dikirim ke panel ("..selTujM..")"; kTxtM.TextColor3=Color3.fromRGB(60,200,80)
+                else
+                    kTxtM.Text="⚠ gagal kirim ke panel"; kTxtM.TextColor3=Color3.fromRGB(220,80,80)
+                end
+                konfirmM.Visible=true; task.delay(3,function() konfirmM.Visible=false end)
+            end)
         end)
 
         -- update stat bar modal dari loop utama
