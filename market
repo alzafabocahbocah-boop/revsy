@@ -1,4 +1,4 @@
--- ZENX MARKET v8.504 — fix fetchRuleFromPanel: lookup BH fresh tiap panggil (bukan upvalue)
+-- ZENX MARKET v8.505 — fix INFO kirim ke panel: pakai executor req bukan HttpService
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.504"
+local VERSION = "8.505"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.504: fix fetchRuleFromPanel lookup BH fresh (bukan upvalue) | v8.503: FPS label di header | v8.502: INFO kirim ke panel langsung | v8.501: fix loop stuck (snipe false blok break)"
+local VERSION_DATE = "v8.505: fix INFO kirim ke panel pakai executor req | v8.504: fix fetchRuleFromPanel lookup BH fresh | v8.503: FPS label di header | v8.502: INFO kirim ke panel langsung"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -1122,6 +1122,12 @@ do
         local ZENX_URL_MKT="https://dry-glitter-63e4.petagee5.workers.dev"
         local ZENX_KUNCI_MKT="nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
         local TAB_MAPM={["HACT"]="hatch",["6KG"]="up6kg",["LVL"]="level",["MKT"]="market"}
+        -- v8.505: pakai executor req bukan HttpService:RequestAsync (diblok Roblox)
+        local function _reqMkt(opts)
+            local r=(syn and syn.request)or(fluxus and fluxus.request)or(krnl and krnl.request)or http_request or request or httprequest
+            if type(http)=="table" and http.request then r=http.request end
+            return r(opts)
+        end
         btnKirimM.MouseButton1Click:Connect(function()
             local nm=rfBoxM.Text:gsub("^%s+",""):gsub("%s+$","")
             if nm=="" then kTxtM.Text="⚠ isi NAMA RF dulu"; kTxtM.TextColor3=Color3.fromRGB(220,80,80); konfirmM.Visible=true; pendingNmM=nil; return end
@@ -1137,19 +1143,19 @@ do
             kTxtM.Text="⏳ mengirim..."; kTxtM.TextColor3=Color3.fromRGB(200,200,200); konfirmM.Visible=true
             task.spawn(function()
                 local ok1=pcall(function()
-                    HS_MKT:RequestAsync({Url=ZENX_URL_MKT.."/assign-tim",Method="POST",
+                    _reqMkt({Url=ZENX_URL_MKT.."/assign-tim",Method="POST",
                         Headers={["Content-Type"]="application/json",["X-Kunci"]=ZENX_KUNCI_MKT},
                         Body=HS_MKT:JSONEncode({tim=nm,akun={nm},game="GAG 1",isi_kosong=false})})
                 end)
                 local ok2=pcall(function()
-                    HS_MKT:RequestAsync({Url=ZENX_URL_MKT.."/sc-set",Method="POST",
+                    _reqMkt({Url=ZENX_URL_MKT.."/sc-set",Method="POST",
                         Headers={["Content-Type"]="application/json",["X-Kunci"]=ZENX_KUNCI_MKT},
                         Body=HS_MKT:JSONEncode({akun=nm,sc=sc})})
                 end)
                 if ok1 and ok2 then
                     kTxtM.Text="✓ "..nm.." dikirim ke panel ("..selTujM..")"; kTxtM.TextColor3=Color3.fromRGB(60,200,80)
                 else
-                    kTxtM.Text="⚠ gagal kirim ke panel"; kTxtM.TextColor3=Color3.fromRGB(220,80,80)
+                    kTxtM.Text="⚠ gagal ("..tostring(ok1)..","..tostring(ok2)..")"; kTxtM.TextColor3=Color3.fromRGB(220,80,80)
                 end
                 konfirmM.Visible=true; task.delay(3,function() konfirmM.Visible=false end)
             end)
