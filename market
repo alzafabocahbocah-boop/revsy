@@ -1,4 +1,4 @@
--- ZENX MARKET v8.499 — fix fetchRuleFromPanel: pakai BH.applyState bukan upvalue local (upvalue nil saat dipanggil dari luar closure, rules gak ke-apply otomatis)
+-- ZENX MARKET v8.500 — fix loop 5 menit: pakai BH.fetchRuleFromPanel bukan upvalue local (loop bypass patch BH, rules gak ke-apply otomatis)
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.499"
+local VERSION = "8.500"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.499: fix fetchRuleFromPanel pakai BH.applyState | v8.498: fix rulesVer tersimpan ke file | v8.304: pisah kotak EXPORT"
+local VERSION_DATE = "v8.500: fix loop 5min pakai BH.fetchRuleFromPanel/BH.fetchSnipeFromPanel | v8.499: fix fetchRuleFromPanel pakai BH.applyState | v8.498: fix rulesVer tersimpan ke file"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -1029,7 +1029,7 @@ do
         btnInfoMkt.TextColor3=Color3.fromRGB(251,191,36); btnInfoMkt.Text="INFO"; btnInfoMkt.ZIndex=12; btnInfoMkt.Parent=hdr
         local btnInfoSt = Instance.new("UIStroke"); btnInfoSt.Color=Color3.fromRGB(251,191,36); btnInfoSt.Thickness=1; btnInfoSt.Transparency=0.6; btnInfoSt.Parent=btnInfoMkt
 
-        -- ── MODAL INFO market v8.499 ──
+        -- ── MODAL INFO market v8.500 ──
         local function mkModalMkt(title, accentCol)
             local ov = Instance.new("Frame"); ov.Size=UDim2.new(1,0,1,0); ov.BackgroundColor3=Color3.fromRGB(0,0,0); ov.BackgroundTransparency=0.35; ov.BorderSizePixel=0; ov.Visible=false; ov.ZIndex=10; ov.Parent=sg
             local box = Instance.new("Frame"); box.Size=UDim2.new(0.45,0,0,0); box.AutomaticSize=Enum.AutomaticSize.Y; box.AnchorPoint=Vector2.new(0.5,0.5); box.Position=UDim2.new(0.5,0,0.5,0)
@@ -1050,7 +1050,7 @@ do
             xBtn.MouseButton1Click:Connect(function() ov.Visible=false end)
             return ov, box
         end
-        local ovInfoMkt, boxInfoMkt = mkModalMkt("INFO  ·  market v8.499", Color3.fromRGB(251,191,36))
+        local ovInfoMkt, boxInfoMkt = mkModalMkt("INFO  ·  market v8.500", Color3.fromRGB(251,191,36))
         btnInfoMkt.MouseButton1Click:Connect(function() ovInfoMkt.Visible=not ovInfoMkt.Visible end)
 
         -- ── STAT BAR dalam modal: 4 col (total pet / token / snipe / leveling) ──
@@ -2810,17 +2810,18 @@ do
 
     task.spawn(function()
         -- v8.464: fetch sekali awal (retry 10s sampai dapat), lalu tiap 5 menit terus
+        -- v8.500: pakai BH.fetchRuleFromPanel/BH.fetchSnipeFromPanel (bukan upvalue) supaya bisa di-patch dari luar
         task.wait(6)
         while true do
-            local doneRule = pcall(fetchRuleFromPanel)
-            local doneSnipe = pcall(fetchSnipeFromPanel)
+            local doneRule = pcall(BH.fetchRuleFromPanel)
+            local doneSnipe = pcall(BH.fetchSnipeFromPanel)
             if doneRule and doneSnipe then break end
             task.wait(10)
         end
         while true do
             task.wait(300)
-            pcall(fetchRuleFromPanel)
-            pcall(fetchSnipeFromPanel)
+            pcall(BH.fetchRuleFromPanel)
+            pcall(BH.fetchSnipeFromPanel)
         end
     end)
     -- Riset harga pasar tetap jalan tiap 15s (laporan ke panel, bukan fetch)
