@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.31  ══════════════════════════
+-- ══════════════════════════  HACT  v34.32  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -10036,17 +10036,19 @@ end)()
     -- URL panel (buka di browser — Roblox gak bisa buka browser, jadi kita salin URL)
     local PANEL_BASE = "https://star-panel-baru-v675.petagee5.workers.dev"  -- ganti kalau URL panel beda
 
-    -- mapping pilihan tab -> fragment hash untuk panel (TAHAP id di panel HTML)
+    -- mapping tab tujuan -> sc name (buat /sc-set di worker)
     local TAB_MAP = {
-        ["HACT"]    = "hatch",
-        ["UP 3.8KG"] = "kg",
-        ["UP 6KG"]  = "up6kg",
-        ["UP LEVEL"] = "level",
-        ["MARKET"]  = "market",
-        ["PANEN"]   = "panen",
+        ["HACT"]     = "hact",
+        ["UP 3.8KG"] = "upkg",
+        ["UP 6KG"]   = "upkg",
+        ["UP LEVEL"] = "leveling",
+        ["MARKET"]   = "market",
+        ["PANEN"]    = "panen",
     }
     local TAB_LIST = { "HACT", "UP 3.8KG", "UP 6KG", "UP LEVEL", "MARKET", "PANEN" }
     local selTab = "HACT"  -- default pilihan tab
+    local ZENX_URL2  = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local ZENX_KUNCI2 = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
 
     infoContent = mk("Frame", {
         Size = UDim2.new(1, -141, 1, -45), Position = UDim2.new(0, 141, 0, 45),
@@ -10148,34 +10150,24 @@ end)()
     urlLbl.TextTruncate = Enum.TextTruncate.AtEnd
     y = y + 28
 
-    local function buildPanelUrl()
-        local nm = nameBox.Text:gsub("^%s+",""):gsub("%s+$","")
-        if nm == "" then return nil, "isi nama akun dulu" end
-        local tahap = TAB_MAP[selTab]
-        if not tahap then return nil, "tab gak dikenal" end
-        -- format hash: #hatch-arceus1
-        local hash = "#" .. tahap .. "-" .. nm
-        return PANEL_BASE .. hash, nil
-    end
-
-    -- update URL preview setiap ketik / ganti tab
+    -- update preview nama + tab tujuan
     local function updateUrlPreview()
-        local url, err = buildPanelUrl()
-        if err then
-            urlLbl.Text = "\u{26A0} " .. err
+        local nm = nameBox.Text:gsub("^%s+",""):gsub("%s+$","")
+        if nm == "" then
+            urlLbl.Text = "\u{26A0} isi nama akun dulu"
             urlLbl.TextColor3 = Color3.fromRGB(200,80,80)
         else
-            urlLbl.Text = "\u{1F517} " .. url
+            urlLbl.Text = "\u{1F464} " .. nm .. "  \u{2192}  " .. selTab
             urlLbl.TextColor3 = C.textDim
         end
     end
     nameBox:GetPropertyChangedSignal("Text"):Connect(updateUrlPreview)
 
-    -- ===== Tombol Masuk Panel =====
+    -- ===== Tombol Kirim ke Panel =====
     local btnMasuk = mk("TextButton", {
         Size = UDim2.new(1,0,0,30), Position = UDim2.new(0,0,0,y),
         BackgroundColor3 = C.accent, BorderSizePixel = 0,
-        Text = "\u{1F4CB}  Salin URL Panel", TextColor3 = Color3.new(0,0,0),
+        Text = "\u{1F4E4}  Kirim ke Panel", TextColor3 = Color3.new(0,0,0),
         Font = FONT_B, TextSize = 11, AutoButtonColor = false, Parent = infoContent })
     Instance.new("UICorner", btnMasuk).CornerRadius = UDim.new(0,6)
     y = y + 36
@@ -10189,24 +10181,47 @@ end)()
     updateUrlPreview()
 
     btnMasuk.MouseButton1Click:Connect(function()
-        local url, err = buildPanelUrl()
-        if err then
-            statusInfo.Text = "\u{26A0} " .. err
+        local nm = nameBox.Text:gsub("^%s+",""):gsub("%s+$","")
+        if nm == "" then
+            statusInfo.Text = "\u{26A0} isi nama akun dulu"
             statusInfo.TextColor3 = Color3.fromRGB(200,80,80)
             return
         end
-        -- Roblox gak bisa buka browser, jadi salin ke clipboard
-        local ok, cerr = pcall(function()
-            setclipboard(url)
-        end)
-        if ok then
-            statusInfo.Text = "\u{2713} URL disalin! Paste di browser:\n" .. url
-            statusInfo.TextColor3 = Color3.fromRGB(60,180,80)
-        else
-            -- fallback: tampilkan URL di status
-            statusInfo.Text = url
-            statusInfo.TextColor3 = C.textDim
+        local sc = TAB_MAP[selTab]
+        if not sc then
+            statusInfo.Text = "\u{26A0} tab gak dikenal"
+            statusInfo.TextColor3 = Color3.fromRGB(200,80,80)
+            return
         end
+        statusInfo.Text = "\u{23F3} mengirim..."
+        statusInfo.TextColor3 = C.textDim
+        task.spawn(function()
+            -- 1. assign akun ke tim (nama = tim)
+            local ok1, err1 = pcall(function()
+                HS_INFO:RequestAsync({
+                    Url = ZENX_URL2 .. "/assign-tim",
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = ZENX_KUNCI2 },
+                    Body = HS_INFO:JSONEncode({ tim = nm, akun = {nm}, game = "GAG 1", isi_kosong = false })
+                })
+            end)
+            -- 2. set sc assignment
+            local ok2, err2 = pcall(function()
+                HS_INFO:RequestAsync({
+                    Url = ZENX_URL2 .. "/sc-set",
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = ZENX_KUNCI2 },
+                    Body = HS_INFO:JSONEncode({ akun = nm, sc = sc })
+                })
+            end)
+            if ok1 and ok2 then
+                statusInfo.Text = "\u{2713} " .. nm .. " dikirim ke panel sebagai tim " .. selTab
+                statusInfo.TextColor3 = Color3.fromRGB(60,180,80)
+            else
+                statusInfo.Text = "\u{26A0} gagal: " .. tostring(err1 or err2)
+                statusInfo.TextColor3 = Color3.fromRGB(200,80,80)
+            end
+        end)
     end)
 
     -- v34.3: info SC source di bawah tombol
