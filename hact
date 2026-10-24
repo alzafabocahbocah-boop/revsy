@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.42  ══════════════════════════
+-- ══════════════════════════  HACT  v34.43  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.42"
+local VERSION = "v34.43"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -4899,8 +4899,22 @@ end
 
 local _gameDataCache, _gameDataTime = nil, 0
 local function getGameData()
-    -- v31.9: maxPets permanent sekali dapat (ambil waktu init/rejoin, gak expire)
-    if _gameDataCache and _gameDataCache.maxPets then return _gameDataCache end
+    -- v34.42: cek ATTR dulu — kalau ada, selalu pakai (paling akurat, milik LocalPlayer pasti)
+    -- cache hanya dipakai kalau ATTR tidak tersedia; expire 5 menit biar gak stuck nilai salah
+    local _attrNow = nil
+    pcall(function()
+        local mp = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+        if type(mp) == "number" and mp > 0 then _attrNow = mp end
+    end)
+    if _attrNow then
+        -- ATTR tersedia: update cache dengan nilai fresh, langsung return
+        local d = _gameDataCache or { maxPets=nil, maxEggs=nil, maxEquip=nil }
+        d.maxPets = _attrNow
+        _gameDataCache = d; _gameDataTime = tick()
+        return d
+    end
+    -- ATTR tidak ada: pakai cache kalau masih segar (<5 menit)
+    if _gameDataCache and _gameDataCache.maxPets and (tick() - _gameDataTime) < 300 then return _gameDataCache end
     local d = { maxPets = nil, maxEggs = nil, maxEquip = nil }
     local d_src = "none"
     -- v31.5: hitung cur dulu sebelum semua source, pakai countTotalPets (bukan listBackpackPets cache)
