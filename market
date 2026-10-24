@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.517: tambah warn di kirim() kalau POST gagal — biar ketauan di console SC kenapa panel 0 | v8.516: hitung totalPet sekali di boot sebelum loop kirim (fix panel 0 pet sampai 60s) | v8.515: hapus loop laporHargaPasar tiap 15s | v8.514: skin booth ke atas di manual snipe list (sort isSkin first) | v8.513: fix snipe gak ke-apply — merge logic baca r.type padahal panel+lokal pakai r.petType | v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
+local VERSION_DATE = "v8.518: bacaTotalPet() ringan barengan bacaTokens di loop 20s — gak nunggu thread 60s lagi | v8.517: tambah warn di kirim() kalau POST gagal — biar ketauan di console SC kenapa panel 0 | v8.516: hitung totalPet sekali di boot sebelum loop kirim (fix panel 0 pet sampai 60s) | v8.515: hapus loop laporHargaPasar tiap 15s | v8.514: skin booth ke atas di manual snipe list (sort isSkin first) | v8.513: fix snipe gak ke-apply — merge logic baca r.type padahal panel+lokal pakai r.petType | v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -413,6 +413,22 @@ task.spawn(function()
             end
         end)
         return n
+    end
+
+    -- v8.518: baca total pet LANGSUNG dari backpack (ringan, kayak bacaTokens)
+    -- gak perlu scan rule -> bisa dipanggil tiap loop 20s tanpa nge-block
+    local function bacaTotalPet()
+        local nn = 0
+        pcall(function()
+            local bp = plr:FindFirstChild("Backpack")
+            if not bp then return end
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
+                    nn = nn + 1
+                end
+            end
+        end)
+        return nn
     end
 
     -- total pet di inventory yang cocok SEMUA rule (gak dirinci)
@@ -863,6 +879,12 @@ task.spawn(function()
             local ok, tok = pcall(bacaTokens)
             if not ok or type(tok) ~= "number" then tok = lamaTok >= 0 and lamaTok or 0 end
             _G.__ZenxTokenNow = tok   -- v8.369: expose token buat auto-trade ke leveling
+            -- v8.518: baca total pet ringan barengan token (bukan nunggu thread 60s)
+            local okP, petNow = pcall(bacaTotalPet)
+            if okP and type(petNow) == "number" and petNow > 0 then
+                totalPetTerakhir = petNow
+                _G.ZenxMarketTotalPet = petNow
+            end
             -- v8.371: token >= 5000 -> AUTO-TRADE ke leveling (async). TERPISAH dari balik-home.
             -- Fungsi-nya OFF auto-accept-gift dulu -> trade -> ON lagi (cek garden/private/target di dalam).
             if (tonumber(tok) or 0) >= 5000 and _G.__ZenxTradeAllToLeveling and not _G.__ZenxTradeBusy and (_G.__ZenxAutoTradeToken ~= false) then
