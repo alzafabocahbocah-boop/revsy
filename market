@@ -1,4 +1,4 @@
--- ZENX MARKET v8.475 — debug print /lvlmax body + popup render
+-- ZENX MARKET v8.476 — fix popup ZIndex row+label agar tidak tertutup
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.475"
+local VERSION = "8.476"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1121,6 +1121,7 @@ do
             local scroll = Instance.new("ScrollingFrame")
             scroll.Size = UDim2.new(1,-16,1,-44); scroll.Position=UDim2.new(0,8,0,40)
             scroll.BackgroundTransparency=1; scroll.BorderSizePixel=0; scroll.ScrollBarThickness=4
+            scroll.ZIndex=100  -- v8.476: pastikan scroll di atas pop ZIndex=100
             scroll.CanvasSize=UDim2.new(0,0,0,0); scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; scroll.Parent=pop
             local slist = Instance.new("UIListLayout"); slist.Padding=UDim.new(0,6); slist.SortOrder=Enum.SortOrder.LayoutOrder; slist.Parent=scroll
             -- render baris
@@ -1128,24 +1129,34 @@ do
                 local em = Instance.new("TextLabel"); em.BackgroundTransparency=1
                 em.Font=Enum.Font.Gotham; em.TextSize=12; em.TextColor3=Color3.fromRGB(120,120,120)
                 em.Text="Belum ada data (fetch dulu...)"; em.Size=UDim2.new(1,0,0,30)
-                em.TextXAlignment=Enum.TextXAlignment.Left; em.Parent=scroll
+                em.ZIndex=101; em.TextXAlignment=Enum.TextXAlignment.Left; em.Parent=scroll
             else
                 table.sort(_lvlList, function(a,b) return (a.tim or "") < (b.tim or "") end)
+                print("[LVL-RENDER] mulai render "..#_lvlList.." baris")
                 for i, item in ipairs(_lvlList) do
-                    local row = Instance.new("Frame"); row.BackgroundColor3=Color3.fromRGB(20,20,20)
-                    row.BorderSizePixel=0; row.Size=UDim2.new(1,0,0,38); row.LayoutOrder=i; row.Parent=scroll
-                    Instance.new("UICorner",row).CornerRadius=UDim.new(0,8)
-                    local rpad = Instance.new("UIPadding"); rpad.PaddingLeft=UDim.new(0,10); rpad.PaddingRight=UDim.new(0,10); rpad.Parent=row
-                    local akunL = Instance.new("TextLabel"); akunL.BackgroundTransparency=1
-                    akunL.Font=Enum.Font.GothamBold; akunL.TextSize=13; akunL.TextColor3=Color3.fromRGB(255,255,255)
-                    akunL.Text=item.akun; akunL.Position=UDim2.new(0,0,0,4); akunL.Size=UDim2.new(0.6,0,0,16); akunL.TextXAlignment=Enum.TextXAlignment.Left; akunL.Parent=row
-                    local timL = Instance.new("TextLabel"); timL.BackgroundTransparency=1
-                    timL.Font=Enum.Font.GothamSemibold; timL.TextSize=11; timL.TextColor3=Color3.fromRGB(74,222,128)
-                    timL.Text=item.tim; timL.Position=UDim2.new(0,0,0,20); timL.Size=UDim2.new(0.7,0,0,14); timL.TextXAlignment=Enum.TextXAlignment.Left; timL.Parent=row
-                    local ageL = Instance.new("TextLabel"); ageL.BackgroundTransparency=1
-                    ageL.Font=Enum.Font.GothamBold; ageL.TextSize=11; ageL.TextColor3=Color3.fromRGB(100,100,100)
-                    ageL.Text="leveling"; ageL.Position=UDim2.new(0.65,0,0,8); ageL.Size=UDim2.new(0.35,0,0,20); ageL.TextXAlignment=Enum.TextXAlignment.Right; ageL.Parent=row
+                    -- v8.476: semua ZIndex eksplisit agar tidak tertutup frame lain
+                    local ok_row, err_row = pcall(function()
+                        local row = Instance.new("Frame"); row.BackgroundColor3=Color3.fromRGB(20,20,20)
+                        row.BorderSizePixel=0; row.Size=UDim2.new(1,0,0,38); row.LayoutOrder=i
+                        row.ZIndex=101; row.Parent=scroll
+                        Instance.new("UICorner",row).CornerRadius=UDim.new(0,8)
+                        local rpad = Instance.new("UIPadding"); rpad.PaddingLeft=UDim.new(0,10); rpad.PaddingRight=UDim.new(0,10); rpad.Parent=row
+                        local akunL = Instance.new("TextLabel"); akunL.BackgroundTransparency=1
+                        akunL.Font=Enum.Font.GothamBold; akunL.TextSize=13; akunL.TextColor3=Color3.fromRGB(255,255,255)
+                        akunL.Text=tostring(item.akun); akunL.Position=UDim2.new(0,0,0,4); akunL.Size=UDim2.new(0.6,0,0,16)
+                        akunL.ZIndex=102; akunL.TextXAlignment=Enum.TextXAlignment.Left; akunL.Parent=row
+                        local timL = Instance.new("TextLabel"); timL.BackgroundTransparency=1
+                        timL.Font=Enum.Font.GothamSemibold; timL.TextSize=11; timL.TextColor3=Color3.fromRGB(74,222,128)
+                        timL.Text=tostring(item.tim); timL.Position=UDim2.new(0,0,0,20); timL.Size=UDim2.new(0.7,0,0,14)
+                        timL.ZIndex=102; timL.TextXAlignment=Enum.TextXAlignment.Left; timL.Parent=row
+                        local ageL = Instance.new("TextLabel"); ageL.BackgroundTransparency=1
+                        ageL.Font=Enum.Font.GothamBold; ageL.TextSize=11; ageL.TextColor3=Color3.fromRGB(100,100,100)
+                        ageL.Text="leveling"; ageL.Position=UDim2.new(0.65,0,0,8); ageL.Size=UDim2.new(0.35,0,0,20)
+                        ageL.ZIndex=102; ageL.TextXAlignment=Enum.TextXAlignment.Right; ageL.Parent=row
+                    end)
+                    if not ok_row then print("[LVL-RENDER] ERR baris "..i..": "..tostring(err_row)) end
                 end
+                print("[LVL-RENDER] selesai render")
             end
         end
 
