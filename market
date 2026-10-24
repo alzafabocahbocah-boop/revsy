@@ -1,4 +1,4 @@
--- ZENX MARKET v8.462 — kartu leveling bisa diklik: popup list akun+tim+ageP
+-- ZENX MARKET v8.463 — fetchRule + fetchSnipe bypass worker, langsung ke panel
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.462"
+local VERSION = "8.463"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2404,17 +2404,13 @@ do
     -- Startup + periodik 120s. pcall total biar gak ganggu loop. Backend kosong
     -- / gagal -> biarin rule lokal (default hardcoded jadi fallback).
     local function fetchRuleFromPanel()
-        -- v8.389: baca FILE LOKAL dulu (worker fetch backend + tulis, market baca instan).
-        -- Fallback GET backend kalo file belum ada (worker belum nulis).
+        -- v8.463: langsung ke panel (bypass worker)
         local body
-        pcall(function() if isfile and isfile("zenx_market_rules.json") and readfile then local b = readfile("zenx_market_rules.json"); if b and b ~= "" then body = b end end end)
-        if type(body) ~= "string" or body == "" then
-            local okF, b = pcall(function()
-                local r = req({ Url = PANEL_URL .. "/market-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
-                return r and (r.Body or r.body)
-            end)
-            if okF then body = b end
-        end
+        local okF, b = pcall(function()
+            local r = req({ Url = PANEL_URL .. "/market-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+            return r and (r.Body or r.body)
+        end)
+        if okF then body = b end
         if type(body) ~= "string" or body == "" then return false end
         local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
         if not ok2 or type(data) ~= "table" then return false end
@@ -2440,16 +2436,13 @@ do
     -- timpa autoSnipe.rules + rebuild UI snipe. BH.autoSnipe dibikin belakangan
     -- (dicek runtime), jadi aman dipanggil dari loop yg jalan setelah script load.
     local function fetchSnipeFromPanel()
-        -- v8.389: baca FILE LOKAL dulu (worker tulis), fallback backend.
+        -- v8.463: langsung ke panel (bypass worker)
         local body
-        pcall(function() if isfile and isfile("zenx_snipe_rules.json") and readfile then local b = readfile("zenx_snipe_rules.json"); if b and b ~= "" then body = b end end end)
-        if type(body) ~= "string" or body == "" then
-            local okF, b = pcall(function()
-                local r = req({ Url = PANEL_URL .. "/snipe-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
-                return r and (r.Body or r.body)
-            end)
-            if okF then body = b end
-        end
+        local okF, b = pcall(function()
+            local r = req({ Url = PANEL_URL .. "/snipe-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+            return r and (r.Body or r.body)
+        end)
+        if okF then body = b end
         if type(body) ~= "string" or body == "" then return false end
         local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
         if not ok2 or type(data) ~= "table" then return false end
