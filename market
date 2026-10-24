@@ -1,4 +1,4 @@
--- ZENX MARKET v8.490 — getInventoryCapacity 4-layer (HactTelurGetMaxPets+skip TradingUI+GetAttribute+folder); popup leveling 400x380, font 15/13; age500+; nama RF di popup
+-- ZENX MARKET v8.491 — getInventoryCapacity 4-layer (HactTelurGetMaxPets+skip TradingUI+GetAttribute+folder); popup leveling 400x380, font 15/13; age500+; nama RF di popup
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.490"
+local VERSION = "8.491"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -538,10 +538,15 @@ task.spawn(function()
             if ok and mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
         end
         -- 5) simpan ke file kalau berhasil detect
+        -- v8.491: simpan HANYA nilai yang >= tersimpan (gak overwrite file dengan nilai lebih kecil)
         if maxInvTerakhir > 0 then
             _G.__ZenxMaxInv = maxInvTerakhir
-            pcall(function() if writefile then writefile(_maxInvFile, tostring(maxInvTerakhir)) end end)
-            print("[ZenxMarket] maxInv startup detect: " .. maxInvTerakhir)
+            local fileLama = 0
+            if readfile then pcall(function() fileLama = tonumber(readfile(_maxInvFile)) or 0 end) end
+            if maxInvTerakhir >= fileLama then  -- hanya update file kalau lebih besar atau sama
+                pcall(function() if writefile then writefile(_maxInvFile, tostring(maxInvTerakhir)) end end)
+            end
+            print("[ZenxMarket] maxInv startup detect: " .. maxInvTerakhir .. " (file lama: " .. fileLama .. ")")
         end
     end)
     local snipeJenisTerakhir, snipeTokTerakhir = {}, 0   -- v8.356: snipe breakdown per tipe
@@ -632,6 +637,8 @@ task.spawn(function()
                     if mxNew and mxNew > 0 then
                         if mxNew > (maxInvTerakhir or 0) then
                             maxInvTerakhir = mxNew; _G.__ZenxMaxInv = mxNew
+                            -- v8.491: update file kalau nilai baru lebih besar (koreksi file basi)
+                            if _maxInvFile then pcall(function() if writefile then writefile(_maxInvFile, tostring(mxNew)) end end) end
                         end
                     else
                         -- layer 3: fallback tersimpan
