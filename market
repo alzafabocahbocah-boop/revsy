@@ -1,4 +1,4 @@
--- ZENX MARKET v8.503 — tambah FPS label di header samping judul MARKET
+-- ZENX MARKET v8.504 — fix fetchRuleFromPanel: lookup BH fresh tiap panggil (bukan upvalue)
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.503"
+local VERSION = "8.504"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.503: FPS label di header | v8.502: INFO kirim ke panel langsung | v8.501: fix loop stuck (snipe false blok break)"
+local VERSION_DATE = "v8.504: fix fetchRuleFromPanel lookup BH fresh (bukan upvalue) | v8.503: FPS label di header | v8.502: INFO kirim ke panel langsung | v8.501: fix loop stuck (snipe false blok break)"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -2698,29 +2698,33 @@ do
     -- Startup + periodik 120s. pcall total biar gak ganggu loop. Backend kosong
     -- / gagal -> biarin rule lokal (default hardcoded jadi fallback).
     local function fetchRuleFromPanel()
-        -- v8.463: langsung ke panel (bypass worker)
+        -- v8.504: lookup BH fresh tiap panggil — bukan upvalue — biar gak stale closure
+        local _BH = getgenv and getgenv().ZenxMarketBH or BH
+        local _req = (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or http_request or request or httprequest
+        if type(http) == "table" and http.request then _req = http.request end
+        local _HS = game:GetService("HttpService")
         local body
         local okF, b = pcall(function()
-            local r = req({ Url = PANEL_URL .. "/market-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+            local r = _req({ Url = PANEL_URL .. "/market-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
             return r and (r.Body or r.body)
         end)
         if okF then body = b end
         if type(body) ~= "string" or body == "" then return false end
-        local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
+        local ok2, data = pcall(function() return _HS:JSONDecode(body) end)
         if not ok2 or type(data) ~= "table" then return false end
         local ver = tonumber(data.ver) or 0
         local rules = data.rules
         if ver <= 0 or type(rules) ~= "table" or #rules == 0 then return false end
-        if BH.marketState.rulesVer == ver then return false end   -- udah ke-apply
+        if _BH.marketState.rulesVer == ver then return false end   -- udah ke-apply
         local st = {}
-        for k, v in pairs(BH.marketState) do st[k] = v end
+        for k, v in pairs(_BH.marketState) do st[k] = v end
         st.listingRules = rules
         st.rulesVer = ver
-        pcall(BH.applyState, st)   -- v8.499: pakai BH.applyState bukan upvalue (upvalue nil saat dipanggil dari luar closure)
-        -- v8.498: set rulesVer lagi setelah applyState (applyState save duluan sebelum ver di-set)
-        BH.marketState.rulesVer = ver
-        pcall(BH.saveMarketState, BH.marketState)
-        print("[ZenxMarket] aturan list dari panel ke-apply | ver="..ver.." | "..#rules.." rule")
+        local ok3 = pcall(_BH.applyState, st)
+        -- v8.504: set rulesVer + save setelah apply
+        _BH.marketState.rulesVer = ver
+        pcall(_BH.saveMarketState, _BH.marketState)
+        print("[ZenxMarket] aturan list dari panel ke-apply | ver="..ver.." | "..#rules.." rule | ok="..tostring(ok3))
         _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
         table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  « PANEL: update list → " .. #rules .. " rule »")
         if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
