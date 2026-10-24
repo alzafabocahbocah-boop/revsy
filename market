@@ -1,4 +1,4 @@
--- ZENX MARKET v8.461 — stat panel pojok kanan atas: total pet | token | snipe | leveling (ageP>=100)
+-- ZENX MARKET v8.462 — kartu leveling bisa diklik: popup list akun+tim+ageP
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.461"
+local VERSION = "8.462"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -940,11 +940,14 @@ do
         local vSnipe = makeCard(AM, "snipe",       3)
         local vLvl   = makeCard(GR, "leveling",   4)
 
+        -- simpan list leveling buat popup
+        local _lvlList = {}   -- { {akun=.., tim=.., ageP=..}, ... }
+
         -- fetch /stat untuk hitung akun leveling ageP >= 100
         local MURL = "https://dry-glitter-63e4.petagee5.workers.dev"
         local MKEY = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
-        local function fetchLevelingCount()
-            local count = 0
+        local function fetchLevelingData()
+            local list = {}
             pcall(function()
                 local r = httpRequest({ Url=MURL.."/stat", Method="GET",
                     Headers={["X-Kunci"]=MKEY} })
@@ -964,19 +967,91 @@ do
                         local ageP = 0
                         if type(stat) == "table" then
                             ageP = tonumber(stat.ageP) or 0
-                            -- fallback: sum petAgePlus array
                             if ageP == 0 and type(stat.petAgePlus) == "table" then
                                 for _, v2 in pairs(stat.petAgePlus) do
                                     ageP = ageP + (tonumber(type(v2)=="table" and (v2.n or v2.count or v2[1]) or v2) or 0)
                                 end
                             end
                         end
-                        if ageP >= 100 then count = count + 1 end
+                        if ageP >= 100 then
+                            local timNm = tostring(a.tim or a.timAssign or a.timName or "?")
+                            local akunNm = tostring(a.akun or a.name or a.username or "?")
+                            table.insert(list, {akun=akunNm, tim=timNm, ageP=ageP})
+                        end
                     end
                 end
             end)
-            return count
+            return list
         end
+
+        -- POPUP leveling — muncul kalau kartu leveling diklik
+        local _popupOpen = false
+        local function bukaPopupLeveling()
+            if _popupOpen then return end
+            _popupOpen = true
+            -- buat popup frame
+            local pop = Instance.new("Frame")
+            pop.Size = UDim2.new(0,320,0,300)
+            pop.AnchorPoint = Vector2.new(1,0)
+            pop.Position = UDim2.new(1,-14,0,14)
+            pop.BackgroundColor3 = Color3.fromRGB(10,10,10)
+            pop.BackgroundTransparency = 0.05
+            pop.BorderSizePixel = 0
+            pop.ZIndex = 100
+            pop.Parent = sg
+            Instance.new("UICorner",pop).CornerRadius = UDim.new(0,14)
+            local pst = Instance.new("UIStroke"); pst.Color=Color3.fromRGB(74,222,128); pst.Thickness=1.5; pst.Parent=pop
+            -- header popup
+            local phdr = Instance.new("Frame"); phdr.Size=UDim2.new(1,0,0,36); phdr.BackgroundTransparency=1; phdr.BorderSizePixel=0; phdr.Parent=pop
+            local ptitle = Instance.new("TextLabel"); ptitle.BackgroundTransparency=1; ptitle.Font=Enum.Font.GothamBold; ptitle.TextSize=14
+            ptitle.TextColor3=Color3.fromRGB(74,222,128); ptitle.Text="🌿 AKUN LEVELING (ageP≥100)"
+            ptitle.Position=UDim2.new(0,14,0,0); ptitle.Size=UDim2.new(1,-50,1,0); ptitle.TextXAlignment=Enum.TextXAlignment.Left; ptitle.Parent=phdr
+            -- tombol tutup
+            local closeBtn = Instance.new("TextButton"); closeBtn.Size=UDim2.new(0,30,0,30)
+            closeBtn.Position=UDim2.new(1,-38,0,3); closeBtn.BackgroundColor3=Color3.fromRGB(50,50,50); closeBtn.BorderSizePixel=0
+            closeBtn.Font=Enum.Font.GothamBold; closeBtn.TextSize=16; closeBtn.TextColor3=Color3.fromRGB(200,200,200)
+            closeBtn.Text="✕"; closeBtn.ZIndex=101; closeBtn.Parent=phdr
+            Instance.new("UICorner",closeBtn).CornerRadius=UDim.new(1,0)
+            closeBtn.MouseButton1Click:Connect(function()
+                _popupOpen = false; pop:Destroy()
+            end)
+            -- scroll list
+            local scroll = Instance.new("ScrollingFrame")
+            scroll.Size = UDim2.new(1,-16,1,-44); scroll.Position=UDim2.new(0,8,0,40)
+            scroll.BackgroundTransparency=1; scroll.BorderSizePixel=0; scroll.ScrollBarThickness=4
+            scroll.CanvasSize=UDim2.new(0,0,0,0); scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; scroll.Parent=pop
+            local slist = Instance.new("UIListLayout"); slist.Padding=UDim.new(0,6); slist.SortOrder=Enum.SortOrder.LayoutOrder; slist.Parent=scroll
+            -- render baris
+            if #_lvlList == 0 then
+                local em = Instance.new("TextLabel"); em.BackgroundTransparency=1
+                em.Font=Enum.Font.Gotham; em.TextSize=12; em.TextColor3=Color3.fromRGB(120,120,120)
+                em.Text="Belum ada data (fetch dulu...)"; em.Size=UDim2.new(1,0,0,30)
+                em.TextXAlignment=Enum.TextXAlignment.Left; em.Parent=scroll
+            else
+                table.sort(_lvlList, function(a,b) return (a.tim or "") < (b.tim or "") end)
+                for i, item in ipairs(_lvlList) do
+                    local row = Instance.new("Frame"); row.BackgroundColor3=Color3.fromRGB(20,20,20)
+                    row.BorderSizePixel=0; row.Size=UDim2.new(1,0,0,38); row.LayoutOrder=i; row.Parent=scroll
+                    Instance.new("UICorner",row).CornerRadius=UDim.new(0,8)
+                    local rpad = Instance.new("UIPadding"); rpad.PaddingLeft=UDim.new(0,10); rpad.PaddingRight=UDim.new(0,10); rpad.Parent=row
+                    local akunL = Instance.new("TextLabel"); akunL.BackgroundTransparency=1
+                    akunL.Font=Enum.Font.GothamBold; akunL.TextSize=13; akunL.TextColor3=Color3.fromRGB(255,255,255)
+                    akunL.Text=item.akun; akunL.Position=UDim2.new(0,0,0,4); akunL.Size=UDim2.new(0.6,0,0,16); akunL.TextXAlignment=Enum.TextXAlignment.Left; akunL.Parent=row
+                    local timL = Instance.new("TextLabel"); timL.BackgroundTransparency=1
+                    timL.Font=Enum.Font.GothamSemibold; timL.TextSize=11; timL.TextColor3=Color3.fromRGB(74,222,128)
+                    timL.Text=item.tim; timL.Position=UDim2.new(0,0,0,20); timL.Size=UDim2.new(0.7,0,0,14); timL.TextXAlignment=Enum.TextXAlignment.Left; timL.Parent=row
+                    local ageL = Instance.new("TextLabel"); ageL.BackgroundTransparency=1
+                    ageL.Font=Enum.Font.GothamBold; ageL.TextSize=13; ageL.TextColor3=Color3.fromRGB(74,222,128)
+                    ageL.Text="ageP "..item.ageP; ageL.Position=UDim2.new(0.65,0,0,8); ageL.Size=UDim2.new(0.35,0,0,20); ageL.TextXAlignment=Enum.TextXAlignment.Right; ageL.Parent=row
+                end
+            end
+        end
+
+        -- klik kartu leveling → buka popup
+        local lvlCard = vLvl.Parent   -- parent = card Frame
+        local lvlBtn = Instance.new("TextButton"); lvlBtn.BackgroundTransparency=1; lvlBtn.Text=""
+        lvlBtn.Size=UDim2.new(1,0,1,0); lvlBtn.ZIndex=50; lvlBtn.Parent=lvlCard
+        lvlBtn.MouseButton1Click:Connect(function() bukaPopupLeveling() end)
 
         -- update loop
         task.spawn(function()
@@ -989,8 +1064,9 @@ do
                     vSnipe.Text = tostring(_G.__ZenxSnipeN or 0)
                 end)
                 -- leveling: fetch panel tiap iterasi 5 menit
-                local lvlCount = fetchLevelingCount()
-                pcall(function() vLvl.Text = tostring(lvlCount) end)
+                local list = fetchLevelingData()
+                _lvlList = list
+                pcall(function() vLvl.Text = tostring(#list) end)
                 task.wait(300)
             end
         end)
