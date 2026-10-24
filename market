@@ -8061,29 +8061,57 @@ local refreshBackpackStats  -- forward declare
 do
     -- Detect inventory capacity (Grow A Garden uses leaderstats or player attribute)
     local function getInventoryCapacity()
-        for _, attr in ipairs({"MaxInventory", "InventoryCapacity", "MaxPets", "PetCapacity", "MaxStorage", "BackpackSize"}) do
-            local v = player:GetAttribute(attr)
-            if v and tonumber(v) then _G.__ZenxMaxInv = tonumber(v); return tonumber(v) end   -- v8.354: expose buat report
-        end
-        local ls = player:FindFirstChild("leaderstats")
-        if ls then
-            for _, c in ipairs(ls:GetChildren()) do
-                if c.Name:find("[Cc]apacity") or c.Name:find("[Mm]ax") then
-                    if c:IsA("ValueBase") then return tonumber(c.Value) end
-                end
+        local mx = nil
+        -- 1) _G.HactTelurGetMaxPets() — pointer langsung dari hact (paling akurat, no getgc)
+        if not mx then pcall(function()
+            if _G.HactTelurGetMaxPets then
+                local d = _G.HactTelurGetMaxPets()
+                local v = nil
+                if type(d) == "number" then v = d
+                elseif type(d) == "table" then v = d.maxPets or d.MaxPets end
+                if v and v > 0 then mx = v end
             end
-        end
-        for _, name in ipairs({"Data", "Stats", "PlayerData"}) do
-            local d = player:FindFirstChild(name)
-            if d then
-                for _, c in ipairs(d:GetChildren()) do
-                    if c.Name:find("[Cc]apacity") or c.Name:find("[Mm]ax[Ii]nv") then
-                        if c:IsA("ValueBase") then return tonumber(c.Value) end
+        end) end
+        -- 2) UI "Pet Items (X/Y)" — skip TradingUI (sama cara hact v34.21)
+        if not mx then pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            if not pg then return end
+            local tradeUI = pg:FindFirstChild("TradingUI")
+            for _, dd in ipairs(pg:GetDescendants()) do
+                if tradeUI and dd:IsDescendantOf(tradeUI) then continue end
+                if (dd:IsA("TextLabel") or dd:IsA("TextButton")) and type(dd.Text) == "string" then
+                    local low = dd.Text:lower()
+                    if low:find("pet") and low:find("item") then
+                        local a, b = dd.Text:match("(%d+)%s*/%s*(%d+)")
+                        if a and b then
+                            local nb = tonumber(b)
+                            if nb and nb > 0 then mx = nb; break end
+                        end
                     end
                 end
             end
-        end
-        return nil
+        end) end
+        -- 3) player:GetAttribute — pasti milik LocalPlayer
+        if not mx then pcall(function()
+            local v = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+                   or player:GetAttribute("MaxInventory") or player:GetAttribute("InventoryCapacity")
+            if v and tonumber(v) and tonumber(v) > 0 then mx = tonumber(v) end
+        end) end
+        -- 4) folder Data/leaderstats/PlayerData
+        if not mx then pcall(function()
+            for _, fn in ipairs({"Data","leaderstats","PlayerData","Stats"}) do
+                local f = player:FindFirstChild(fn)
+                if f then
+                    for _, k in ipairs({"MaxPets","PetLimit","max_pets","MaxPet","MaxInventory","MaxPetsInInventory"}) do
+                        local vv = f:FindFirstChild(k)
+                        if vv and vv.Value and tonumber(vv.Value) and tonumber(vv.Value) > 0 then mx = tonumber(vv.Value); break end
+                    end
+                end
+                if mx then break end
+            end
+        end) end
+        if mx then _G.__ZenxMaxInv = mx end
+        return mx
     end
 
     -- Refresh stats card in List Harga tab
