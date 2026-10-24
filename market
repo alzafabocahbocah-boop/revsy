@@ -1,4 +1,4 @@
--- ZENX MARKET v8.472 — fix fetchLevelingData: httpRequest nil fallback ke executor lain
+-- ZENX MARKET v8.473 — fetchLevelingData: ganti sumber ke /lvlmax (panel push, bukan /stat scAssign)
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.472"
+local VERSION = "8.473"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1052,38 +1052,23 @@ do
         local MURL = "https://dry-glitter-63e4.petagee5.workers.dev"
         local MKEY = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
         local function fetchLevelingData()
+            -- v8.473: fetch /lvlmax (panel push tiap 60s) bukan /stat
+            -- format: "akun1=max:count:a5,akun2=..." -> list semua akun leveling
             local list = {}
             local ok3, err3 = pcall(function()
                 local _rq = httpRequest or (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or http_request or request or httprequest
-                local r = _rq({ Url=MURL.."/stat", Method="GET",
+                local r = _rq({ Url=MURL.."/lvlmax", Method="GET",
                     Headers={["X-Kunci"]=MKEY} })
                 local body = r and (r.Body or r.body) or ""
-                print("[LVL-DBG] body len="..#body.." | status="..(r and tostring(r.StatusCode or r.statusCode) or "?"))
-                local ok2, data = pcall(function() return HS:JSONDecode(body) end)
-                if not ok2 or type(data) ~= "table" then
-                    print("[LVL-DBG] JSONDecode gagal: "..tostring(data))
-                    return
-                end
-                local akuns = data.akun or data.akuns or data
-                if type(akuns) ~= "table" then
-                    print("[LVL-DBG] akuns bukan table: "..type(akuns))
-                    return
-                end
-                print("[LVL-DBG] total akun="..#akuns)
-                for _, a in ipairs(akuns) do
-                    -- v8.471: deteksi scAssign leveling
-                    local sc1 = tostring(a.sc or ""):upper()
-                    local sc2 = tostring(a.scAssign or ""):upper()
-                    local isLevel = (sc2:find("LEVEL") or sc2:find("LVL")) or
-                                    (sc1:find("LEVEL") or sc1:find("LVL"))
-                    if isLevel then
-                        local timNm = tostring(a.tim or a.timAssign or a.timName or "?")
-                        local akunNm = tostring(a.nama or a.akun or a.name or a.username or "?")
-                        print("[LVL-DBG] FOUND leveling: "..akunNm.." | sc1="..sc1.." | sc2="..sc2)
-                        table.insert(list, {akun=akunNm, tim=timNm, ageP=0})
+                body = body:match("^%s*(.-)%s*$")  -- trim
+                if body == "" or body == "null" or body == "{}" then return end
+                -- parse "akun1=max:count:a5,akun2=..."
+                for entry in (body..","):gmatch("([^,]+),") do
+                    local akunNm, vals = entry:match("^(.-)=(.+)$")
+                    if akunNm and akunNm ~= "" then
+                        table.insert(list, {akun=akunNm, tim="?", ageP=0})
                     end
                 end
-                print("[LVL-DBG] total leveling="..#list)
             end)
             if not ok3 then print("[LVL-DBG] error: "..tostring(err3)) end
             return list
