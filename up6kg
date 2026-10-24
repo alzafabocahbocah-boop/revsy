@@ -1152,10 +1152,23 @@ task.spawn(function()
                 -- getgc parent-find + fit CUMA fallback kalo UI belum ke-load.
                 if not _G.__ZenxMaxPetCache or (tick() - (_G.__ZenxMaxPetTime or 0)) > 30 then
                     local maxUI = nil
+                    -- v10.65: coba HactTelurGetMaxPets() dulu (pointer hact, no getgc, paling akurat)
                     pcall(function()
+                        if _G.HactTelurGetMaxPets then
+                            local d = _G.HactTelurGetMaxPets()
+                            local v = nil
+                            if type(d) == "number" then v = d
+                            elseif type(d) == "table" then v = d.maxPets or d.MaxPets end
+                            if v and v > 0 then maxUI = v end
+                        end
+                    end)
+                    if not maxUI then pcall(function()
                         local pg = player:FindFirstChild("PlayerGui")
                         if pg then
+                            -- v10.65: skip TradingUI (sama cara hact v34.21) biar gak baca max akun lawan
+                            local tradeUI = pg:FindFirstChild("TradingUI")
                             for _, d in ipairs(pg:GetDescendants()) do
+                                if tradeUI and d:IsDescendantOf(tradeUI) then continue end
                                 if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
                                     local low = d.Text:lower()
                                     if low:find("pet") and low:find("item") then   -- "Pet Items" (BUKAN "All Items" yg max-nya beda)
@@ -1170,7 +1183,7 @@ task.spawn(function()
                                 end
                             end
                         end
-                    end)
+                    end) end
                     local mx = maxUI
                     if not mx then                            -- FALLBACK pointer MutableStats (v10.212, no getgc)
                         pcall(function()
