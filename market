@@ -1,4 +1,4 @@
--- ZENX MARKET v8.516 — hitung totalPet sekali di boot sebelum loop kirim jalan
+-- ZENX MARKET v8.517 — tambah warn di kirim() kalau POST gagal (biar ketauan di console)
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.516"
+local VERSION = "8.517"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.516: hitung totalPet sekali di boot sebelum loop kirim (fix panel 0 pet sampai 60s) | v8.515: hapus loop laporHargaPasar tiap 15s | v8.514: skin booth ke atas di manual snipe list (sort isSkin first) | v8.513: fix snipe gak ke-apply — merge logic baca r.type padahal panel+lokal pakai r.petType | v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
+local VERSION_DATE = "v8.517: tambah warn di kirim() kalau POST gagal — biar ketauan di console SC kenapa panel 0 | v8.516: hitung totalPet sekali di boot sebelum loop kirim (fix panel 0 pet sampai 60s) | v8.515: hapus loop laporHargaPasar tiap 15s | v8.514: skin booth ke atas di manual snipe list (sort isSkin first) | v8.513: fix snipe gak ke-apply — merge logic baca r.type padahal panel+lokal pakai r.petType | v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -445,10 +445,17 @@ task.spawn(function()
 
     -- v8.336: BALIKIN sukses/gagal. dulu fire-and-forget -> gagal kirim gak
     -- ketauan -> loop tetep nganggep "udah lapor" -> nunggu 120s lagi.
+    -- v8.517: tambah warn kalau POST gagal — biar ketauan di console SC
+    local kirimGagalLog = {}   -- dedup warn per jalur (gak spam tiap 20s)
+    local kirimOkLog    = {}   -- catat jalur yg pernah berhasil (buat log "pulih")
     local function kirim(jalur, isi)
         local ok, body = pcall(function() return HS:JSONEncode(isi) end)
-        if not ok then return false end
+        if not ok then
+            warn("[kirim] ❌ JSONEncode gagal untuk " .. tostring(jalur) .. ": " .. tostring(body))
+            return false
+        end
         local sukses = false
+        local errMsg = nil
         pcall(function()
             local r = req({
                 Url = PANEL_URL .. jalur, Method = "POST",
@@ -456,8 +463,26 @@ task.spawn(function()
                 Body = body,
             })
             -- executor beda-beda: ada yg kasih StatusCode, ada yg Success
-            if r and (r.StatusCode == 200 or r.Success) then sukses = true end
+            if r and (r.StatusCode == 200 or r.Success) then
+                sukses = true
+            else
+                errMsg = r and ("HTTP " .. tostring(r.StatusCode or "?") .. " " .. tostring(r.Body or ""):sub(1,80)) or "nil response"
+            end
         end)
+        if sukses then
+            if not kirimOkLog[jalur] then
+                print("[kirim] ✅ POST " .. jalur .. " OK (URL: " .. PANEL_URL .. ")")
+                kirimOkLog[jalur] = true
+            end
+            kirimGagalLog[jalur] = nil   -- reset dedup gagal
+        else
+            -- warn SEKALI per jalur (gak spam), reset kalau berhasil lagi
+            if not kirimGagalLog[jalur] then
+                warn("[kirim] ❌ POST " .. jalur .. " GAGAL — " .. tostring(errMsg) .. " | URL: " .. PANEL_URL .. jalur)
+                kirimGagalLog[jalur] = true
+                kirimOkLog[jalur] = nil
+            end
+        end
         return sukses
     end
 
