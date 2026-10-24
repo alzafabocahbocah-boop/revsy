@@ -1,4 +1,4 @@
--- ZENX MARKET v8.512 — fix PANEL_URL nil: define di dalam fetchRuleFromPanel
+-- ZENX MARKET v8.513 — fix snipe gak ke-apply: field petType bukan type di merge logic
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.512"
+local VERSION = "8.513"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -351,7 +351,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
+local VERSION_DATE = "v8.513: fix snipe gak ke-apply — merge logic baca r.type padahal panel+lokal pakai r.petType | v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -2821,15 +2821,18 @@ do
         -- Jenis pet baru dari panel TIDAK ditambah (biar akun bisa punya snipe sendiri).
         local existing = BH.autoSnipe.rules or {}
         -- buat set jenis pet lokal (type lowercase sebagai key)
+        -- v8.513: lokal pakai r.petType, panel juga return r.petType — bukan r.type
         local localTypes = {}
         for _, r in ipairs(existing) do
-            if r.type then localTypes[r.type:lower()] = true end
+            local k = r.petType or r.type  -- fallback r.type buat kompatibilitas lama
+            if k then localTypes[k:lower()] = true end
         end
         -- filter rules panel: hanya yang jenisnya sudah ada di lokal
         local merged = {}
         local skipped, updated = 0, 0
         for _, r in ipairs(rules) do
-            if r.type and localTypes[r.type:lower()] then
+            local k = r.petType or r.type
+            if k and localTypes[k:lower()] then
                 merged[#merged+1] = r; updated = updated + 1
             else
                 skipped = skipped + 1
@@ -2844,10 +2847,14 @@ do
         -- merge: ganti rules lokal yang match dengan versi panel, sisanya tetap
         local finalRules = {}
         local panelByType = {}
-        for _, r in ipairs(merged) do panelByType[r.type:lower()] = r end
+        for _, r in ipairs(merged) do
+            local k = (r.petType or r.type or ""):lower()
+            panelByType[k] = r
+        end
         for _, r in ipairs(existing) do
-            if r.type and panelByType[r.type:lower()] then
-                finalRules[#finalRules+1] = panelByType[r.type:lower()]
+            local k = (r.petType or r.type or ""):lower()
+            if k ~= "" and panelByType[k] then
+                finalRules[#finalRules+1] = panelByType[k]
             else
                 finalRules[#finalRules+1] = r
             end
