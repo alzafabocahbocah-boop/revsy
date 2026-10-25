@@ -533,8 +533,10 @@ export default {
             if (!it || !it.akun || it.stat == null) continue;
             const js = typeof it.stat === "string" ? it.stat : JSON.stringify(it.stat);
             stmts.push(db.prepare(
-              "INSERT INTO akun (nama, upkgstat) VALUES (?1, ?2) ON CONFLICT(nama) DO UPDATE SET upkgstat=?2"
-            ).bind(String(it.akun), js));
+              "INSERT INTO akun (nama,ts,farm2on,kg,glow,gate,kecil,besar,matang,tot,nilai,sheck,wctrig,beratmax,prio,job,tunda,buah,mail,upkgstat) " +
+              "VALUES (?1,?3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,?2) " +
+              "ON CONFLICT(nama) DO UPDATE SET upkgstat=?2"
+            ).bind(String(it.akun), js, skrg));
           }
           if (stmts.length > 0) await db.batch(stmts);
           return json({ ok: true, n: stmts.length });
