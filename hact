@@ -2899,11 +2899,25 @@ local function giftPetsByFilter(cfg)
         end
         print(("[HactTelur] TIMING total unfav-confirm loop: %.2fs"):format(tick()-_t0))
         task.wait(0.3)   -- jeda biar unfav bener-bener ke-apply
-        -- re-scan: cek ulang pet yg mau dikirim setelah unfav (pastiin list masih valid) -- INI SATU-
-        -- SATUNYA getgc lagi yg tersisa (perlu, biar list final akurat sebelum trade)
+        -- v34.51: hapus getMatchedPets() ke-2 (rebuild lagi = lag). Filter langsung dari matched yg ada:
+        -- cukup cek UUID masih ada di backpack (bukan rebuild penuh + petFate per-pet lagi)
         local _t1 = tick()
-        matched = getMatchedPets(cfg)
-        print(("[HactTelur] TIMING re-scan getMatchedPets: %.2fs"):format(tick()-_t1))
+        local bp2 = player:FindFirstChild("Backpack")
+        local stillInBp = {}
+        if bp2 then
+            for _, t in ipairs(bp2:GetChildren()) do
+                if t:IsA("Tool") then
+                    local u = t:GetAttribute("PET_UUID")
+                    if u then stillInBp[tostring(u):gsub("[{}]","")] = true end
+                end
+            end
+        end
+        local filtered = {}
+        for _, u in ipairs(matched) do
+            if stillInBp[u] then filtered[#filtered+1] = u end
+        end
+        matched = filtered
+        print(("[HactTelur] v34.51 re-filter (no rebuild): %.2fs"):format(tick()-_t1))
         _G.__hactStep = "abis unfav, matched="..#matched
         print("[HactTelur] abis unfav list -> "..#matched.." pet siap dikirim")
         print(("[HactTelur] TIMING total dari getMatchedPets awal -> siap fire: %.2fs"):format(tick()-_tMatch1))
