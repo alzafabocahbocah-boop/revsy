@@ -1203,6 +1203,18 @@ export default {
         // simpan di tabel akun (upsert), tokens & petRule masuk kolom sendiri.
         // place tetap dilapor biar panel tau ini GAG 1.
         await db.prepare("ALTER TABLE akun ADD COLUMN mktpet INTEGER").run().catch(() => {});
+        // v15-72: maxInv jangan ditulis 0 kalau SC gak kirim (SC cuma kirim maxInv sekali pakai flag).
+        // Baca maxInv lama dari DB, pakai yg baru hanya kalau > 0.
+        let maxInvFinal = angka(b.maxInv);
+        if (maxInvFinal <= 0) {
+          try {
+            const rowLama = await db.prepare("SELECT upkgstat FROM akun WHERE nama=?1").bind(nama).first();
+            if (rowLama && rowLama.upkgstat) {
+              const st = JSON.parse(rowLama.upkgstat);
+              if (st && st.maxInv > 0) maxInvFinal = st.maxInv;
+            }
+          } catch(e) {}
+        }
         await db
           .prepare(
             `INSERT INTO akun (nama, ts, place, tokens, petrule, nrule, upkgstat, mktpet)
@@ -1211,7 +1223,7 @@ export default {
                ts=?2, place=?3, tokens=?4, petrule=?5, nrule=?6, upkgstat=?7, mktpet=?8`
           )
           .bind(nama, skrg, teks(b.place, 24), angka(b.tokens), angka(b.petRule), angka(b.nRule),
-                JSON.stringify({ totalPet: angka(b.totalPet), maxInv: angka(b.maxInv), snipe: angka(b.snipe),
+                JSON.stringify({ totalPet: angka(b.totalPet), maxInv: maxInvFinal, snipe: angka(b.snipe),
                                  snipeTok: angka(b.snipeTok),
                                  snipeJenis: Array.isArray(b.snipeJenis) ? b.snipeJenis.slice(0,40).map((x)=>({ n: teks(x.n,40)||"?", j: angka(x.j), t: angka(x.t) })) : [],
                                  petJenis: Array.isArray(b.petJenis) ? b.petJenis.slice(0,80).map((x)=>({ n: teks(x.n,48)||"?", j: angka(x.j), kg: Array.isArray(x.kg) ? x.kg.slice(0,12).map((v)=>angka(v)) : [] })) : [] }),
