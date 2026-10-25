@@ -1647,14 +1647,22 @@ task.spawn(function()
                                 end
                                 if lname:find("cancel") or lname:find("reject") or lname:find("decline") then return end
                                 if r == sendReqRE and lastTradeID then
-                                    -- v10.246: skip acc trade kalau inv full
-                                    -- pakai ZenxKgStat.maxInv (sudah diolah loop utama, bukan cache mentah)
-                                    -- threshold -3 biar ada buffer sebelum benar-benar penuh
+                                    -- v10.247: skip acc trade kalau inv full
+                                    -- maxInv: GetAttribute paling reliable (milik LocalPlayer, bukan lawan)
+                                    -- fallback ZenxKgStat.maxInv, threshold -3 buat buffer
                                     local invFull = false
                                     pcall(function()
                                         local st = _G.ZenxKgStat
-                                        local maxInv = (st and tonumber(st.maxInv)) or 0
                                         local total = (st and (tonumber(st.totalAll) or tonumber(st.total))) or 0
+                                        local maxInv = 0
+                                        -- prioritas 1: GetAttribute LocalPlayer (pasti milik akun kita)
+                                        local attrMax = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+                                        if type(attrMax) == "number" and attrMax > 0 then
+                                            maxInv = attrMax
+                                        else
+                                            -- fallback: ZenxKgStat.maxInv
+                                            maxInv = (st and tonumber(st.maxInv)) or 0
+                                        end
                                         if maxInv > 0 and total >= (maxInv - 3) then invFull = true end
                                     end)
                                     if invFull then
