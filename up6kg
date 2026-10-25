@@ -1,11 +1,11 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.240 (fix stat panel kosong: lapor rutin walaupun maxInv belum terdeteksi)     ║
+-- ║  UP KG — v10.241 (fix getgc maxInv: pilih terbesar bukan terkecil, hapus floor filter)     ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.240"
+local VERSION = "up6kg-v10.241"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1321,20 +1321,19 @@ task.spawn(function()
                     end
                     if not mx then                            -- FALLBACK getgc (UI belum ke-load + pointer belum ada)
                         -- v10.64: cuma dari table PlayerData ASLI (punya MaxEggsInFarm+MaxEquippedPets+MaxPetsInInventory).
-                        -- Tally -> pilih MODE (paling sering) di antara yg >= jumlah pet skrg. Buang stale/default
-                        -- (contoh dari dump: 235 muncul 2x = bener, 60 muncul 1x = stale; di akun lain 210 = default).
+                        -- Tally -> pilih MODE (paling sering). Kalau seri -> pilih TERBESAR (stale/default
+                        -- cenderung kecil: 60; nilai bener akun = 260+. floor dihapus karena totalAll bisa
+                        -- belum ke-detect saat pertama scan -> nilai valid ikut ke-skip).
                         local tally = {}
-                        local floor = (totalAll or 0) - 5
                         pcall(function()
                             if getgc then
                                 for _, obj in ipairs(getgc(true)) do
                                     if type(obj) == "table" then
                                         local mp = rawget(obj, "MaxPetsInInventory")
-                                        if type(mp) == "number" and mp > 0
+                                        if type(mp) == "number" and mp >= 50
                                             and rawget(obj, "MaxEggsInFarm") ~= nil
-                                            and rawget(obj, "MaxEquippedPets") ~= nil
-                                            and mp >= floor then
-                                            tally[mp] = (tally[mp] or 0) + 1   -- cuma config PlayerData + >= jumlah pet
+                                            and rawget(obj, "MaxEquippedPets") ~= nil then
+                                            tally[mp] = (tally[mp] or 0) + 1
                                             if not _kgMutableStats then _kgMutableStats = obj end   -- simpan pointer sekalian
                                         end
                                     end
@@ -1343,8 +1342,8 @@ task.spawn(function()
                         end)
                         local bestN = 0
                         for v, n in pairs(tally) do
-                            -- MODE; kalo seri -> pilih yg lebih KECIL (default game cenderung gede: 210/275)
-                            if n > bestN or (n == bestN and (not mx or v < mx)) then mx = v; bestN = n end
+                            -- v10.241: pilih TERBESAR kalau seri (stale default kecil: 60, bener: 260+)
+                            if n > bestN or (n == bestN and (not mx or v > mx)) then mx = v; bestN = n end
                         end
                     end
                     -- v10.64: getgc udah pake MODE heuristik (di atas) yg reliable -> mx udah bener.
