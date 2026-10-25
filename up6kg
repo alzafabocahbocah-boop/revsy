@@ -1272,11 +1272,21 @@ task.spawn(function()
                 if not _G.__ZenxMaxPetCache or (tick() - (_G.__ZenxMaxPetTime or 0)) > 30 then
                     local maxUI = nil
                     -- v10.238: coba player Attribute dulu (paling akurat, pasti milik akun sendiri)
-                    -- JANGAN pakai HactTelurGetMaxPets — cache 5 menit hact bisa stale/salah (kontaminasi trade)
+                    -- HactTelurGetMaxPets juga aman (hact v34.42+ prioritas ATTR dulu), tapi cek ATTR sendiri lebih direct
                     pcall(function()
                         local mp = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
                         if type(mp) == "number" and mp > 0 then maxUI = mp end
                     end)
+                    -- v10.238: fallback ke HactTelurGetMaxPets kalau ATTR tidak ada
+                    if not maxUI then pcall(function()
+                        if _G.HactTelurGetMaxPets then
+                            local d = _G.HactTelurGetMaxPets()
+                            local v = nil
+                            if type(d) == "number" then v = d
+                            elseif type(d) == "table" then v = d.maxPets or d.MaxPets end
+                            if v and v > 0 then maxUI = v end
+                        end
+                    end) end
                     if not maxUI then pcall(function()
                         local pg = player:FindFirstChild("PlayerGui")
                         if pg then
@@ -1290,8 +1300,8 @@ task.spawn(function()
                                         local a, b = d.Text:match("(%d+)%s*/%s*(%d+)")
                                         if a and b then
                                             a, b = tonumber(a), tonumber(b)
-                                            if a and b and b > 0 and a > 0 then
-                                                maxUI = b; break     -- X cocok jumlah pet -> ini inventory akun ini
+                                            if a and b and b > 0 and math.abs(a - (totalAll or 0)) <= 15 then
+                                                maxUI = b; break     -- X cocok jumlah pet akun sendiri (±15)
                                             end
                                         end
                                     end
