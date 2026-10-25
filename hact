@@ -2308,35 +2308,8 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
     _G.__hactTradeRemoteNil = false
     if not targetPlayer then _G.__hactStep="GUARD: target nil"; return 0 end
 
-    -- helper: cek target full via notif layar (tetap dipakai buat stop kalau target penuh)
-    local function targetMaxPet()
-        local found = false
-        pcall(function()
-            local pg = player:FindFirstChild("PlayerGui")
-            if not pg then return end
-            for _, d in ipairs(pg:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Visible then
-                    local t = (d.Text or ""):lower()
-                    if t:find("give more pets") or t:find("max their inventory")
-                       or t:find("can.t give more") or (t:find("max") and t:find("inventory"))
-                       or t:find("their inventory")
-                       or t:find("tidak bisa memberi") or t:find("tidak dapat memberi")
-                       or t:find("gak bisa memberi") or t:find("tidak bisa memberikan")
-                       or (t:find("inventaris") and (t:find("penuh") or t:find("maks") or t:find("maksimal")))
-                       or (t:find("inventori") and (t:find("penuh") or t:find("maks")))
-                       or (t:find("memberi") and (t:find("pet") or t:find("hewan"))) then
-                        found = true; break
-                    end
-                    local xx, yy = t:match("%((%d+)%s*/%s*(%d+)%)")
-                    if xx and yy then
-                        xx = tonumber(xx); yy = tonumber(yy)
-                        if xx and yy and yy >= 50 and xx >= yy then found = true; break end
-                    end
-                end
-            end
-        end)
-        return found
-    end
+    -- v34.52: hapus targetMaxPet() — scan pg:GetDescendants() tiap round = lag
+    -- loop sudah punya exit: idx > #petList (petList habis) + max 40 round
 
     -- helper: fire Confirm+Accept RE langsung (pola Trade Egg v33.83)
     local function fireConfirmAccept()
@@ -2361,13 +2334,6 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
     for round = 1, 40 do
         if stopCheck and stopCheck() then _G.__hactStep = "STOP (cfg._running=false)"; break end
         if idx > #petList then _G.__hactStep = "petList HABIS (idx="..idx..")"; break end
-        if targetMaxPet() then
-            _G.__hactTargetFull = targetPlayer.Name
-            _G.__hactFullTargets = _G.__hactFullTargets or {}; _G.__hactFullTargets[targetPlayer.Name] = tick()
-            print("[HactTelur] target "..targetPlayer.Name.." FULL -> stop")
-            break
-        end
-
         local _roundStart = tick()
         pcall(holdTradingTicket)  -- pegang tiket
         _G.__hactStep = "FIRE sendReq -> "..targetPlayer.Name
@@ -2403,16 +2369,6 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         task.wait(0.5)  -- tunggu server processing sebelum confirm
         fireConfirmAccept()   -- Confirm+Accept RE langsung (v33.83)
         task.wait(0.3)
-
-        -- cek target full setelah confirm
-        if targetMaxPet() then
-            _G.__hactTargetFull = targetPlayer.Name
-            _G.__hactFullTargets = _G.__hactFullTargets or {}; _G.__hactFullTargets[targetPlayer.Name] = tick()
-            print("[HactTelur] target "..targetPlayer.Name.." FULL (pas confirm) -> stop")
-            totalSent = totalSent + #batch
-            idx = idx + #batch
-            break
-        end
 
         totalSent = totalSent + #batch
         idx = idx + #batch
