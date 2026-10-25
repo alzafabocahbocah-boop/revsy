@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.43  ══════════════════════════
+-- ══════════════════════════  HACT  v34.44  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -3214,6 +3214,56 @@ do
                     list = {{ akun = plr.Name, stat = { keep=keepMap, eggN=eggTotal, egg=eggNama } }}
                 })
             })
+            -- v34.44: push /hactakun langsung (biar up6kg bisa baca tanpa panel buka)
+            -- merge dengan data lama biar gak overwrite akun lain
+            pcall(function()
+                local tot = 0
+                pcall(function() tot = #PetDetect.listBackpackPets() end)
+                local mx = 200
+                pcall(function()
+                    local d = _G.HactTelurGetMaxPets and _G.HactTelurGetMaxPets()
+                    if type(d) == "number" and d > 0 then mx = d
+                    elseif type(d) == "table" then mx = d.maxPets or d.MaxPets or 200 end
+                end)
+                if mx <= 0 then
+                    pcall(function()
+                        local v = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory")
+                        if tonumber(v) and tonumber(v) > 0 then mx = tonumber(v) end
+                    end)
+                end
+                local keepTotal = 0
+                for _, kd in pairs(keepMap) do keepTotal = keepTotal + (kd.total or 0) end
+                -- baca data lama dulu, merge entry akun ini, baru push
+                local merged = {}
+                pcall(function()
+                    local rGet = httpRequest({ Url=_HURL.."/hactakun", Method="GET", Headers={["X-Kunci"]=_HKEY} })
+                    local body = rGet and (rGet.Body or rGet.body) or ""
+                    -- parse JSON array [{akun=..,data=..}] atau plain "akun=val,akun2=val2"
+                    local ok = pcall(function()
+                        local arr = HS:JSONDecode(body)
+                        if type(arr) == "table" then
+                            for _, row in ipairs(arr) do
+                                local nm2 = row.akun or row.nm or ""
+                                if nm2 ~= "" and nm2 ~= plr.Name then merged[nm2] = row.data or "" end
+                            end
+                        end
+                    end)
+                    if not ok then
+                        for pair in tostring(body):gmatch("[^,]+") do
+                            local k, v2 = pair:match("^%s*(.-)%s*=%s*(.-)%s*$")
+                            if k and k ~= "" and k ~= plr.Name then merged[k] = v2 or "" end
+                        end
+                    end
+                end)
+                merged[plr.Name] = tot..":"..mx..":"..keepTotal
+                local parts = {}
+                for k, v2 in pairs(merged) do parts[#parts+1] = k.."="..v2 end
+                httpRequest({
+                    Url = _HURL .. "/hactakun", Method = "PUT",
+                    Headers = {["Content-Type"]="application/json", ["X-Kunci"]=_HKEY},
+                    Body = HS:JSONEncode({data = table.concat(parts, ",")})
+                })
+            end)
         end)
     end
     task.spawn(function()
