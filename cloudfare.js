@@ -522,6 +522,8 @@ export default {
 
       if (jalur === "/upkgstat-batch" && req.method === "POST") {
         // v9.324: stat up kg (bahan pet + per-jenis 3.8kg udah/belum) dari worker -> kolom upkgstat
+        // FIX: pakai UPSERT supaya akun up6kg yang belum pernah /stat tetap tersimpan (dulu
+        // UPDATE saja -> 0 rows affected kalau akun belum ada di tabel -> stat panel kosong)
         const b = await req.json().catch(() => ({}));
         const list = Array.isArray(b.list) ? b.list : [];
         try {
@@ -530,7 +532,9 @@ export default {
           for (const it of list) {
             if (!it || !it.akun || it.stat == null) continue;
             const js = typeof it.stat === "string" ? it.stat : JSON.stringify(it.stat);
-            stmts.push(db.prepare("UPDATE akun SET upkgstat=?2 WHERE nama=?1").bind(String(it.akun), js));
+            stmts.push(db.prepare(
+              "INSERT INTO akun (nama, upkgstat) VALUES (?1, ?2) ON CONFLICT(nama) DO UPDATE SET upkgstat=?2"
+            ).bind(String(it.akun), js));
           }
           if (stmts.length > 0) await db.batch(stmts);
           return json({ ok: true, n: stmts.length });
