@@ -3423,10 +3423,9 @@ export default {
         return json({ ok: true, akun });
       }
 
-      // hapus akun total dari D1 (semua tabel terkait)
+      // hapus akun total dari D1 (semua tabel terkait) — cukup kunci panel, gak butuh login cookie
       if (jalur === "/akun-hapus" && req.method === "DELETE") {
         const b = await req.json();
-        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
         const akun = teks(b.akun);
         if (!akun) return salah("akun kosong");
         await db.prepare("DELETE FROM akun WHERE nama=?1").bind(akun).run();
