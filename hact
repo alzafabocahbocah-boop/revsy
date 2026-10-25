@@ -5074,44 +5074,8 @@ local function placeEggs(count)
     end
     return placed
 end
--- deteksi backpack penuh: jumlah pet vs MaxPetsInInventory.
--- backpack penuh: pet udah capai batas game (mis 230/230) ATAU ada notif "max backpack".
-local function backpackMaxNotif()
-    local found = false
-    pcall(function()
-        local pg = player:FindFirstChildOfClass("PlayerGui")
-        if not pg then return end
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") or d:IsA("TextButton") then
-                local t = (d.Text or ""):lower()
-                if t:find("max") and (t:find("backpack") or t:find("inventory") or t:find("pet")) then
-                    found = true; break
-                end
-                if t:find("inventory full") or t:find("backpack full") or t:find("penuh") then
-                    found = true; break
-                end
-            end
-        end
-    end)
-    return found
-end
-local function backpackLimitNotif()
-    local found = false
-    pcall(function()
-        local pg = player:FindFirstChildOfClass("PlayerGui")
-        if not pg then return end
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Visible then
-                local t = (d.Text or ""):lower()
-                if t:find("cannot open this pet") or t:find("limit of pet")
-                    or t:find("reached the limit") or t:find("inventory is full") then
-                    found = true; break
-                end
-            end
-        end
-    end)
-    return found
-end
+-- v34.54: hapus backpackMaxNotif() + backpackLimitNotif() — scan pg:GetDescendants() tiap main loop = lag
+-- deteksi limit sekarang andalkan listener Auto.bpFullFlag (set via DescendantAdded+Text:Changed di bawah)
 -- v31.3: hitung total pet milik kita: backpack + character + garden, dedup UUID
 local function isBackpackFull()
     -- v31.2: cur = backpack + garden (total pet milik kita)
@@ -5120,7 +5084,7 @@ local function isBackpackFull()
     if not maxPets or maxPets <= 0 then maxPets = 230 end
     -- cooldown stlh sell: abaikan notif lama (yg blm hilang) biar gak stuck di Seal
     local inCooldown = (tick() - (Auto.lastSellTime or 0)) < 4
-    local byNotif = (not inCooldown) and (Auto.bpFullFlag or backpackLimitNotif())
+    local byNotif = (not inCooldown) and Auto.bpFullFlag
     local full = (cur >= maxPets) or byNotif
     return full, cur, maxPets
 end
