@@ -3436,6 +3436,22 @@ export default {
         if (!akun) return salah("akun kosong");
         await db.prepare("DELETE FROM akun WHERE nama=?1").bind(akun).run();
         await db.prepare("DELETE FROM cookies WHERE akun=?1").bind(akun).run().catch(()=>{});
+        // bersihkan dari tim.clients (JSON array per baris) — biar gak muncul lagi di panel
+        try {
+          const tims = await db.prepare("SELECT nama, clients FROM tim WHERE clients IS NOT NULL AND clients != ''").all();
+          for (const t of (tims.results || [])) {
+            try {
+              const cls = JSON.parse(t.clients);
+              if (!Array.isArray(cls)) continue;
+              const baru = cls.filter(c => (c.akun || c.nm || "") !== akun);
+              if (baru.length !== cls.length) {
+                await db.prepare("UPDATE tim SET clients=?1 WHERE nama=?2").bind(JSON.stringify(baru), t.nama).run();
+              }
+            } catch(e) {}
+          }
+        } catch(e) {}
+        // bersihkan dari akun.tim (set null biar gak nangkring di RF manapun)
+        await db.prepare("UPDATE akun SET tim=NULL WHERE nama=?1").bind(akun).run().catch(()=>{});
         // masukkan ke blacklist biar SC gak bisa re-insert
         let bl = {}; try { const r = await db.prepare("SELECT data FROM cfg WHERE scope='akun_blacklist'").first(); if(r) bl = JSON.parse(r.data); } catch(e){}
         bl[akun] = Math.floor(Date.now()/1000);
