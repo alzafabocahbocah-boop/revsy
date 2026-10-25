@@ -2296,63 +2296,19 @@ local function holdTradingTicket()
 end
 
 local function tradePetsToTarget(targetPlayer, petList, stopCheck)
+    -- v34.2: rewrite pola TRADE EGG (gacor) — sendReq 1x → addItem fire 3x per pet → Confirm+Accept RE
+    -- langsung → jeda kecil → lanjut batch. Hapus: spam sendReq loop, tunggu windowOpen, tunggu 3s
+    -- "Trade completed", spam autoAcceptTrade berkali-kali. Jauh lebih cepat & stabil.
     if not TradeSys.ensure() then
         _G.__hactStep = "GUARD: remote nil"
-        _G.__hactTradeRemoteNil = true   -- v27.126: buat debug panel
-        print("[HactTelur] \u{26A0} REMOTE TRADE NIL (ReplicatedStorage.GameEvents.TradeEvents gak ke-resolve) -> gak bisa kirim request")
+        _G.__hactTradeRemoteNil = true
+        print("[HactTelur] \u{26A0} REMOTE TRADE NIL -> gak bisa kirim request")
         return 0
     end
     _G.__hactTradeRemoteNil = false
     if not targetPlayer then _G.__hactStep="GUARD: target nil"; return 0 end
-    _G.__hactStep = "trade loop | petList="..#petList.." | stop="..tostring(stopCheck and stopCheck())
-    _G.__hactPetsAdded = false; _G.__hactSending = true   -- v27.132: global (dulu Auto.__petsAdded -> Auto NIL di sini -> ERROR, trade mampet)
-    -- deteksi notif "you can't add more items" di layar (slot trade penuh)
-    -- v32.3: cache cantAddMore 0.25s — dulu scan seluruh PlayerGui:GetDescendants() tiap pet (ribuan node)
-    -- → jadi lambat banget, total delay per batch naik drastis → kurang dari 12 pet ke-add
-    local _camCache, _camCacheT = false, 0
-    local function cantAddMore()
-        if tick() - _camCacheT < 0.25 then return _camCache end  -- pakai cache
-        local found = false
-        local foundTxt = ""
-        pcall(function()
-            local pg = player:FindFirstChild("PlayerGui")
-            if not pg then return end
-            -- v32.3: scan LiveTrade dulu (notif "can't add more" ada di sini), baru fallback pg
-            local tui = pg:FindFirstChild("TradingUI")
-            local lt = tui and tui:FindFirstChild("LiveTrade")
-            local root = lt or pg
-            -- v29.3: scan TextLabel DAN TextButton (game kadang pakai TextButton buat notif)
-            for _, d in ipairs(root:GetDescendants()) do
-                if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible then
-                    local t = (d.Text or ""):lower()
-                    if t:find("can") and t:find("add more") then
-                        found = true; foundTxt = d.Text:sub(1,40); break
-                    end
-                end
-            end
-        end)
-        _camCache, _camCacheT = found, tick()
-        -- v29.3 DBG: log hasil deteksi ke notifPanel
-        if _G.__hactPushNotifLog and found then
-            _G.__hactPushNotifLog("CAM", ("found=%s txt=%s"):format(tostring(found), foundTxt ~= "" and foundTxt or "-"))
-        end
-        return found
-    end
-    -- v27.65: cek window trade masih kebuka?
-    -- v32.3: tambah cek tui.Enabled (sama kayak autoAcceptTrade — lt.Visible bisa true walau UI disabled)
-    local function windowOpen()
-        local o = false
-        pcall(function()
-            local pg = player:FindFirstChild("PlayerGui")
-            local tui = pg and pg:FindFirstChild("TradingUI")
-            local lt = tui and tui:FindFirstChild("LiveTrade")
-            o = (lt and lt.Visible and tui and tui.Enabled) or false
-        end)
-        return o
-    end
-    -- v27.74: deteksi notif TARGET FULL yg BENER (teks persis dari game):
-    -- "You can't give more pets to this user, because they will max their inventory (236/235)"
-    -- BEDA dari "can't add more items" (itu limit 12 slot trade, ditangani cantAddMore).
+
+    -- helper: cek target full via notif layar (tetap dipakai buat stop kalau target penuh)
     local function targetMaxPet()
         local found = false
         pcall(function()
@@ -2364,7 +2320,6 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
                     if t:find("give more pets") or t:find("max their inventory")
                        or t:find("can.t give more") or (t:find("max") and t:find("inventory"))
                        or t:find("their inventory")
-                       -- v27.75: Indonesia (tebakan, refine kalau dapet teks asli)
                        or t:find("tidak bisa memberi") or t:find("tidak dapat memberi")
                        or t:find("gak bisa memberi") or t:find("tidak bisa memberikan")
                        or (t:find("inventaris") and (t:find("penuh") or t:find("maks") or t:find("maksimal")))
@@ -2372,8 +2327,6 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
                        or (t:find("memberi") and (t:find("pet") or t:find("hewan"))) then
                         found = true; break
                     end
-                    -- v27.76: notif target-full PASTI ada angka "(X/Y)" (EN+ID, mis 236/235).
-                    -- X>=Y & Y>=50 (inventaris penuh, BUKAN slot trade 12) -> target full, lintas-bahasa.
                     local xx, yy = t:match("%((%d+)%s*/%s*(%d+)%)")
                     if xx and yy then
                         xx = tonumber(xx); yy = tonumber(yy)
@@ -2384,103 +2337,89 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         end)
         return found
     end
+
+    -- helper: fire Confirm+Accept RE langsung (pola Trade Egg v33.83)
+    local function fireConfirmAccept()
+        pcall(function()
+            local te2 = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+            te2 = te2 and te2:FindFirstChild("TradeEvents")
+            if te2 then
+                local c2 = te2:FindFirstChild("Confirm")
+                if c2 then c2:FireServer() end
+                local a2 = te2:FindFirstChild("Accept")
+                if a2 then a2:FireServer() end
+            end
+        end)
+    end
+
     local totalSent = 0
     local idx = 1
-    local _roundEndTs = tick()
-    local _zeroStreak = 0   -- v27.183: berapa round berturut added==0   -- v27.150: timing PERSIS antar round (curiga gap 30s di sini)
-    -- v27.65: SPAM RE-SEND. Kirim batch pet, accept, TUNGGU window HILANG (trade kelar),
-    -- lalu re-send SISA pet sampai abis / target penuh. Dulu cuma 1 batch -> sisa gak kekirim.
+    _G.__hactPetsAdded = false; _G.__hactSending = true
+    _G.__hactStep = "trade loop | petList="..#petList
+
+    -- BATCH LOOP: tiap batch max 12 pet (limit slot trade), pola Trade Egg
     for round = 1, 40 do
-        local _roundGap = tick() - _roundEndTs
-        if _roundGap > 1 then print(("[HactTelur] TIMING round %d: GAP %.1fs sebelum mulai (dari akhir round sebelumnya)"):format(round, _roundGap)) end
-        local _roundStart = tick()
         if stopCheck and stopCheck() then _G.__hactStep = "STOP (cfg._running=false)"; break end
-        if idx > #petList then _G.__hactStep = "petList HABIS (idx="..idx.." len="..#petList..")"; break end
-        pcall(holdTradingTicket)  -- pegang tiket dulu tiap re-send
-        -- v27.185: HAPUS reset __hactTradeAktif di sini — dulu tiap round reset → countdown selalu balik
-        -- ke 30s, gak pernah turun walau window sudah tutup. Set sekali dari caller (TRADE EGG / giftPetsByFilter).
-        _G.__hactStep = "FIRE TIKET -> "..targetPlayer.Name
-        local _completeBaseline = _G.__hactLastTradeComplete or 0   -- v27.152: catat baseline SEBELUM fire, buat deteksi "Trade completed!" baru abis round ini
-        -- v27.184: SPAM sendReqRE sampai window beneran kebuka (dulu 1x + wait 0.3s → kalau target
-        -- belum nerima, window gak kebuka, added tetap count naik, idx maju, round 2 break "petList HABIS")
-        do
-            local _spamStart = tick()
-            local _spamCount = 0
-            while not windowOpen() and tick() - _spamStart < 10 do
-                pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
-                _spamCount = _spamCount + 1
-                task.wait(0.4)
-            end
-            print(("[HactTelur] round %d: spam sendReq %dx (%.1fs) → window=%s"):format(round, _spamCount, tick()-_spamStart, tostring(windowOpen())))
+        if idx > #petList then _G.__hactStep = "petList HABIS (idx="..idx..")"; break end
+        if targetMaxPet() then
+            _G.__hactTargetFull = targetPlayer.Name
+            _G.__hactFullTargets = _G.__hactFullTargets or {}; _G.__hactFullTargets[targetPlayer.Name] = tick()
+            print("[HactTelur] target "..targetPlayer.Name.." FULL -> stop")
+            break
         end
-        local added = 0
-        for i = idx, #petList do
+
+        local _roundStart = tick()
+        pcall(holdTradingTicket)  -- pegang tiket
+        _G.__hactStep = "FIRE sendReq -> "..targetPlayer.Name
+
+        -- jeda 5s sebelum tiap send (pola Trade Egg — biar server siap)
+        task.wait(5)
+
+        -- cek ulang: masih ada pet di list setelah jeda?
+        if idx > #petList then break end
+        if stopCheck and stopCheck() then break end
+
+        -- sendReq 1x (gak spam)
+        pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
+        task.wait(0.5)  -- tunggu window trade kebuka di server
+
+        -- ambil batch max 12
+        local batch = {}
+        for bi = idx, math.min(idx + 11, #petList) do
+            batch[#batch+1] = tostring(petList[bi]):gsub("[{}]","")
+        end
+
+        _G.__hactPetsAdded = true
+        _G.__hactStep = "addItem "..#batch.." pet -> "..targetPlayer.Name
+        -- addItem per pet, fire 3x (pola Trade Egg v33.11)
+        for _, uclean in ipairs(batch) do
             if stopCheck and stopCheck() then break end
-            -- v27.78: TARGET full (max pet) -> lapor + STOP
-            if targetMaxPet() then
-                _G.__hactTargetFull = targetPlayer.Name
-                _G.__hactFullTargets = _G.__hactFullTargets or {}; _G.__hactFullTargets[targetPlayer.Name] = tick()   -- v27.127: skip target penuh sementara
-                print("[HactTelur] HACT OTO: target " .. targetPlayer.Name .. " FULL (max pet) -> lapor panel")
-                break
+            for _ = 1, 3 do
+                pcall(function() TradeSys.addItemRE:FireServer("Pet", "{"..uclean.."}") end)
+                task.wait(0.15)
             end
-            -- v27.78: ADD dulu, BARU cek cantAddMore. Dulu cek SEBELUM add -> notif "can't add more"
-            -- yg LINGER dari batch sebelumnya nge-block round baru -> cuma 12 kekirim, sisa 50 nyangkut.
-            local u = tostring(petList[i]):gsub("[{}]",""); u = "{"..u.."}"
-            pcall(function() TradeSys.addItemRE:FireServer("Pet", u) end)
-            added = added + 1
-            task.wait(0.2)  -- v32.3: 0.05->0.2 biar server gak drop (terlalu cepat -> <12 ke-add)
-            if cantAddMore() then break end   -- slot trade penuh (12) -> accept + re-send sisa
         end
-        -- v27.122: tandain pet UDAH ke-add -> baru boleh confirm (anti race: loop 0.12s confirm window
-        -- kosong yg baru kebuka -> "langsung skip ke trade complete")
-        if added > 0 then _G.__hactPetsAdded = true end
-        -- auto-accept (spam loop v27.68 udah bantu, jadi cukup 2x)
-        for i = 1, 2 do autoAcceptTrade(); task.wait(0.2) end
-        totalSent = totalSent + added
-        idx = idx + added
-        -- v27.79: cek TARGET FULL SETELAH accept -- notif "max their inventory (236/235)" muncul pas
-        -- CONFIRM, BUKAN pas add-pet. Dulu cuma cek pas add -> notif kelewat -> trade terus walau full.
+
+        task.wait(0.5)  -- tunggu server processing sebelum confirm
+        fireConfirmAccept()   -- Confirm+Accept RE langsung (v33.83)
+        task.wait(0.3)
+
+        -- cek target full setelah confirm
         if targetMaxPet() then
             _G.__hactTargetFull = targetPlayer.Name
-            _G.__hactFullTargets = _G.__hactFullTargets or {}; _G.__hactFullTargets[targetPlayer.Name] = tick()   -- v27.127
-            print("[HactTelur] HACT OTO: target "..targetPlayer.Name.." FULL (max pet pas confirm) -> stop + lapor")
+            _G.__hactFullTargets = _G.__hactFullTargets or {}; _G.__hactFullTargets[targetPlayer.Name] = tick()
+            print("[HactTelur] target "..targetPlayer.Name.." FULL (pas confirm) -> stop")
+            totalSent = totalSent + #batch
+            idx = idx + #batch
             break
         end
-        -- v27.138 (re-apply, GACOR): SKIP "tunggu window nutup + cantAddMore wait" (biang jeda 15-30s/round).
-        -- Accept bentar + jeda kecil, langsung re-send batch berikut (pola up6kg one-shot).
-        for i = 1, 3 do autoAcceptTrade(); task.wait(0.15) end
-        if targetMaxPet() then
-            _G.__hactTargetFull = targetPlayer.Name
-            print("[HactTelur] HACT OTO: target "..targetPlayer.Name.." FULL -> stop + lapor")
-            break
-        end
-        -- v27.152: JANGAN wait tetap 0.2s -- POLL CEPAT nunggu sinyal "Trade completed!" (server-confirmed,
-        -- reliable, bukan nebak) ke-update SETELAH round ini. Begitu kedeteksi -> LANGSUNG lanjut round
-        -- berikutnya (bisa lebih cepet dari 0.2s kalau sinyal udah nongol duluan). Ada batas atas 3 detik
-        -- (kalau sinyal gak pernah muncul -- misal trade partial/gak lengkap -- jangan nyangkut selamanya,
-        -- lanjut aja pake fallback, sama kayak sebelumnya).
-        local _waitStart = tick()
-        while tick() - _waitStart < 3 do
-            if (_G.__hactLastTradeComplete or 0) > _completeBaseline then break end
-            task.wait(0.05)
-        end
-        -- v27.183: kalau added==0 → window gak kebuka (request gak ke-accept) → retry sampai 5x
-        -- dulu: langsung break → trade berhenti padahal target belum terima semua pet
-        if added == 0 then
-            _zeroStreak = _zeroStreak + 1
-            print(("[HactTelur] round %d: added=0 (streak=%d) → retry kirim request"):format(round, _zeroStreak))
-            if _zeroStreak >= 5 then
-                print("[HactTelur] 5x berturut added=0 → stop (target offline/gak accept)")
-                break
-            end
-            task.wait(0.5)
-        else
-            _zeroStreak = 0  -- reset streak kalau berhasil add
-        end
-        print(("[HactTelur] TIMING round %d selesai dlm %.1fs (added=%d)"):format(round, tick()-_roundStart, added))
-        _roundEndTs = tick()
+
+        totalSent = totalSent + #batch
+        idx = idx + #batch
+        print(("[HactTelur] v34.2 round %d: %d pet -> %s (%.1fs)"):format(round, #batch, targetPlayer.Name, tick()-_roundStart))
     end
-    _G.__hactSending = false   -- v27.132
+
+    _G.__hactSending = false
     return totalSent
 end
 
