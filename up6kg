@@ -1,11 +1,11 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.251 (maxInv: cari tab "Pet Items" di Inventory, bukan hanya CategoryTemplate)  ║
+-- ║  UP KG — v10.252 (maxInv: GC voting — satu-satunya metode yang works)                       ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.251"
+local VERSION = "up6kg-v10.252"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1300,48 +1300,29 @@ task.spawn(function()
                             if v and v > 0 then maxUI = v end
                         end
                     end) end
+                    -- v10.252: UI scan dihapus — debug konfirmasi tab "Pet Items" gak ada di Inventory
+                    -- satu-satunya metode yang works: GC voting (2x milik kita, 1x lawan → pilih terbanyak)
                     if not maxUI then pcall(function()
-                        local pg = player:FindFirstChild("PlayerGui")
-                        if pg then
-                            -- v10.251: scan tab di BackpackGui.Backpack.Inventory
-                            -- CategoryTemplate = tab aktif, tapi bisa "All Items" atau "Pet Items"
-                            -- kita cari yang text-nya mengandung "pet" (case-insensitive)
-                            local inv = pg:FindFirstChild("BackpackGui")
-                                and pg.BackpackGui:FindFirstChild("Backpack")
-                                and pg.BackpackGui.Backpack:FindFirstChild("Inventory")
-                            if inv then
-                                -- scan semua children Inventory yang IsA TextLabel/TextButton
-                                for _, d in ipairs(inv:GetDescendants()) do
-                                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
-                                        local low = d.Text:lower()
-                                        if low:find("pet") then
-                                            local a, b = d.Text:match("(%d+)%s*/%s*(%d+)")
-                                            if a and b then
-                                                b = tonumber(b)
-                                                if b and b > 0 then maxUI = b; break end
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                            -- fallback: scan semua PlayerGui (skip TradingUI), cari "pet" di text
-                            if not maxUI then
-                                local tradeUI = pg:FindFirstChild("TradingUI")
-                                for _, d in ipairs(pg:GetDescendants()) do
-                                    if tradeUI and d:IsDescendantOf(tradeUI) then continue end
-                                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
-                                        local low = d.Text:lower()
-                                        if low:find("pet") and (low:find("item") or low:find("/")) then
-                                            local a, b = d.Text:match("(%d+)%s*/%s*(%d+)")
-                                            if a and b then
-                                                b = tonumber(b)
-                                                if b and b > 0 then maxUI = b; break end
-                                            end
-                                        end
-                                    end
+                        local votes = {}
+                        local gc = getgc(true)
+                        for i = 1, #gc do
+                            local obj = gc[i]
+                            if type(obj) == "table" then
+                                local mp = rawget(obj, "MaxPetsInInventory")
+                                local me = rawget(obj, "MaxEggsInFarm")
+                                local mq = rawget(obj, "MaxEquippedPets")
+                                if type(mp)=="number" and mp>0 and mp<=2000
+                                and type(me)=="number" and me>0
+                                and type(mq)=="number" and mq>0 then
+                                    votes[mp] = (votes[mp] or 0) + 1
                                 end
                             end
                         end
+                        local bestMp, bestCnt = nil, 0
+                        for mp, cnt in pairs(votes) do
+                            if cnt > bestCnt then bestMp = mp; bestCnt = cnt end
+                        end
+                        if bestMp then maxUI = bestMp end
                     end) end
                     local mx = maxUI
                     if not mx then                            -- FALLBACK pointer MutableStats (v10.212, no getgc)
