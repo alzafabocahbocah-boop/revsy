@@ -1480,6 +1480,7 @@ task.spawn(function()
     end
 
     task.wait(10)   -- kasih waktu stat pertama keitung
+    local lastRutin = 0   -- v10.233: lapor rutin tiap 1 menit
     while true do
         task.wait(3)
         local st = _G.ZenxKgStat
@@ -1488,19 +1489,25 @@ task.spawn(function()
             local mx  = tonumber(st.maxInv)
             if cur >= mx then
                 -- FULL: lapor pas AWAL nyampe, terus re-lapor tiap 20 menit selama masih full
-                -- (gak spam 3s, tapi gak diem selamanya juga).
                 if maxLaporTs == 0 or (os.time() - maxLaporTs) >= MAX_ULANG then
                     laporSekarang(maxLaporTs == 0 and "MAX" or "MAX-ulang")
                     maxLaporTs = os.time()
                     lastLapor  = cur
+                    lastRutin  = os.time()
                 end
             else
-                maxLaporTs = 0   -- turun di bawah max -> reset (bisa lapor "MAX" lagi nanti)
+                maxLaporTs = 0   -- turun di bawah max -> reset
                 if lastLapor < 0 then
                     lastLapor = cur                          -- baseline pertama, jangan lapor
                 elseif math.abs(cur - lastLapor) >= 20 then
                     laporSekarang(cur > lastLapor and "+20" or "-20")  -- naik/turun 20 -> lapor
                     lastLapor = cur
+                    lastRutin = os.time()
+                elseif (os.time() - lastRutin) >= 60 then
+                    -- v10.233: lapor rutin tiap 1 menit walau gak ada perubahan besar
+                    laporSekarang("rutin-1m")
+                    lastLapor = cur
+                    lastRutin = os.time()
                 end
             end
         end
