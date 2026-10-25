@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.47  ══════════════════════════
+-- ══════════════════════════  HACT  v34.48  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -4407,7 +4407,8 @@ local function waitTeamInGarden(teamName, timeout)
     timeout = timeout or 12
     local waited = 0
     while waited < timeout do
-        -- scan uuid pet kita di garden
+        -- v34.48: scan HANYA folder milik kita di PetsPhysical (bukan GetDescendants() semua orang)
+        -- struktur: PetsPhysical -> [folder per user] -> [PetModel {uuid}]
         local inGarden = {}
         local nIn = 0
         pcall(function()
@@ -4415,26 +4416,15 @@ local function waitTeamInGarden(teamName, timeout)
             if not pp then return end
             local myName = player.Name
             local myId = tostring(player.UserId)
-            local function ownerMine(d)
-                local cur = d
-                for _ = 1, 6 do
-                    if not cur or cur == Workspace then break end
-                    local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
-                        or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
-                    if o ~= nil then return (tostring(o)==myName or tostring(o)==myId) end
-                    cur = cur.Parent
-                end
-                return nil
-            end
-            local seen = {}
-            for _, m in ipairs(pp:GetDescendants()) do
+            -- cari folder milik kita (Name = UserId atau Name = playerName)
+            local myFolder = pp:FindFirstChild(myId) or pp:FindFirstChild(myName)
+            if not myFolder then return end
+            -- scan GetChildren() folder kita aja, bukan GetDescendants() semua orang
+            for _, m in ipairs(myFolder:GetChildren()) do
                 if m:IsA("Model") and m.Name:sub(1,1)=="{" then
                     local clean = m.Name:gsub("[{}]","")
-                    if not seen[clean] and ownerMine(m) ~= false then
-                        seen[clean] = true
-                        inGarden[clean] = true
-                        nIn = nIn + 1
-                    end
+                    inGarden[clean] = true
+                    nIn = nIn + 1
                 end
             end
         end)
