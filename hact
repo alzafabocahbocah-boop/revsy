@@ -8837,14 +8837,60 @@ _G.HactTelurShowMisc = showMiscFn
         Text = TRADECFG.on and "ON \u{2014} gift jalan" or "OFF", TextColor3 = TRADECFG.on and Color3.new(0,0,0) or C.text,
         Font = FONT_B, TextSize = 13, AutoButtonColor = false, Parent = tradeContent })
     Instance.new("UICorner", toggle).CornerRadius = UDim.new(0,6)
-    local statusL = lbl(tradeContent, "", 11, C.textDim)
-    -- v27.130: baris SENDIRI di bawah button + full-width + AUTO-GROW ke bawah -> debug panjang gak ke-potong
-    statusL.Position = UDim2.new(0,0,0,y+44); statusL.Size = UDim2.new(1,0,0,0)
-    statusL.AutomaticSize = Enum.AutomaticSize.Y
-    statusL.TextWrapped = true
-    statusL.TextYAlignment = Enum.TextYAlignment.Top
-    statusL.TextXAlignment = Enum.TextXAlignment.Left
-    y = y + 44 + 46   -- button (40) + reserve ~3 baris debug
+    -- v34.46: log box ScrollingFrame (bisa panjang lebar, auto-scroll ke bawah)
+    local logSF = mk("ScrollingFrame", {
+        Size = UDim2.new(1,0,0,90), Position = UDim2.new(0,0,0,y+44),
+        BackgroundColor3 = Color3.fromRGB(18,18,24), BorderSizePixel = 0,
+        ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
+        CanvasSize = UDim2.new(0,0,0,0), Parent = tradeContent })
+    Instance.new("UICorner", logSF).CornerRadius = UDim.new(0,6)
+    local pp2 = Instance.new("UIPadding", logSF)
+    pp2.PaddingLeft = UDim.new(0,7); pp2.PaddingRight = UDim.new(0,7)
+    pp2.PaddingTop = UDim.new(0,5); pp2.PaddingBottom = UDim.new(0,5)
+    local logLL = Instance.new("UIListLayout", logSF)
+    logLL.Padding = UDim.new(0,2); logLL.SortOrder = Enum.SortOrder.LayoutOrder
+    local logOrder = 0
+    local MAX_LOG = 60   -- simpan maks 60 baris
+    local function logAdd(txt, col)
+        logOrder = logOrder + 1
+        local ln = lbl(logSF, txt, 10, col or C.textDim)
+        ln.Size = UDim2.new(1,-14,0,0)
+        ln.AutomaticSize = Enum.AutomaticSize.Y
+        ln.TextWrapped = true
+        ln.TextXAlignment = Enum.TextXAlignment.Left
+        ln.LayoutOrder = logOrder
+        -- hapus baris lama kalau > MAX_LOG
+        local kids = logSF:GetChildren()
+        local rows = {}
+        for _, k in ipairs(kids) do if k:IsA("TextLabel") then rows[#rows+1] = k end end
+        if #rows > MAX_LOG then
+            table.sort(rows, function(a,b) return (a.LayoutOrder or 0) < (b.LayoutOrder or 0) end)
+            for i = 1, #rows - MAX_LOG do rows[i]:Destroy() end
+        end
+        -- auto-scroll ke bawah
+        task.defer(function()
+            logSF.CanvasSize = UDim2.new(0,0,0, logLL.AbsoluteContentSize.Y + 12)
+            logSF.CanvasPosition = Vector2.new(0, math.max(0, logLL.AbsoluteContentSize.Y - logSF.AbsoluteSize.Y + 12))
+        end)
+    end
+    -- statusL tetap ada (dipakai kode lama), tapi disembunyikan — semua update diarahkan ke logAdd
+    local statusL = lbl(tradeContent, "", 10, C.textDim)
+    statusL.Visible = false
+    -- override .Text lewat proxy: tiap set statusL.Text -> logAdd
+    local _statusMeta = {}
+    _statusMeta.__newindex = function(t, k, v)
+        if k == "Text" and type(v) == "string" and v ~= "" then
+            logAdd(v, C.textDim)
+        end
+        rawset(t, k, v)
+    end
+    -- (proxy hanya untuk set .Text dari kode di bawah — pakai wrapper function)
+    local function setStatus(txt, col)
+        if txt and txt ~= "" then logAdd(txt, col or C.textDim) end
+    end
+    -- patch statusL.Text agar diarahkan ke logAdd (ganti via __newindex tidak bisa di userdata Roblox;
+    -- kita override dengan cara wrap — kode di bawah pakai setStatus() langsung)
+    y = y + 44 + 100   -- button (44) + log box (90) + gap (6)
     local infoL = lbl(tradeContent, "gift Spider/Peacock/Nutcracker/Seal (keep, age<500, base 2-3kg) + T-Rex (1kg+) + Bronto (1.5kg+) ke akun up3.8kg + up6kg paling kosong. fav mati pas trade.", 10, C.textDim)
     infoL.Position = UDim2.new(0,0,0,y); infoL.Size = UDim2.new(1,0,0,32); infoL.TextWrapped = true; infoL.TextYAlignment = Enum.TextYAlignment.Top
     y = y + 40   -- v27.111: fix — advance y biar akun list gak numpuk infoL
@@ -8971,8 +9017,8 @@ _G.HactTelurShowMisc = showMiscFn
                 -- ~7370). Rejoin = script restart dari awal = otomatis fetch ulang sendiri (script SIMPEN
                 -- SENDIRI di akunInv), jadi gak perlu manggil lagi tiap siklus loop (dulu 2x HTTP request
                 -- tiap 1.5-8 detik terus-terusan = boros + numpuk lambat).
-                if not TRADECFG.on then if statusL then statusL.Text = "" end return end
-                if not next(akunInv) then if statusL then statusL.Text = "nunggu akun up3.8kg/up6kg dari panel" end return end
+                if not TRADECFG.on then return end
+                if not next(akunInv) then logAdd("nunggu akun up3.8kg/up6kg dari panel", Color3.fromRGB(180,140,60)) return end
                 local Players = game:GetService("Players")
                 -- v27.149: pasang LAGI timing gap (kehapus gak sengaja pas fix v27.148) -- biar keliatan
                 -- PASTI apa gap 15-30 detik itu udah ketutup abis hapus fetch duplikat, atau ada penyebab lain.
@@ -9001,44 +9047,33 @@ _G.HactTelurShowMisc = showMiscFn
                     end
                 end
                 if not best then
-                    if statusL then
-                        local detail = #skipLog > 0 and ("\n"..table.concat(skipLog, "  ")) or " (belum ada akun)"
-                        statusL.Text = "nunggu target\u{2026}" .. detail
-                    end
+                    local detail = #skipLog > 0 and ("  "..table.concat(skipLog, " | ")) or " (belum ada akun)"
+                    logAdd("nunggu…" .. detail, Color3.fromRGB(160,120,60))
                     return
                 end
                 if Auto and Auto.giftBusy then return end
                 local cfg = { targets = { [best] = true }, keepOnly = true,
-                    -- v27.114: TETEP TRADE (send trade request), bukan gift. User mau trade.
-                    pets = { ["peacock"] = true, ["spider"] = true, ["nutcracker"] = true, ["seal"] = true, ["t-rex"] = true, ["brontosaurus"] = true },   -- v27.160: + t-rex + bronto
-                    age = -500,       -- age < 500 (max)
-                    kgMin = 2, kgMax = 3,   -- v27.111: base kg 2-3 (Peacock/Spider/Nutcracker/Seal)
-                    -- v27.162: per-pet kg range override (bebas dari kgMin/kgMax global)
+                    pets = { ["peacock"] = true, ["spider"] = true, ["nutcracker"] = true, ["seal"] = true, ["t-rex"] = true, ["brontosaurus"] = true },
+                    age = -500, kgMin = 2, kgMax = 3,
                     kgPerPet = { ["t-rex"] = {min=0, max=3}, ["brontosaurus"] = {min=1.5, max=2.5} },
                     unfavFirst = true }
-                if statusL then statusL.Text = "gift -> "..best.." (room "..bestRoom..")".." [gap sblmnya: "..string.format("%.1f", _G.__hactLastGap or 0).."s]" end
+                logAdd(string.format("→ %s room:%d gap:%.1fs", best, bestRoom, _G.__hactLastGap or 0), Color3.fromRGB(100,180,255))
                 local sent = giftPetsByFilter(cfg)
-                -- v30.5: update total lokal setelah trade sukses (biar room akurat tanpa re-fetch)
                 if (sent or 0) > 0 and akunInv[best] then
                     akunInv[best].total = (akunInv[best].total or 0) + sent
                     pcall(renderAkunList)
                 end
-                if statusL and _G.__hactLastErr and _G.__hactLastErr ~= "" then
-                    statusL.Text = "ERR: ".._G.__hactLastErr   -- v27.135: error SELALU keliatan
-                elseif statusL then
-                    if (sent or 0) > 0 then
-                        statusL.Text = "terkirim "..tostring(sent).." -> "..best.." | gap-sblmnya:".. string.format("%.1f", _G.__hactLastGap or 0) .."s | TIMING: "..(tostring(_G.__hactTimingLast or "?"))
+                if _G.__hactLastErr and _G.__hactLastErr ~= "" then
+                    logAdd("ERR: ".._G.__hactLastErr, Color3.fromRGB(240,80,80))
+                elseif (sent or 0) > 0 then
+                    logAdd(string.format("✓ kirim %d → %s | timing:%s", sent, best, tostring(_G.__hactTimingLast or "?")), Color3.fromRGB(80,210,130))
+                else
+                    local D = _G.__hactGiftDbg or {}
+                    if (D.ok or 0) > 0 then
+                        logAdd(string.format("STEP:%s | 0kirim %d siap → %s", tostring(_G.__hactStep or "?"), D.ok or 0, best), Color3.fromRGB(220,160,60))
                     else
-                        -- v27.125: 0 kirim -> BEDAIN: filter nolak semua (ok:0) vs pet SIAP tapi trade gagal (ok>0)
-                        local D = _G.__hactGiftDbg or {}
-                        if (D.ok or 0) > 0 then
-                            -- v27.127: STEP di depan -> keliatan sampe mana (target OK? matched? fire tiket?)
-                            statusL.Text = string.format("STEP: %s | 0kirim %d siap -> %s",
-                                tostring(_G.__hactStep or "?"), D.ok or 0, tostring(best))
-                        else
-                            statusL.Text = string.format("0 kirim | n:%d ok:0 | gagal kg:%d age:%d keep:%d fav:%d | kg:%s",
-                                D.total or 0, D.failKg or 0, D.failAge or 0, D.failKeep or 0, D.failFav or 0, (D.kgSample ~= "" and D.kgSample or "-"))
-                        end
+                        logAdd(string.format("0 kirim | n:%d gagal kg:%d age:%d keep:%d fav:%d | kg:%s",
+                            D.total or 0, D.failKg or 0, D.failAge or 0, D.failKeep or 0, D.failFav or 0, (D.kgSample ~= "" and D.kgSample or "-")), C.textDim)
                     end
                 end
                 didGift = (sent and sent > 0)
@@ -9050,12 +9085,16 @@ _G.HactTelurShowMisc = showMiscFn
         end
     end)
     -- v27.137: LIVE step — pas giftPetsByFilter lagi jalan (giftBusy), tampilin __hactStep real-time.
-    -- Kalau hang, statusL bakal mentok di step terakhir -> ketauan macetnya di mana.
+    local _lastLiveStep = ""
     task.spawn(function()
         while true do
             task.wait(0.4)
-            if statusL and Auto and Auto.giftBusy and _G.__hactStep then
-                statusL.Text = "LIVE: ".._G.__hactStep.." | busy "..math.floor(tick()-(Auto.giftBusySince or tick())).."s"
+            if Auto and Auto.giftBusy and _G.__hactStep then
+                local s = "LIVE: ".._G.__hactStep.." | busy "..math.floor(tick()-(Auto.giftBusySince or tick())).."s"
+                if s ~= _lastLiveStep then
+                    logAdd(s, Color3.fromRGB(180,180,255))
+                    _lastLiveStep = s
+                end
             end
         end
     end)
