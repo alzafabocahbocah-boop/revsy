@@ -1,4 +1,4 @@
--- ZENX MARKET v8.519 — fetchSnipe debug log, trace D1 kosong / HTTP gagal
+-- ZENX MARKET v8.520 — fix fetchSnipe: req→_req (upvalue nil), HttpService→_HS
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.519"
+local VERSION = "8.520"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2888,10 +2888,13 @@ do
         -- v8.512: define ulang URL+KUNCI di sini (sama alasan kayak fetchRuleFromPanel)
         local _URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
         local _KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
-        -- v8.463: langsung ke panel (bypass worker)
+        -- v8.520: define ulang _req di sini (req=upvalue nil di scope ini, sama kayak fetchRule)
+        local _req = (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or http_request or request or httprequest
+        if type(http) == "table" and http.request then _req = http.request end
+        local _HS = game:GetService("HttpService")
         local body
         local okF, b = pcall(function()
-            local r = req({ Url = _URL .. "/snipe-rules", Method = "GET", Headers = { ["X-Kunci"] = _KUNCI } })
+            local r = _req({ Url = _URL .. "/snipe-rules", Method = "GET", Headers = { ["X-Kunci"] = _KUNCI } })
             return r and (r.Body or r.body)
         end)
         if okF then body = b end
@@ -2900,7 +2903,7 @@ do
             print("[ZenxMarket] fetchSnipe: GAGAL HTTP / body kosong. okF="..tostring(okF))
             return false
         end
-        local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
+        local ok2, data = pcall(function() return _HS:JSONDecode(body) end)
         if not ok2 or type(data) ~= "table" then
             print("[ZenxMarket] fetchSnipe: JSON parse gagal")
             return false
