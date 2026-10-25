@@ -1,4 +1,4 @@
--- ZENX MARKET v8.518 — snipe rule panel = master, replace penuh rule lokal
+-- ZENX MARKET v8.519 — fetchSnipe debug log, trace D1 kosong / HTTP gagal
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.518"
+local VERSION = "8.519"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2895,18 +2895,32 @@ do
             return r and (r.Body or r.body)
         end)
         if okF then body = b end
-        if type(body) ~= "string" or body == "" then return false end
+        -- v8.519: debug log biar bisa trace masalah snipe kosong
+        if type(body) ~= "string" or body == "" then
+            print("[ZenxMarket] fetchSnipe: GAGAL HTTP / body kosong. okF="..tostring(okF))
+            return false
+        end
         local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
-        if not ok2 or type(data) ~= "table" then return false end
+        if not ok2 or type(data) ~= "table" then
+            print("[ZenxMarket] fetchSnipe: JSON parse gagal")
+            return false
+        end
         local ver = tonumber(data.ver) or 0
         local rules = data.rules
-        if ver <= 0 or type(rules) ~= "table" then return false end
-        if BH.marketState.snipeVer == ver then return false end
-        if not BH.autoSnipe then return false end
-        -- v8.522: kalau lokal kosong → langsung pakai semua rule dari panel (first-time setup)
-        -- v8.470: MERGE — panel hanya update jenis pet yang sudah ada di lokal.
-        -- Jenis pet baru dari panel TIDAK ditambah (biar akun bisa punya snipe sendiri).
-        -- v8.518: panel = master, replace penuh semua rule lokal dengan rule panel
+        if ver <= 0 or type(rules) ~= "table" then
+            -- D1 kosong — panel belum pernah save rules
+            print(("[ZenxMarket] fetchSnipe: D1 KOSONG (ver=%d rules=%s) — buka panel Snipe & klik Terapkan"):format(ver, tostring(rules)))
+            return false
+        end
+        if BH.marketState.snipeVer == ver then
+            -- sudah up-to-date
+            return false
+        end
+        if not BH.autoSnipe then
+            print("[ZenxMarket] fetchSnipe: BH.autoSnipe belum ada, skip")
+            return false
+        end
+        -- v8.519: panel = master, replace penuh semua rule lokal dengan rule panel
         BH.autoSnipe.rules = rules
         BH.marketState.autoSnipeRules = rules
         BH.marketState.snipeVer = ver
