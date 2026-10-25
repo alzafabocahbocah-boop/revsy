@@ -8259,6 +8259,24 @@ local function _buildGiftSection() do
                             -- spam kirim terus walau lawan full, sampai pet match BENER-BENER habis dari kita.
                             local beforeMatch = #getMatchedPets(cfg)
                             local sent = giftPetsByFilter(cfg)
+                            -- v34.57: kalau method=trade, tunggu TUI tutup lalu jeda 30s (pakai __hactTradeAktif)
+                            -- biar server settle + fav sync sebelum trade berikutnya
+                            if cfg.method == "trade" and sent > 0 then
+                                -- tunggu TUI tutup dulu (max 5s)
+                                local pg2 = player:FindFirstChild("PlayerGui")
+                                for _ = 1, 25 do
+                                    local tui2 = pg2 and pg2:FindFirstChild("TradingUI")
+                                    local lt2 = tui2 and tui2:FindFirstChild("LiveTrade")
+                                    if not (lt2 and lt2.Visible and tui2 and tui2.Enabled) then break end
+                                    task.wait(0.2)
+                                end
+                                -- nunggu sisa 30s dari __hactTradeAktif
+                                local sisa = _G.__hactTradeAktif and (30 - (tick() - _G.__hactTradeAktif)) or 0
+                                if sisa > 0 then
+                                    statL.Text = ("jeda trade: %.0fs..."):format(sisa)
+                                    task.wait(sisa)
+                                end
+                            end
                             local stillMatch = #getMatchedPets(cfg)  -- masih ada pet cocok di backpack?
                             if stillMatch > 0 then
                                 -- v22.7: cek apakah match BERKURANG (ada progress). kalau gak berkurang
