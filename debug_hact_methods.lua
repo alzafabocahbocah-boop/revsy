@@ -46,7 +46,9 @@ pcall(function()
         if tradeUI and dd:IsDescendantOf(tradeUI) then continue end
         if (dd:IsA("TextLabel") or dd:IsA("TextButton")) and type(dd.Text) == "string" then
             local low = dd.Text:lower()
-            if low:find("pet") and low:find("item") then
+            local hasPet = low:find("pet") ~= nil
+            local hasItem = low:find("item") ~= nil
+            if hasPet and hasItem then
                 local a, b = dd.Text:match("(%d+)%s*/%s*(%d+)")
                 if a and b then
                     a, b = tonumber(a), tonumber(b)
@@ -80,7 +82,8 @@ pcall(function()
     for _, d in ipairs(inv:GetDescendants()) do
         if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
             local low = d.Text:lower()
-            if low:find("pet") then
+            local hasPet2b = low:find("pet") ~= nil
+            if hasPet2b then
                 local a, b = d.Text:match("(%d+)%s*/%s*(%d+)")
                 if a and b then
                     a, b = tonumber(a), tonumber(b)
