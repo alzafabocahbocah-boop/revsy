@@ -759,6 +759,36 @@ export default {
         const nama = teks(b.tim);
         if (!nama) return salah("tim kosong");
 
+        // v15-71: MERGE clients — baca lama dari DB dulu, upsert per akun.
+        // Fix: 2 akun di 1 device (split screen) kirim clients terpisah → dulu
+        // saling overwrite, akun terakhir yg lapor yg tersimpan → panel cuma tampil 1.
+        // Sekarang: merge by nama akun, update entry yg ada, tambah yg baru.
+        // Akun yg tidak lapor >10 menit (ts_lapor lama) tetap ada sampai expire normal.
+        let mergedClients = [];
+        try {
+          const rowLama = await db.prepare("SELECT clients FROM tim WHERE nama=?1").bind(nama).first();
+          const lama = rowLama && rowLama.clients ? JSON.parse(rowLama.clients) : [];
+          const incoming = Array.isArray(b.clients) ? b.clients.slice(0, 20) : [];
+          // index lama by nama akun
+          const idx = {};
+          lama.forEach((c, i) => { if (c && c.akun) idx[c.akun] = i; });
+          const merged = [...lama];
+          incoming.forEach(c => {
+            if (!c || !c.akun) return;
+            if (idx[c.akun] != null) {
+              merged[idx[c.akun]] = { ...merged[idx[c.akun]], ...c, ts_lapor: skrg };
+            } else {
+              idx[c.akun] = merged.length;
+              merged.push({ ...c, ts_lapor: skrg });
+            }
+          });
+          // buang akun yg tidak lapor > 15 menit (900 detik) — anti numpuk zombie
+          mergedClients = merged.filter(c => !c.ts_lapor || (skrg - c.ts_lapor) < 900);
+          if (mergedClients.length > 20) mergedClients = mergedClients.slice(0, 20);
+        } catch(e) {
+          mergedClients = Array.isArray(b.clients) ? b.clients.slice(0, 20) : [];
+        }
+
         await db
           .prepare(
             // v15-70: kolom `sc` = script yang dijalanin RF ini ("STAR FARM" /
@@ -768,6 +798,7 @@ export default {
             // pernah lapor pun ikut keklasifikasi.
             // COALESCE biar nilai lama gak kehapus kalau suatu laporan gak
             // nyertain (mis. worker versi lama).
+            // v15-71: clients pakai mergedClients (merge lama + baru, bukan overwrite)
             `INSERT INTO tim (nama,ts,cpu,ram_used,ram_free,ram_total,jalan,total,sticky,sig,clients,sc)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
              ON CONFLICT(nama) DO UPDATE SET
@@ -786,7 +817,7 @@ export default {
             angka(b.total),
             b.sticky ? 1 : 0,
             teks(b.sig, 48),
-            JSON.stringify(Array.isArray(b.clients) ? b.clients.slice(0, 20) : []),
+            JSON.stringify(mergedClients),
             teks(b.sc, 20)          // v15-70: script yang dijalanin RF ini
           )
           .run();
