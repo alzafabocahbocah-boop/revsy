@@ -2906,66 +2906,9 @@ do
         -- v8.522: kalau lokal kosong → langsung pakai semua rule dari panel (first-time setup)
         -- v8.470: MERGE — panel hanya update jenis pet yang sudah ada di lokal.
         -- Jenis pet baru dari panel TIDAK ditambah (biar akun bisa punya snipe sendiri).
-        local existing = BH.autoSnipe.rules or {}
-        if #existing == 0 then
-            -- lokal kosong: adopt semua rule dari panel langsung
-            BH.autoSnipe.rules = rules
-            BH.marketState.autoSnipeRules = rules
-            BH.marketState.snipeVer = ver
-            local eg = data.eggSource
-            if eg == "prem" or eg == "biasa" or eg == "all" then
-                BH.autoSnipe.eggSource = eg
-                BH.marketState.autoSnipeEggSource = eg
-            end
-            pcall(function() BH.saveMarketState(BH.marketState) end)
-            pcall(function() if BH.autoSnipe.rebuildRules then BH.autoSnipe.rebuildRules() end end)
-            print(("[ZenxMarket] snipe panel: lokal kosong → adopt %d rule dari panel (ver=%d)"):format(#rules, ver))
-            _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
-            table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. ("  « PANEL: snipe adopt %d rule (lokal kosong) »"):format(#rules))
-            if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
-            return true
-        end
-        -- buat set jenis pet lokal (type lowercase sebagai key)
-        -- v8.513: lokal pakai r.petType, panel juga return r.petType — bukan r.type
-        local localTypes = {}
-        for _, r in ipairs(existing) do
-            local k = r.petType or r.type  -- fallback r.type buat kompatibilitas lama
-            if k then localTypes[k:lower()] = true end
-        end
-        -- filter rules panel: hanya yang jenisnya sudah ada di lokal
-        local merged = {}
-        local skipped, updated = 0, 0
-        for _, r in ipairs(rules) do
-            local k = r.petType or r.type
-            if k and localTypes[k:lower()] then
-                merged[#merged+1] = r; updated = updated + 1
-            else
-                skipped = skipped + 1
-            end
-        end
-        -- kalau tidak ada satupun yang match, jangan apply sama sekali
-        if #merged == 0 then
-            BH.marketState.snipeVer = ver  -- tandai sudah diproses biar gak repeat
-            print("[ZenxMarket] snipe panel: semua "..skipped.." pet baru dilewati (akun punya rules sendiri)")
-            return false
-        end
-        -- merge: ganti rules lokal yang match dengan versi panel, sisanya tetap
-        local finalRules = {}
-        local panelByType = {}
-        for _, r in ipairs(merged) do
-            local k = (r.petType or r.type or ""):lower()
-            panelByType[k] = r
-        end
-        for _, r in ipairs(existing) do
-            local k = (r.petType or r.type or ""):lower()
-            if k ~= "" and panelByType[k] then
-                finalRules[#finalRules+1] = panelByType[k]
-            else
-                finalRules[#finalRules+1] = r
-            end
-        end
-        BH.autoSnipe.rules = finalRules
-        BH.marketState.autoSnipeRules = finalRules
+        -- v8.518: panel = master, replace penuh semua rule lokal dengan rule panel
+        BH.autoSnipe.rules = rules
+        BH.marketState.autoSnipeRules = rules
         BH.marketState.snipeVer = ver
         local eg = data.eggSource
         if eg == "prem" or eg == "biasa" or eg == "all" then
@@ -2974,9 +2917,9 @@ do
         end
         pcall(function() BH.saveMarketState(BH.marketState) end)
         pcall(function() if BH.autoSnipe.rebuildRules then BH.autoSnipe.rebuildRules() end end)
-        print(("[ZenxMarket] snipe panel merge: update %d, skip %d pet baru | ver=%d"):format(updated, skipped, ver))
+        print(("[ZenxMarket] snipe panel: replace %d rule dari panel (ver=%d)"):format(#rules, ver))
         _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
-        table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. ("  « PANEL: snipe merge → update %d, skip %d baru »"):format(updated, skipped))
+        table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. ("  « PANEL: snipe replace → %d rule »"):format(#rules))
         if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
         return true
     end
