@@ -8981,18 +8981,32 @@ _G.HactTelurShowMisc = showMiscFn
                 _G.__hactLastGap = _cycleGap
                 -- pilih target ONLINE yg paling KOSONG (room = max-total terbanyak, skip full)
                 local best, bestRoom = nil, -1
+                local skipLog = {}   -- v34.45: kumpul alasan skip tiap akun buat log
                 for nm, iv in pairs(akunInv) do
-                    -- v27.143: skip target yg BARU AJA ke-detect FULL in-game (lewat teks trade, 5 menit
-                    -- terakhir). Dulu ditandain doang (__hactFullTargets) tapi gak pernah dibaca -> target
-                    -- yg baru penuh bisa langsung kepilih lagi walau data panel (iv.max/total) masih basi.
                     local fullTs = (_G.__hactFullTargets or {})[nm]
                     local barusanFull = fullTs and (tick() - fullTs) < 300
-                    if Players:FindFirstChild(nm) and not barusanFull then
+                    local online = Players:FindFirstChild(nm) ~= nil
+                    if not online then
+                        skipLog[#skipLog+1] = nm..":offline"
+                    elseif barusanFull then
+                        local sisa = math.ceil(300 - (tick() - fullTs))
+                        skipLog[#skipLog+1] = nm..":full("..sisa.."s)"
+                    else
                         local room = (iv.max > 0) and (iv.max - iv.total) or 9999
-                        if room > 0 and room > bestRoom then best = nm; bestRoom = room end
+                        if room <= 0 then
+                            skipLog[#skipLog+1] = nm..":penuh("..iv.total.."/"..iv.max..")"
+                        else
+                            if room > bestRoom then best = nm; bestRoom = room end
+                        end
                     end
                 end
-                if not best then if statusL then statusL.Text = "target online penuh / blm ada" end return end
+                if not best then
+                    if statusL then
+                        local detail = #skipLog > 0 and ("\n"..table.concat(skipLog, "  ")) or " (belum ada akun)"
+                        statusL.Text = "nunggu target\u{2026}" .. detail
+                    end
+                    return
+                end
                 if Auto and Auto.giftBusy then return end
                 local cfg = { targets = { [best] = true }, keepOnly = true,
                     -- v27.114: TETEP TRADE (send trade request), bukan gift. User mau trade.
