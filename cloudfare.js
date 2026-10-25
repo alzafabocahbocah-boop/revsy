@@ -542,6 +542,12 @@ export default {
         const nama = teks(b.akun);
         if (!nama) return salah("akun kosong");
 
+        // v697: cek blacklist — akun yang dihapus panel gak boleh re-insert
+        try {
+          const blRow = await db.prepare("SELECT data FROM cfg WHERE scope='akun_blacklist'").first();
+          if (blRow) { const bl = JSON.parse(blRow.data); if (bl[nama]) return json({ ok: true, skip: true }); }
+        } catch(e) {}
+
         // tim & game SENGAJA gak diisi dari sini. Script gak tau dia di RedFinger
         // mana -- itu urusan panel. Baris baru masuk dengan tim=NULL (= belum
         // ditugasin), dan laporan berikutnya GAK BOLEH nimpa penugasan panel.
@@ -3430,6 +3436,10 @@ export default {
         if (!akun) return salah("akun kosong");
         await db.prepare("DELETE FROM akun WHERE nama=?1").bind(akun).run();
         await db.prepare("DELETE FROM cookies WHERE akun=?1").bind(akun).run().catch(()=>{});
+        // masukkan ke blacklist biar SC gak bisa re-insert
+        let bl = {}; try { const r = await db.prepare("SELECT data FROM cfg WHERE scope='akun_blacklist'").first(); if(r) bl = JSON.parse(r.data); } catch(e){}
+        bl[akun] = Math.floor(Date.now()/1000);
+        await db.prepare("INSERT INTO cfg (scope,ts,data) VALUES ('akun_blacklist',?1,?2) ON CONFLICT(scope) DO UPDATE SET ts=?1,data=?2").bind(Math.floor(Date.now()/1000), JSON.stringify(bl)).run();
         return json({ ok: true, akun });
       }
 
