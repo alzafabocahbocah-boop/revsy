@@ -1,4 +1,4 @@
--- uplevelnew v8.280 — fix farmCenter scope: pindah deklarasi ke luar do-block AUTO TENGAH
+-- uplevelnew v8.281 — debug equipRE: list PetsService children + semua RemoteEvent GameEvents
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -3455,8 +3455,27 @@ local function runSesiUtama(sesiNum, def, label, col)
     local fcOk, fcErr = pcall(function() _clusterPos = farmCenter() end)
     print("[UPLVL-DBG] farmCenter ok=", fcOk, "result=", _clusterPos and tostring(_clusterPos) or "NIL", "err=", fcErr)
     addLog("Cluster: "..((_clusterPos) and string.format("%.0f,%.0f",_clusterPos.X,_clusterPos.Z) or "NIL — cek workspace.Farm"))
-    local reOk = pcall(function() print("[UPLVL-DBG] equipRE=", equipRE and equipRE:GetFullName() or "NIL!") end)
+    local reOk = pcall(function() print("[UPLVL-DBG] equipRE=", equipRE and equipRE:GetFullName() or "NIL!", "| class=", equipRE and equipRE.ClassName or "?") end)
     addLog("[DBG] equipRE="..(equipRE and equipRE:GetFullName() or "NIL!").." | container="..((_kgContainer) and "ADA" or "NIL"))
+    -- debug: list PetsService children untuk cari RemoteEvent yang benar
+    pcall(function()
+        local ge = RS:FindFirstChild("GameEvents")
+        local ps = ge and ge:FindFirstChild("PetsService")
+        if ps then
+            local ch = {}
+            for _,v in pairs(ps:GetChildren()) do table.insert(ch, v.Name.."("..v.ClassName..")") end
+            print("[UPLVL-DBG] PetsService children:", table.concat(ch,", "))
+        else
+            print("[UPLVL-DBG] PetsService not found under GameEvents")
+        end
+        -- scan semua RemoteEvent di GameEvents
+        local ges = ge and ge:GetDescendants() or {}
+        local res = {}
+        for _,v in pairs(ges) do
+            if v:IsA("RemoteEvent") then table.insert(res, v:GetFullName()) end
+        end
+        print("[UPLVL-DBG] RemoteEvents di GameEvents:", table.concat(res,", "))
+    end)
     waitForContainer(10)
     addLog("[DBG] setelah waitForContainer: container="..((_kgContainer) and "ADA" or "MASIH NIL!"))
     _activeSesiNum = sesiNum; _G._UPL_SESI_NUM = sesiNum
