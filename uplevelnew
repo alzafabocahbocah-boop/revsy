@@ -1,4 +1,4 @@
--- uplevelnew v8.262 — fix error line 1546: setLineupTab nil karena dipanggil di luar do..end scope | v8.261: kirim ke panel: 3 POSTs assign-tim+sc-set+tim, label tim aktif persisten
+-- uplevelnew v8.273 — container: RC direct, ZERO getgc — findMemoryContainer pakai RC
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -319,8 +319,9 @@ local main = mk("Frame",{
 corner(main,12); stroke(main,C.border,1.5)
 
 -- ===================== TITLE BAR =====================
+local titleBar  -- v8.272: declare di luar do-block agar bisa diakses scale-GUI block
 do
-local titleBar = mk("Frame",{Size=UDim2.new(1,0,0,44),BackgroundColor3=C.panel,BorderSizePixel=0,Parent=main})
+titleBar = mk("Frame",{Size=UDim2.new(1,0,0,44),BackgroundColor3=C.panel,BorderSizePixel=0,Parent=main})
 mk("UICorner",{CornerRadius=UDim.new(0,12),Parent=titleBar})
 mk("Frame",{Size=UDim2.new(1,0,0,12),Position=UDim2.new(0,0,1,-12),BackgroundColor3=C.panel,BorderSizePixel=0,Parent=titleBar})
 local judul = lbl(titleBar,"⚖  AUTO LVL",15,C.text)
@@ -643,113 +644,85 @@ local function stripMutation(s)
 end
 local function fmtUUID(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.."}" end; return s end
 
+-- v8.263: ReplicationClass direct access — tanpa getgc, tanpa buka inventory
+local _rcInst = nil
+local function _rcGetMaxInv()
+    pcall(function()
+        if not _rcInst then
+            local RS = game:GetService("ReplicatedStorage")
+            local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
+            if mod then _rcInst = require(mod).new("ActivePetsService_Replicator") end
+        end
+    end)
+    if not _rcInst then return nil end
+    local mx = nil
+    pcall(function()
+        local data = _rcInst:GetData(plr.Name)
+        if type(data) ~= "table" then return end
+        local tbl = rawget(data, "Table")
+        if type(tbl) ~= "table" then return end
+        local ppd = rawget(tbl, "PlayerPetData")
+        if type(ppd) ~= "table" then return end
+        local pd = rawget(ppd, plr.Name)
+        if type(pd) ~= "table" then return end
+        local ms = rawget(pd, "MutableStats")
+        if type(ms) ~= "table" then return end
+        local mp = rawget(ms, "MaxPetsInInventory")
+        if type(mp) == "number" and mp > 0 and mp <= 2000 then mx = mp end
+    end)
+    return mx
+end
+
 -- ===================== getgc MEMORY CONTAINER =====================
 -- Container adalah tabel memori game {uuid -> {PetData={Level, BaseWeight, ...}, PetType="..."}}
 -- Age = PetData.Level | UUID = key container (braced format)
 local _kgContainer = nil
-local _kgMutableStats = nil   -- v8.247: pointer MutableStats (MaxPetsInInventory dll)
+local _kgContainerDone = false
+local _kgMutableStats = nil   -- tidak dipakai lagi (RC dipakai untuk maxInv), dibiarkan nil
+-- v8.273: findMemoryContainer → RC langsung, ZERO getgc
+-- Format return sama: {uuid -> {PetData={BaseWeight,Level,...}, PetType="..."}}
 local function findMemoryContainer()
-    if not getgc then return nil end
-    local backpackUUIDs, bpCount = {}, 0
-    local bp = plr:FindFirstChild("Backpack")
-    if bp then
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") then
-                local u = t:GetAttribute("PET_UUID")
-                if u then
-                    local k=tostring(u); if k:sub(1,1)~="{" then k="{"..k.."}" end
-                    backpackUUIDs[k]=true; bpCount=bpCount+1
-                end
-            end
-        end
-    end
-    local best,bestCount,bestMatch=nil,0,0
+    local result = nil
     pcall(function()
-        for _, obj in pairs(getgc(true)) do
-            if type(obj)=="table" then
-                local uuidLike,matchCount=0,0
-                for k in pairs(obj) do
-                    if type(k)=="string" and #k>=32 and k:find("-") then
-                        uuidLike=uuidLike+1
-                        if backpackUUIDs[k] then matchCount=matchCount+1 end
-                        if uuidLike>=50 and matchCount==0 then break end
-                    end
-                end
-                if uuidLike>=5 then
-                    local sample=nil; for _,v in pairs(obj) do sample=v; break end
-                    if type(sample)=="table" and rawget(sample,"PetData") then
-                        local cnt=0; for _ in pairs(obj) do cnt=cnt+1 end
-                        local better=false
-                        if bpCount>0 then
-                            if matchCount>bestMatch then better=true
-                            elseif matchCount==bestMatch and cnt>bestCount then better=true end
-                        else if cnt>bestCount then better=true end end
-                        if better then best=obj; bestCount=cnt; bestMatch=matchCount end
-                    end
-                end
+        local RC = require(RS.Modules.ReplicationClass)
+        local inst = RC.new("ActivePetsService_Replicator")
+        local data = inst:GetData(plr.Name)
+        if type(data) ~= "table" then return end
+        local tbl = rawget(data, "Table")
+        if type(tbl) ~= "table" then return end
+        local ppd = rawget(tbl, "PlayerPetData")
+        if type(ppd) ~= "table" then return end
+        local pd = rawget(ppd, plr.Name)
+        if type(pd) ~= "table" then return end
+        local pi = rawget(pd, "PetInventory")
+        if type(pi) ~= "table" then return end
+        local dat = rawget(pi, "Data")
+        if type(dat) ~= "table" then return end
+        -- bangun tabel format sama seperti _kgContainer lama
+        local out = {}
+        for uuid, entry in pairs(dat) do
+            if type(entry) == "table" then
+                out[tostring(uuid)] = entry  -- struktur RC sudah {PetData={...}, PetType="..."}
             end
         end
+        if next(out) then result = out end
     end)
-    -- v8.247: sekalian cari MutableStats dari GC yang sama (gratis)
-    if best and not _kgMutableStats then
-        pcall(function()
-            for _, obj in pairs(getgc(false)) do
-                if type(obj)=="table" and obj~=best then
-                    for _, v in pairs(obj) do
-                        if v==best then
-                            for _, obj2 in pairs(getgc(false)) do
-                                if type(obj2)=="table" and obj2~=obj then
-                                    for _, v2 in pairs(obj2) do
-                                        if v2==obj then
-                                            local ms=rawget(obj2,"MutableStats")
-                                            if ms and type(rawget(ms,"MaxPetsInInventory"))=="number" then
-                                                _kgMutableStats=ms
-                                            end
-                                            break
-                                        end
-                                    end
-                                end
-                                if _kgMutableStats then break end
-                            end
-                            break
-                        end
-                    end
-                end
-                if _kgMutableStats then break end
-            end
-            if not _kgMutableStats then
-                for _, obj in pairs(getgc(false)) do
-                    if type(obj)=="table" then
-                        local mp=rawget(obj,"MaxPetsInInventory")
-                        local me=rawget(obj,"MaxEggsInFarm")
-                        local mq=rawget(obj,"MaxEquippedPets")
-                        if type(mp)=="number" and type(me)=="number" and type(mq)=="number" then
-                            _kgMutableStats=obj; break
-                        end
-                    end
-                end
-            end
-        end)
-    end
-    return best
+    return result
 end
 local function ambilContainer()
-    if _kgContainer then
-        local ok=false
-        pcall(function()
-            for _,v in pairs(_kgContainer) do
-                if type(v)=="table" and rawget(v,"PetData") then ok=true end; break
-            end
-        end)
-        if ok then return _kgContainer end
+    -- RC dipanggil tiap refresh (ringan, bukan getgc) — _kgContainerDone tetap dipakai sebagai flag "pernah berhasil"
+    local fresh = findMemoryContainer()
+    if fresh then
+        _kgContainer = fresh
+        _kgContainerDone = true
     end
-    _kgContainer=findMemoryContainer(); return _kgContainer
+    return _kgContainer
 end
--- refresh container tiap 15s (getgc berat)
+-- refresh tiap 15s — RC call, bukan getgc
 task.spawn(function()
     while true do pcall(ambilContainer); task.wait(15) end
 end)
--- initial find (async)
+-- initial load (async)
 task.spawn(function() pcall(ambilContainer) end)
 
 -- Baca age dari container
@@ -1185,65 +1158,32 @@ do
                 local kgSt = _G.ZenxKgStat
                 local totalAll = (kgSt and tonumber(kgSt.totalAll)) or total
                 local maxInvKg = (kgSt and tonumber(kgSt.maxInv))
-                -- Prioritas 2: hitung max inventory sendiri (cek UI game "Pet Items (X/Y)" dulu)
+                -- v8.271: RC direct — prioritas utama, tanpa getgc, tanpa UI scan
                 if not maxInvKg or maxInvKg <= 0 then
-                    if not _G.__ZenxMaxPetCache or (tick() - (_G.__ZenxMaxPetTime or 0)) > 30 then
-                        local maxUI = nil
+                    local maxUI = nil
+                    -- 1) RC direct
+                    pcall(function()
+                        local rcv = _rcGetMaxInv()
+                        if rcv then maxUI = rcv end
+                    end)
+                    -- 2) fallback pointer MutableStats
+                    if not maxUI and _kgMutableStats then
                         pcall(function()
-                            local pg = plr:FindFirstChild("PlayerGui")
-                            if pg then
-                                for _, d in ipairs(pg:GetDescendants()) do
-                                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
-                                        local low = d.Text:lower()
-                                        if low:find("pet") and low:find("item") then
-                                            local a, b = d.Text:match("(%d+)%s*/%s*(%d+)")
-                                            if a and b then
-                                                a, b = tonumber(a), tonumber(b)
-                                                if a and b and b > 0 and a > 0 then
-                                                    maxUI = b; break
-                                                end
-                                            end
-                                        end
-                                    end
-                                end
-                            end
+                            local mp = rawget(_kgMutableStats, "MaxPetsInInventory")
+                            if type(mp)=="number" and mp > 0 then maxUI = mp end
                         end)
-                        -- fallback pointer MutableStats (v8.247, no getgc)
-                        if not maxUI and _kgMutableStats then
-                            pcall(function()
-                                local mp = rawget(_kgMutableStats, "MaxPetsInInventory")
-                                if type(mp)=="number" and mp>0 then maxUI=mp end
-                            end)
-                        end
-                        -- fallback getgc (hanya kalau pointer belum ada)
-                        if not maxUI and getgc then
-                            local tally = {}
-                            local floor = math.max(0, totalAll - 5)
-                            pcall(function()
-                                for _, obj in ipairs(getgc(true)) do
-                                    if type(obj) == "table" then
-                                        local mp = rawget(obj, "MaxPetsInInventory")
-                                        if type(mp) == "number" and mp > 0
-                                            and rawget(obj, "MaxEggsInFarm") ~= nil
-                                            and rawget(obj, "MaxEquippedPets") ~= nil
-                                            and mp >= floor then
-                                            tally[mp] = (tally[mp] or 0) + 1
-                                            if not _kgMutableStats then _kgMutableStats=obj end
-                                        end
-                                    end
-                                end
-                            end)
-                            local bestN, bestV = 0, nil
-                            for v, n in pairs(tally) do
-                                if n > bestN or (n == bestN and (not bestV or v < bestV)) then
-                                    bestV = v; bestN = n
-                                end
-                            end
-                            maxUI = bestV
-                        end
-                        _G.__ZenxMaxPetCache = maxUI or _G.__ZenxMaxPetCache
-                        _G.__ZenxMaxPetTime  = tick()
                     end
+                    -- 3) fallback player Attribute
+                    if not maxUI then pcall(function()
+                        local mp = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory")
+                        if type(mp)=="number" and mp > 0 then maxUI = mp end
+                    end) end
+                    -- cache hanya naik
+                    if maxUI and maxUI > 0 then
+                        local cur = _G.__ZenxMaxPetCache or 0
+                        if maxUI > cur then _G.__ZenxMaxPetCache = maxUI end
+                    end
+                    _G.__ZenxMaxPetTime = tick()
                     maxInvKg = _G.__ZenxMaxPetCache
                 end
                 -- tampilkan: "170/220" — /220 berwarna abu-abu
@@ -5096,7 +5036,7 @@ do
         b.MouseButton1Click:Connect(function() applyScale(sc); pop.Visible=false end)
     end
     -- tombol range di titleBar
-    rangeBtn=mk("TextButton",{Size=UDim2.new(0,92,0,24),Position=UDim2.new(0.5,-46,0.5,-12),
+    rangeBtn=mk("TextButton",{Size=UDim2.new(0,92,0,24),Position=UDim2.new(0,205,0.5,-12),
         BackgroundColor3=C.card,Text="range",Font=FONT_B,TextSize=12,
         TextColor3=C.textDim,Parent=titleBar})
     corner(rangeBtn,7); stroke(rangeBtn,C.border,1)
