@@ -1,4 +1,4 @@
--- uplevelnew v8.276 — fix PET/MAX label: RichText enable, format tot/max, rename MAX INV -> PET/MAX
+-- uplevelnew v8.277 — debug print ke console: task.defer, loop iter, runSesi, farmCenter, equipRE
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.276"
+local VERSION = "v8.277"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3442,9 +3442,12 @@ end
 
 -- ===================== SESI =====================
 local function runSesiUtama(sesiNum, def, label, col)
+    print("[UPLVL-DBG] runSesiUtama: sesiNum=", sesiNum, "label=", label)
     addLog("=== "..label.." ==="); setStatus(label.." — equip pet", col); updateUI(totalNightmareCollected,0,sesiNum)
     _clusterPos = farmCenter()
+    print("[UPLVL-DBG] farmCenter=", _clusterPos and tostring(_clusterPos) or "NIL")
     addLog("Cluster: "..((_clusterPos) and string.format("%.0f,%.0f",_clusterPos.X,_clusterPos.Z) or "NIL — cek workspace.Farm"))
+    print("[UPLVL-DBG] equipRE=", equipRE and equipRE:GetFullName() or "NIL!")
     addLog("[DBG] equipRE="..(equipRE and equipRE:GetFullName() or "NIL!").." | container="..((_kgContainer) and "ADA" or "NIL"))
     waitForContainer(10)
     addLog("[DBG] setelah waitForContainer: container="..((_kgContainer) and "ADA" or "MASIH NIL!"))
@@ -3526,6 +3529,7 @@ local function runSesiUtama(sesiNum, def, label, col)
     unequipAll()
 end
 local function runSesi1()
+    print("[UPLVL-DBG] runSesi1 START")
     addLog("[DBG] runSesi1 START")
     SESI1_DEF = { {nama="T-Rex", jml=8} }
     addLog("Sesi 1 def: 8 T-Rex (fixed)")
@@ -3766,21 +3770,28 @@ swEv:Connect(function(nowOn)
 end)
 
 -- auto-start: trigger switch ON saat script pertama jalan
+print("[UPLVL-DBG] task.defer: running=", running)
 task.defer(function()
+    print("[UPLVL-DBG] task.defer FIRED: running=", running)
     if not running then
         setSw(true)
         if swLbl then swLbl.Text="AUTO LVL — RUNNING" end
         running=true; stopRequested=false
         task.spawn(function()
+            print("[UPLVL-DBG] main loop task.spawn START")
             addLog("uplevel.lua "..VERSION.." start!")
             setStatus("Running...",C.accent)
             while not stopRequested do
+                print("[UPLVL-DBG] loop iter: sesiAktif=", sesiAktif)
                 if sesiAktif==1 then runSesi1(); if not stopRequested then sesiAktif=2 end
                 else runSesi2(); if not stopRequested then sesiAktif=1 end end
             end
+            print("[UPLVL-DBG] loop ENDED: stopRequested=", stopRequested)
             running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=SESI1_DEF; _G._UPL_SESI_NUM=1; _G._UPL_SESI_DEF=false; addLog("Loop stop."); setStatus("Stopped")
             setSw(false); if swLbl then swLbl.Text="AUTO LVL — START" end
         end)
+    else
+        print("[UPLVL-DBG] task.defer: skip karena running=true sudah")
     end
 end)
 
