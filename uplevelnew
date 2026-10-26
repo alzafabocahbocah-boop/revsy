@@ -1,4 +1,4 @@
--- uplevelnew v8.274 — debug print lengkap: RC chain, listPetsAll, listPetsEngine, picker refresh
+-- uplevelnew v8.275 — debug addLog di runSesi, equipSesi, equipPet, waitForContainer
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.274"
+local VERSION = "v8.275"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2047,8 +2047,12 @@ end
 -- HARUS setelah addLog karena pakai addLog di dalamnya
 local function waitForContainer(maxSec)
     maxSec=maxSec or 10
-    if _kgContainer then return true end
-    addLog("Tunggu container getgc...")
+    if _kgContainer then
+        local n=0; pcall(function() for _ in pairs(_kgContainer) do n=n+1 end end)
+        addLog("[DBG] waitForContainer: sudah ada ("..n.." pets), skip")
+        return true
+    end
+    addLog("[DBG] waitForContainer: container NIL, coba sync...")
     -- coba sync (blocking) dulu di coroutine ini
     pcall(function() _kgContainer=findMemoryContainer() end)
     if _kgContainer then
@@ -2737,12 +2741,15 @@ end
 local _clusterPos = nil  -- cache posisi, di-refresh saat start
 
 equipPet = function(uuid)
-    if not equipRE then return end
+    if not equipRE then addLog("[DBG] equipPet: equipRE NIL! skip"); return end
     local pos = _clusterPos or farmCenter()
+    local fmtted = fmtUUID(uuid)
     if pos then
-        pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), CFrame.new(pos)) end)
+        addLog("[DBG] equipPet "..tostring(fmtted):sub(1,12).." pos=ok")
+        pcall(function() equipRE:FireServer("EquipPet", fmtted, CFrame.new(pos)) end)
     else
-        pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), nil) end)
+        addLog("[DBG] equipPet "..tostring(fmtted):sub(1,12).." pos=NIL")
+        pcall(function() equipRE:FireServer("EquipPet", fmtted, nil) end)
     end
 end
 unequipPet = function(uuid)
@@ -3436,10 +3443,17 @@ local function runSesiUtama(sesiNum, def, label, col)
     addLog("=== "..label.." ==="); setStatus(label.." — equip pet", col); updateUI(totalNightmareCollected,0,sesiNum)
     _clusterPos = farmCenter()
     addLog("Cluster: "..((_clusterPos) and string.format("%.0f,%.0f",_clusterPos.X,_clusterPos.Z) or "NIL — cek workspace.Farm"))
+    addLog("[DBG] equipRE="..(equipRE and equipRE:GetFullName() or "NIL!").." | container="..((_kgContainer) and "ADA" or "NIL"))
     waitForContainer(10)
+    addLog("[DBG] setelah waitForContainer: container="..((_kgContainer) and "ADA" or "MASIH NIL!"))
     _activeSesiNum = sesiNum; _G._UPL_SESI_NUM = sesiNum
     _activeSesiDef = def; _G._UPL_SESI_DEF = def
-    unequipAll(); equipSesi(sesiNum, def); setStatus(label.." — running", col)
+    addLog("[DBG] sebelum unequipAll")
+    unequipAll()
+    addLog("[DBG] sebelum equipSesi")
+    equipSesi(sesiNum, def)
+    addLog("[DBG] equipSesi DONE")
+    setStatus(label.." — running", col)
     local _targetReached = false
     local _collectBusy = false
     -- scan loop: jalan terus, update GUI + cek target
@@ -3510,13 +3524,12 @@ local function runSesiUtama(sesiNum, def, label, col)
     unequipAll()
 end
 local function runSesi1()
-    dbgLog("[DBG] runSesi1: mulai")
+    addLog("[DBG] runSesi1 START")
     SESI1_DEF = { {nama="T-Rex", jml=8} }
     addLog("Sesi 1 def: 8 T-Rex (fixed)")
-    dbgLog("[DBG] runSesi1: SESI1_DEF fixed 8 T-Rex")
     _activeSesiDef = SESI1_DEF; _G._UPL_SESI_DEF = false
     runSesiUtama(1, SESI1_DEF, "SESI 1", C.accent)
-    dbgLog("[DBG] runSesi1: runSesiUtama selesai")
+    addLog("[DBG] runSesi1 DONE")
 end
 local function runSesi2()
     addLog("=== SESI 2 ==="); setStatus("Sesi 2 — equip pet",Color3.fromRGB(220,160,60)); updateUI(totalNightmareCollected,0,2)
