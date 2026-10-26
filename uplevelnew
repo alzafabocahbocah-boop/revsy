@@ -1,4 +1,4 @@
--- uplevelnew v8.282 — debug equipSesi need/pool + equipPet FireServer result
+-- uplevelnew v8.283 — debug print di waitForContainer, unequipAll, equipSesi entry
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.282"
+local VERSION = "v8.283"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2047,12 +2047,15 @@ end
 -- HARUS setelah addLog karena pakai addLog di dalamnya
 local function waitForContainer(maxSec)
     maxSec=maxSec or 10
+    print("[UPLVL-DBG] waitForContainer: START, _kgContainer=", _kgContainer and "ADA" or "NIL")
     if _kgContainer then
         local n=0; pcall(function() for _ in pairs(_kgContainer) do n=n+1 end end)
         addLog("[DBG] waitForContainer: sudah ada ("..n.." pets), skip")
+        print("[UPLVL-DBG] waitForContainer: skip (sudah ada,", n, "pets)")
         return true
     end
     addLog("[DBG] waitForContainer: container NIL, coba sync...")
+    print("[UPLVL-DBG] waitForContainer: container NIL, coba sync...")
     -- coba sync (blocking) dulu di coroutine ini
     pcall(function() _kgContainer=findMemoryContainer() end)
     if _kgContainer then
@@ -2832,6 +2835,7 @@ end
 -- equipSesi: equip pet sesuai defs
 -- Prioritas: slot manual dari sesiPool → auto dari container by tipe → fallback backpack
 local function equipSesi(sesiNum, defs)
+    print("[UPLVL-DBG] equipSesi ENTER: sesiNum=", sesiNum, "defs=", defs and #defs or "NIL")
     -- clear active uuid tracker + mimic slot tracker
     for k in pairs(_activeUuids) do _activeUuids[k]=nil end
     for k in pairs(_mimicSlotByUuid) do _mimicSlotByUuid[k]=nil end
@@ -3463,33 +3467,31 @@ local function runSesiUtama(sesiNum, def, label, col)
     addLog("Cluster: "..((_clusterPos) and string.format("%.0f,%.0f",_clusterPos.X,_clusterPos.Z) or "NIL — cek workspace.Farm"))
     local reOk = pcall(function() print("[UPLVL-DBG] equipRE=", equipRE and equipRE:GetFullName() or "NIL!", "| class=", equipRE and equipRE.ClassName or "?") end)
     addLog("[DBG] equipRE="..(equipRE and equipRE:GetFullName() or "NIL!").." | container="..((_kgContainer) and "ADA" or "NIL"))
-    -- debug: list PetsService children untuk cari RemoteEvent yang benar
+    -- debug: cek equipRE class + count RemoteEvent (tidak print semua nama, terlalu panjang)
     pcall(function()
         local ge = RS:FindFirstChild("GameEvents")
         local ps = ge and ge:FindFirstChild("PetsService")
-        if ps then
-            local ch = {}
-            for _,v in pairs(ps:GetChildren()) do table.insert(ch, v.Name.."("..v.ClassName..")") end
-            print("[UPLVL-DBG] PetsService children:", table.concat(ch,", "))
-        else
-            print("[UPLVL-DBG] PetsService not found under GameEvents")
-        end
-        -- scan semua RemoteEvent di GameEvents
+        print("[UPLVL-DBG] PetsService=", ps and ps:GetFullName() or "NIL", "| class=", ps and ps.ClassName or "?")
         local ges = ge and ge:GetDescendants() or {}
-        local res = {}
+        local reCount = 0
         for _,v in pairs(ges) do
-            if v:IsA("RemoteEvent") then table.insert(res, v:GetFullName()) end
+            if v:IsA("RemoteEvent") then reCount = reCount + 1 end
         end
-        print("[UPLVL-DBG] RemoteEvents di GameEvents:", table.concat(res,", "))
+        print("[UPLVL-DBG] total RemoteEvents di GameEvents:", reCount)
     end)
+    print("[UPLVL-DBG] debug scan selesai — masuk waitForContainer")
     waitForContainer(10)
+    print("[UPLVL-DBG] waitForContainer DONE, container=", _kgContainer and "ADA" or "NIL")
     addLog("[DBG] setelah waitForContainer: container="..((_kgContainer) and "ADA" or "MASIH NIL!"))
     _activeSesiNum = sesiNum; _G._UPL_SESI_NUM = sesiNum
     _activeSesiDef = def; _G._UPL_SESI_DEF = def
     addLog("[DBG] sebelum unequipAll")
+    print("[UPLVL-DBG] sebelum unequipAll")
     unequipAll()
+    print("[UPLVL-DBG] unequipAll DONE — sebelum equipSesi")
     addLog("[DBG] sebelum equipSesi")
     equipSesi(sesiNum, def)
+    print("[UPLVL-DBG] equipSesi DONE")
     addLog("[DBG] equipSesi DONE")
     setStatus(label.." — running", col)
     local _targetReached = false
