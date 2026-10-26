@@ -1,4 +1,4 @@
--- ZENX MARKET v8.528 — ZERO getgc total: memContainer + getMaxPetsZenx semua RC direct
+-- ZENX MARKET v8.529 — snipe optimized: delta cache + early filter + parallel buy queue
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -12288,252 +12288,247 @@ do
         end)
     end
 
-    -- v8.84: ===== AUTO SNIPE — scan + buy loop =====
-    -- Continuously scan market, match each entry against user rules, buy on match
-    task.spawn(function()
-        local function matchRule(p, rule)
-            -- petType: substring match (case insensitive). Kosong = match semua.
-            if rule.petType and rule.petType ~= "" then
-                local needle = string.lower(rule.petType)
-                local hay = string.lower(p.type or "")
-                if not string.find(hay, needle, 1, true) then return false end
-            end
-            -- mutation: substring match. Kosong = match semua.
-            if rule.mutation and rule.mutation ~= "" then
-                local needle = string.lower(rule.mutation)
-                local hay = string.lower(p.mutation or "")
-                if not string.find(hay, needle, 1, true) then return false end
-            end
-            -- maxKg: optional. 0 atau nil = no limit
-            if rule.maxKg and rule.maxKg > 0 then
-                if (p.kg or 0) > rule.maxKg then return false end
-            end
-            -- v8.235: minKg: optional. 0 atau nil = no minimum
-            if rule.minKg and rule.minKg > 0 then
-                if (p.kg or 0) < rule.minKg then return false end
-            end
-            -- maxPrice: wajib
-            if not p.price or p.price > rule.maxPrice then return false end
-            -- v8.302: filter asal egg PER-RULE. rule.eggSource override; nil = ikut global.
-            local es = rule.eggSource or BH.autoSnipe.eggSource or "all"
-            if es == "prem" and not p.isPrem then return false end
-            if es == "biasa" and p.isPrem then return false end
-            return true
+    -- v8.529: ===== AUTO SNIPE — scan + buy loop (optimized) =====
+    -- Optimasi: delta cache, early petType filter, buy fire tanpa tunggu scan, parallel buy queue
+    -- [4] delta cache: hanya proses listing UUID baru
+    -- [5] buy fire: begitu match di scan thread, langsung spawn buy (gak tunggu semua thread selesai)
+    -- [7] parallel: scan thread jalan terus, buy queue dikonsumsi terpisah
+    -- [9] early filter: skip listing non-Pet & petType gak cocok rule sebelum proses lebih jauh
+    local _snipePrevListings = {}  -- delta cache: uuid → true (listing yang sudah diproses)
+    local _snipeBuyQueue = {}      -- queue match siap beli: {type,mutation,kg,price,owner,sellerPlayer,listingUuid,hatchedFrom,isPrem}
+
+    local function matchRule(p, rule)
+        -- [9] early petType filter — paling sering jadi penolak, cek duluan
+        if rule.petType and rule.petType ~= "" then
+            local needle = string.lower(rule.petType)
+            local hay = string.lower(p.type or "")
+            if not string.find(hay, needle, 1, true) then return false end
         end
+        if rule.mutation and rule.mutation ~= "" then
+            local needle = string.lower(rule.mutation)
+            local hay = string.lower(p.mutation or "")
+            if not string.find(hay, needle, 1, true) then return false end
+        end
+        if rule.maxKg and rule.maxKg > 0 then
+            if (p.kg or 0) > rule.maxKg then return false end
+        end
+        if rule.minKg and rule.minKg > 0 then
+            if (p.kg or 0) < rule.minKg then return false end
+        end
+        if not p.price or p.price > rule.maxPrice then return false end
+        local es = rule.eggSource or BH.autoSnipe.eggSource or "all"
+        if es == "prem" and not p.isPrem then return false end
+        if es == "biasa" and p.isPrem then return false end
+        return true
+    end
 
-        while gui.Parent do
-            -- v8.94: NO DELAY — secepet mungkin biar duluan dari script lain
-            -- Idle (not active): wait 1s biar gak bikin lag. Active: minimal wait.
-            if not BH.autoSnipe.active then
-                task.wait(1)  -- idle sleep
+    -- [9] bangun set petType dari rules (buat early filter sebelum proses listing)
+    local function getRuleTypes()
+        local types = {}
+        local hasWildcard = false
+        for _, rule in ipairs(BH.autoSnipe.rules) do
+            if not rule.petType or rule.petType == "" then
+                hasWildcard = true; break
             else
-                task.wait()  -- 1 frame (~16ms) — secepet Roblox bisa
+                types[string.lower(rule.petType)] = true
+            end
+        end
+        return types, hasWildcard
+    end
+
+    -- [7] Thread B: buy queue consumer — jalan terus paralel, konsumsi _snipeBuyQueue
+    task.spawn(function()
+        while gui.Parent do
+            task.wait()  -- 1 frame
+            if not BH.autoSnipe.active then task.wait(0.5); continue end
+            local item = table.remove(_snipeBuyQueue, 1)
+            if not item then continue end
+            -- cek ulang masih valid (belum dibeli, gak cooldown)
+            local cd = BH.autoSnipe.cooldown[item.listingUuid]
+            if BH.autoSnipe.bought[item.listingUuid] then continue end
+            if cd and (tick() - cd) < 2 then continue end
+            BH.autoSnipe.cooldown[item.listingUuid] = tick()
+            local clean = tostring(item.listingUuid):gsub("[{}]","")
+            local seller, listingUuid = item.sellerPlayer, item.listingUuid
+            local petType, petMut, petPrice, petOwner = item.type, item.mutation, item.price, item.owner
+            local petPrem = item.isPrem and true or false
+            local petEgg = item.hatchedFrom or "?"
+            task.spawn(function()
+                local ok, ret = pcall(function()
+                    return buyRE:InvokeServer(seller, clean)
+                end)
+                if ok and (ret == true or ret == nil) then
+                    BH.autoSnipe.bought[listingUuid] = true
+                    BH.autoSnipe.boughtCount = BH.autoSnipe.boughtCount + 1
+                    L(string.format("[AutoSnipe] ✅ Bought %s%s @ %s from %s | EGG: %s (%s)",
+                        petType or "?",
+                        (petMut and petMut ~= "-" and " ["..petMut.."]") or "",
+                        tostring(petPrice), petOwner or "?",
+                        petEgg, petPrem and "PREM" or "biasa"))
+                    BH.autoSnipe.statusLbl.Text = string.format(
+                        "✅ %d bought | latest: %s @ %s",
+                        BH.autoSnipe.boughtCount, petType or "?", tostring(petPrice))
+                    BH.autoSnipe.statusLbl.TextColor3 = C.success
+                    table.insert(BH.autoSnipe.history, 1, {
+                        petType = petType, mutation = petMut, price = petPrice,
+                        seller = petOwner, isPrem = petPrem, eggName = petEgg, ts = os.time(),
+                    })
+                    while #BH.autoSnipe.history > 100 do table.remove(BH.autoSnipe.history) end
+                    if BH.marketState then
+                        BH.marketState.snipeTotal = (tonumber(BH.marketState.snipeTotal) or 0) + 1
+                        local sp = BH.marketState.snipePer or {}; BH.marketState.snipePer = sp
+                        local tyy = tostring(petType or "?")
+                        local dd = sp[tyy]; if not dd then dd = {n=0, tok=0}; sp[tyy] = dd end
+                        dd.n = dd.n + 1; dd.tok = dd.tok + (tonumber(petPrice) or 0)
+                        _G.__ZenxSnipeN = BH.marketState.snipeTotal
+                        _G.__ZenxSnipePer = sp
+                        BH.marketState.autoSnipeHistory = BH.autoSnipe.history
+                        pcall(function() BH.saveMarketState(BH.marketState) end)
+                    end
+                    if BH.autoSnipe.rebuildHistory then pcall(BH.autoSnipe.rebuildHistory) end
+                else
+                    L(string.format("[AutoSnipe] ❌ Buy fail %s: %s",
+                        petType or "?", tostring(ret):sub(1, 50)))
+                end
+            end)
+        end
+    end)
+
+    -- [5+7] Thread A: scan terus, push match ke _snipeBuyQueue langsung (gak tunggu scan selesai)
+    task.spawn(function()
+        while gui.Parent do
+            if not BH.autoSnipe.active then
+                task.wait(1); continue
             end
 
-            if not BH.autoSnipe.active then
-                -- not running, skip
-                -- v8.460: debug kenapa gak scan — log sekali tiap state
-                if not _G._dbgSnipeIdleLogged then
-                    _G._dbgSnipeIdleLogged = true
-                    _G.__ZenxPL("[DBG Snipe] IDLE — autoSnipe.active = false")
-                end
-            elseif #BH.autoSnipe.rules == 0 then
-                -- no rules
+            if #BH.autoSnipe.rules == 0 then
                 if not _G._dbgSnipeNoRulesLogged then
                     _G._dbgSnipeNoRulesLogged = true
                     _G.__ZenxPL("[DBG Snipe] IDLE — rules kosong (0 rule)")
                 end
-            elseif not buyRE then
+                task.wait(1); continue
+            end
+            if not buyRE then
                 BH.autoSnipe.statusLbl.Text = "❌ buyRE belum cached (klik SNIPE dulu)"
                 BH.autoSnipe.statusLbl.TextColor3 = C.danger
                 if not _G._dbgSnipeNoBuyRELogged then
                     _G._dbgSnipeNoBuyRELogged = true
                     _G.__ZenxPL("[DBG Snipe] IDLE — buyRE nil (belum klik SNIPE)")
                 end
-            else
-                -- v8.95: INLINE lightweight scan — NO logging, NO verbose stats
-                -- v8.251: PARALEL — query semua pemain serempak (task.spawn), bukan 1-1 berurutan.
-                -- Di server rame (30 org) ini mangkas scan dari ~3-5s jadi <0.5s.
-                -- v8.460: reset idle flags saat aktif beneran
-                _G._dbgSnipeIdleLogged = nil
-                _G._dbgSnipeNoRulesLogged = nil
-                _G._dbgSnipeNoBuyRELogged = nil
-                local autoCache = {}
-                if not BH.TBC then
-                    -- v8.460: log sekali kalau TBC nil
-                    if not _G._dbgSnipeNoTBCLogged then
-                        _G._dbgSnipeNoTBCLogged = true
-                        _G.__ZenxPL("[DBG Snipe] BH.TBC nil — scan dilewati! (TBC belum loaded)")
-                    end
-                else
-                    _G._dbgSnipeNoTBCLogged = nil
-                    local plist = Players:GetPlayers()
-                    local pending = 0
-                    local results = {}
-                    for _, pp in ipairs(plist) do
-                        if pp ~= player then  -- skip diri sendiri
-                            pending = pending + 1
-                            task.spawn(function()
-                                local ok, data = pcall(function()
-                                    return BH.TBC:GetPlayerBoothData(pp)
-                                end)
-                                if ok and data and data.Listings then
-                                    results[pp] = data
-                                end
-                                pending = pending - 1
-                            end)
-                        end
-                    end
-                    -- tunggu semua thread selesai (timeout ~1.5s biar gak nyangkut)
-                    local waited = 0
-                    while pending > 0 and waited < 1.5 do
-                        waited = waited + task.wait()
-                    end
-                    -- v8.460: log summary scan sekali tiap 60s (biar tau scan jalan)
-                    if not _G._dbgScanLastLog or (tick() - _G._dbgScanLastLog) > 60 then
-                        _G._dbgScanLastLog = tick()
-                        local totalListings, totalPlayers = 0, 0
-                        local itypeCounts = {}
-                        for pp2, data2 in pairs(results) do
-                            totalPlayers = totalPlayers + 1
-                            for _, lst in pairs(data2.Listings) do
-                                totalListings = totalListings + 1
-                                local it = tostring(lst.ItemType or "nil")
-                                itypeCounts[it] = (itypeCounts[it] or 0) + 1
-                            end
-                        end
-                        local itypeStr = ""
-                        for k, v in pairs(itypeCounts) do itypeStr = itypeStr..k.."="..v.." " end
-                        _G.__ZenxPL("[DBG Snipe] SCAN — "..totalPlayers.." player, "..totalListings.." listing | "..itypeStr)
-                    end
-                    -- olah hasil yg udah masuk
-                    for pp, data in pairs(results) do
-                        local items = data.Items
-                        for listingUuid, listing in pairs(data.Listings) do
-                            if listing.ItemType == "Pet" and listing.ItemId then
-                                local item = items and items[listing.ItemId]
-                                if item and item.PetData then
-                                    local pd = item.PetData
-                                    local kg = (BH.computeBaseKgFromPetData and BH.computeBaseKgFromPetData(pd)) or 0
-                                    local mut = tostring(pd.MutationType or "")
-                                    -- v8.270: hatchedFrom + isPrem (biar filter egg auto snipe jalan + bisa di-log)
-                                    local hatchedFrom = tostring(pd.HatchedFrom or "")
-                                    local isPrem = hatchedFrom:lower():find("premium") ~= nil
-                                    table.insert(autoCache, {
-                                        type = tostring(item.PetType or "?"),
-                                        mutation = (mut ~= "" and mut or "-"),
-                                        kg = kg,
-                                        price = tonumber(listing.Price) or 0,
-                                        owner = pp.Name,
-                                        sellerPlayer = pp,
-                                        listingUuid = listingUuid,
-                                        hatchedFrom = hatchedFrom,
-                                        isPrem = isPrem,
-                                    })
-                                end
-                            end
-                        end
-                    end
-                end -- end else (BH.TBC loaded)
-
-                local boughtThisRound = 0
-                for _, p in ipairs(autoCache) do
-                    if not BH.autoSnipe.active then break end
-                    -- v8.265: skip kalau udah BERHASIL dibeli, ATAU lagi cooldown (baru gagal <2s lalu)
-                    local cd = BH.autoSnipe.cooldown[p.listingUuid]
-                    local onCooldown = cd and (tick() - cd) < 2
-                    if not BH.autoSnipe.bought[p.listingUuid] and not onCooldown then
-                        if not p.isSkin then  -- v8.467: skin = manual buy only, skip auto
-                        for _, rule in ipairs(BH.autoSnipe.rules) do
-                            if matchRule(p, rule) then
-                                -- v8.271: GUARD final filter egg tepat sebelum fire (anti-bocor/race)
-                                local esNow = BH.autoSnipe.eggSource or "all"
-                                local skipEgg = (esNow == "prem" and not p.isPrem)
-                                            or (esNow == "biasa" and p.isPrem)
-                                if skipEgg then
-                                    -- gak cocok filter egg terkini -> skip, jangan beli
-                                else
-                                -- v8.265: JANGAN mark bought dulu — tandai cooldown biar gak spam,
-                                -- mark bought HANYA kalau buy sukses (di bawah). Gagal -> bisa retry.
-                                BH.autoSnipe.cooldown[p.listingUuid] = tick()
-                                -- BUY in parallel — no wait, fire immediately
-                                local clean = tostring(p.listingUuid):gsub("[{}]","")
-                                local seller, listingUuid = p.sellerPlayer, p.listingUuid
-                                local petType, petMut, petPrice, petOwner =
-                                    p.type, p.mutation, p.price, p.owner
-                                local petPrem = p.isPrem and true or false  -- v8.268
-                                local petEgg = p.hatchedFrom or "?"  -- v8.270
-                                task.spawn(function()
-                                    local ok, ret = pcall(function()
-                                        return buyRE:InvokeServer(seller, clean)
-                                    end)
-                                    if ok and (ret == true or ret == nil) then
-                                        -- v8.265: sukses -> baru mark bought permanen
-                                        BH.autoSnipe.bought[listingUuid] = true
-                                        BH.autoSnipe.boughtCount = BH.autoSnipe.boughtCount + 1
-                                        -- v8.410: sound alert DIMATIIN di sc — pindah ke PANEL (TTS). Cuma panel yg bunyi.
-                                        -- v8.270: log egg asal (prem/biasa) buat verifikasi filter
-                                        L(string.format("[AutoSnipe] ✅ Bought %s%s @ %s from %s | EGG: %s (%s)",
-                                            petType or "?",
-                                            (petMut and petMut ~= "-" and " ["..petMut.."]") or "",
-                                            tostring(petPrice), petOwner or "?",
-                                            petEgg, petPrem and "PREM" or "biasa"))
-                                        BH.autoSnipe.statusLbl.Text = string.format(
-                                            "✅ %d bought | latest: %s @ %s",
-                                            BH.autoSnipe.boughtCount,
-                                            petType or "?", tostring(petPrice))
-                                        BH.autoSnipe.statusLbl.TextColor3 = C.success
-                                        -- v8.268: append ke history + persist (max 100 entries)
-                                        table.insert(BH.autoSnipe.history, 1, {
-                                            petType = petType,
-                                            mutation = petMut,
-                                            price = petPrice,
-                                            seller = petOwner,
-                                            isPrem = petPrem,
-                                            eggName = petEgg,
-                                            ts = os.time(),
-                                        })
-                                        while #BH.autoSnipe.history > 100 do
-                                            table.remove(BH.autoSnipe.history)
-                                        end
-                                        -- v8.356: counter UNCAPPED + per-tipe (persist, gak kena cap 100)
-                                        if BH.marketState then
-                                            BH.marketState.snipeTotal = (tonumber(BH.marketState.snipeTotal) or 0) + 1
-                                            local sp = BH.marketState.snipePer or {}; BH.marketState.snipePer = sp
-                                            local tyy = tostring(petType or "?")
-                                            local dd = sp[tyy]; if not dd then dd = {n=0, tok=0}; sp[tyy] = dd end
-                                            dd.n = dd.n + 1; dd.tok = dd.tok + (tonumber(petPrice) or 0)
-                                            _G.__ZenxSnipeN = BH.marketState.snipeTotal
-                                            _G.__ZenxSnipePer = sp
-                                        end
-                                        if BH.marketState then
-                                            BH.marketState.autoSnipeHistory = BH.autoSnipe.history
-                                            pcall(function() BH.saveMarketState(BH.marketState) end)
-                                        end
-                                        if BH.autoSnipe.rebuildHistory then
-                                            pcall(BH.autoSnipe.rebuildHistory)
-                                        end
-                                    else
-                                        L(string.format("[AutoSnipe] ❌ Buy fail %s: %s",
-                                            petType or "?", tostring(ret):sub(1, 50)))
-                                    end
-                                end)
-                                boughtThisRound = boughtThisRound + 1
-                                break  -- match satu rule → next pet
-                                end  -- v8.271: tutup else guard filter egg
-                            end
-                        end
-                        end  -- v8.467: tutup if not isSkin
-                    end
+                task.wait(1); continue
+            end
+            if not BH.TBC then
+                if not _G._dbgSnipeNoTBCLogged then
+                    _G._dbgSnipeNoTBCLogged = true
+                    _G.__ZenxPL("[DBG Snipe] BH.TBC nil — scan dilewati!")
                 end
+                task.wait(1); continue
+            end
 
-                if boughtThisRound == 0 and BH.autoSnipe.active then
-                    BH.autoSnipe.statusLbl.Text = string.format(
-                        "🔍 Scanning... %d listings | %d bought total",
-                        #autoCache, BH.autoSnipe.boughtCount)
-                    BH.autoSnipe.statusLbl.TextColor3 = C.accent
+            _G._dbgSnipeIdleLogged = nil; _G._dbgSnipeNoRulesLogged = nil
+            _G._dbgSnipeNoBuyRELogged = nil; _G._dbgSnipeNoTBCLogged = nil
+
+            -- [9] build rule type set sekali per scan round
+            local ruleTypes, hasWildcard = getRuleTypes()
+
+            local plist = Players:GetPlayers()
+            local pending = 0
+            local newListings = 0
+
+            for _, pp in ipairs(plist) do
+                if pp ~= player then
+                    pending = pending + 1
+                    task.spawn(function()
+                        local ok, data = pcall(function()
+                            return BH.TBC:GetPlayerBoothData(pp)
+                        end)
+                        if ok and data and data.Listings then
+                            local items = data.Items
+                            for listingUuid, listing in pairs(data.Listings) do
+                                -- [4] delta: skip UUID yang sudah diproses ronde sebelumnya
+                                if _snipePrevListings[listingUuid] then continue end
+                                if listing.ItemType ~= "Pet" or not listing.ItemId then continue end
+                                local item = items and items[listing.ItemId]
+                                if not item or not item.PetData then continue end
+
+                                -- [9] early petType filter sebelum proses lebih jauh
+                                if not hasWildcard then
+                                    local petTypeLower = string.lower(tostring(item.PetType or ""))
+                                    local matched = false
+                                    for needle in pairs(ruleTypes) do
+                                        if petTypeLower:find(needle, 1, true) then matched = true; break end
+                                    end
+                                    if not matched then continue end
+                                end
+
+                                local pd = item.PetData
+                                local kg = (BH.computeBaseKgFromPetData and BH.computeBaseKgFromPetData(pd)) or 0
+                                local mut = tostring(pd.MutationType or "")
+                                local hatchedFrom = tostring(pd.HatchedFrom or "")
+                                local isPrem = hatchedFrom:lower():find("premium") ~= nil
+                                local entry = {
+                                    type = tostring(item.PetType or "?"),
+                                    mutation = (mut ~= "" and mut or "-"),
+                                    kg = kg,
+                                    price = tonumber(listing.Price) or 0,
+                                    owner = pp.Name,
+                                    sellerPlayer = pp,
+                                    listingUuid = listingUuid,
+                                    hatchedFrom = hatchedFrom,
+                                    isPrem = isPrem,
+                                }
+
+                                -- cek match rule, kalau cocok push ke buy queue LANGSUNG [5]
+                                if not BH.autoSnipe.bought[listingUuid] and not item.isSkin then
+                                    local esNow = BH.autoSnipe.eggSource or "all"
+                                    local skipEgg = (esNow == "prem" and not isPrem)
+                                                 or (esNow == "biasa" and isPrem)
+                                    if not skipEgg then
+                                        for _, rule in ipairs(BH.autoSnipe.rules) do
+                                            if matchRule(entry, rule) then
+                                                newListings = newListings + 1
+                                                table.insert(_snipeBuyQueue, entry)
+                                                break
+                                            end
+                                        end
+                                    end
+                                end
+                                -- [4] mark sudah diproses
+                                _snipePrevListings[listingUuid] = true
+                            end
+                        end
+                        pending = pending - 1
+                    end)
                 end
             end
+
+            -- tunggu semua thread (timeout 1.5s) — sambil nunggu, buy thread sudah jalan
+            local waited = 0
+            while pending > 0 and waited < 1.5 do
+                waited = waited + task.wait()
+            end
+
+            -- [4] bersihkan delta cache tiap 60s (hapus UUID lama yang sudah gak ada)
+            if not _G._snipeDeltaClean or (tick() - _G._snipeDeltaClean) > 60 then
+                _G._snipeDeltaClean = tick()
+                _snipePrevListings = {}  -- reset, scan berikutnya proses semua lagi (fresh)
+            end
+
+            -- log sekali tiap 60s
+            if not _G._dbgScanLastLog or (tick() - _G._dbgScanLastLog) > 60 then
+                _G._dbgScanLastLog = tick()
+                _G.__ZenxPL(string.format("[DBG Snipe] SCAN — %d player | queue=%d",
+                    #plist - 1, #_snipeBuyQueue))
+            end
+
+            if BH.autoSnipe.active then
+                BH.autoSnipe.statusLbl.Text = string.format(
+                    "🔍 Scanning... queue=%d | %d bought total",
+                    #_snipeBuyQueue, BH.autoSnipe.boughtCount)
+                BH.autoSnipe.statusLbl.TextColor3 = C.accent
+            end
+
+            task.wait()  -- 1 frame sebelum scan berikutnya
         end
     end)
 
