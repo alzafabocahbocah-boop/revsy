@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.58  ══════════════════════════
+-- ══════════════════════════  HACT  v34.60  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -627,6 +627,36 @@ end
 
 -- build cache uuid -> PetData. MERGE semua container yg berisi pet kita
 -- (pet bisa kesebar di container #2 & #3; garden pet kadang di salah satunya).
+-- v34.59: ReplicationClass direct access — tanpa getgc, tanpa buka inventory
+-- chain: RC.new("ActivePetsService_Replicator"):GetData(player.Name).Table.PlayerPetData[player.Name].MutableStats
+local _rcInst = nil
+local function _rcGetMaxInv()
+    pcall(function()
+        if not _rcInst then
+            local RS = game:GetService("ReplicatedStorage")
+            local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
+            if mod then _rcInst = require(mod).new("ActivePetsService_Replicator") end
+        end
+    end)
+    if not _rcInst then return nil end
+    local mx = nil
+    pcall(function()
+        local data = _rcInst:GetData(player.Name)
+        if type(data) ~= "table" then return end
+        local tbl = rawget(data, "Table")
+        if type(tbl) ~= "table" then return end
+        local ppd = rawget(tbl, "PlayerPetData")
+        if type(ppd) ~= "table" then return end
+        local pd = rawget(ppd, player.Name)
+        if type(pd) ~= "table" then return end
+        local ms = rawget(pd, "MutableStats")
+        if type(ms) ~= "table" then return end
+        local mp = rawget(ms, "MaxPetsInInventory")
+        if type(mp) == "number" and mp > 0 and mp <= 2000 then mx = mp end
+    end)
+    return mx
+end
+
 -- v28.0: POINTER-BASED — getgc hanya sekali saat init, lalu baca pointer langsung.
 -- Jalur: PlayerData.PetInventory.Data[uuid].{PetData, PetType}
 -- Pointer valid selama session (Lua table by-reference), update game langsung keliatan.
@@ -3668,44 +3698,11 @@ do
                     for _, p in ipairs(pets) do
                         if p and petFate(p) == "keep" then keep = keep + 1 else sell = sell + 1 end
                     end
-                    -- curTotal: hitung langsung dari Backpack+Character (listBackpackPets bisa error)
+                    -- v34.60: curTotal dari RC direct (PetInventory.Data) — paling akurat
                     local curTotal = total  -- fallback ke listBackpackPets jika ada
                     pcall(function()
-                        local plr2 = game:GetService("Players").LocalPlayer
-                        local seen, n = {}, 0
-                        for _, holder in ipairs({plr2:FindFirstChild("Backpack"), plr2.Character}) do
-                            if holder then
-                                for _, t in ipairs(holder:GetChildren()) do
-                                    if t:IsA("Tool") then
-                                        local u = t:GetAttribute("PET_UUID")
-                                        if u then
-                                            local uc = tostring(u):gsub("[{}%-]","")
-                                            if not seen[uc] then seen[uc]=true; n=n+1 end
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                        if n > 0 then curTotal = n end  -- pakai hasil ini kalau dapat data
-                    end)
-                    -- v34.21: override curTotal dari UI CategoryTemplate "Pet Items (X/Y)" — akurat termasuk garden pet
-                    pcall(function()
-                        local pg = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
-                        if not pg then return end
-                        local tradeUI = pg:FindFirstChild("TradingUI")
-                        for _, dd in ipairs(pg:GetDescendants()) do
-                            if tradeUI and dd:IsDescendantOf(tradeUI) then continue end
-                            if (dd:IsA("TextLabel") or dd:IsA("TextButton")) and type(dd.Text)=="string" then
-                                local low = dd.Text:lower()
-                                if low:find("pet") and low:find("item") then
-                                    local a, b = dd.Text:match("(%d+)%s*/%s*(%d+)")
-                                    if a and b then
-                                        local na, nb = tonumber(a), tonumber(b)
-                                        if na and na > 0 then curTotal = na end
-                                    end
-                                end
-                            end
-                        end
+                        local ct = countTotalPets()
+                        if ct and ct > 0 then curTotal = ct end
                     end)
                     local maxTotal = nil
                     -- 1) dari _G.HactTelurGetMaxPets (return number atau table {maxPets=n})
@@ -4769,7 +4766,32 @@ end
 
 -- v31.3: hitung total pet milik kita: backpack + character + garden, dedup UUID
 -- didefinisikan di sini (sebelum getGameData) karena getGameData butuh ini untuk validasi max
+-- v34.60: RC direct — PetInventory.Data size (inventory only, tanpa garden)
+-- fallback: scan Backpack+Character+garden via PET_UUID attribute
 local function countTotalPets()
+    -- 1) RC direct: paling akurat, tanpa scan
+    local rcTotal = nil
+    pcall(function()
+        if _rcInst then
+            local data = _rcInst:GetData(player.Name)
+            if type(data) ~= "table" then return end
+            local tbl = rawget(data, "Table")
+            if type(tbl) ~= "table" then return end
+            local ppd = rawget(tbl, "PlayerPetData")
+            if type(ppd) ~= "table" then return end
+            local pd = rawget(ppd, player.Name)
+            if type(pd) ~= "table" then return end
+            local pi = rawget(pd, "PetInventory")
+            if type(pi) ~= "table" then return end
+            local dat = rawget(pi, "Data")
+            if type(dat) ~= "table" then return end
+            local cnt = 0
+            for _ in pairs(dat) do cnt = cnt + 1 end
+            if cnt > 0 then rcTotal = cnt end
+        end
+    end)
+    if rcTotal then return rcTotal end
+    -- 2) fallback: scan Backpack+Character via PET_UUID attribute
     local seen = {}
     local n = 0
     for _, holder in ipairs({player:FindFirstChild("Backpack"), player.Character}) do
@@ -4785,57 +4807,6 @@ local function countTotalPets()
             end
         end
     end
-    pcall(function()
-        local pp = Workspace:FindFirstChild("PetsPhysical")
-        if not pp then return end
-        local myName = player.Name
-        local myId = tostring(player.UserId)
-        local function ownerMine(d)
-            local cur = d
-            for _ = 1, 6 do
-                if not cur or cur == Workspace then break end
-                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
-                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
-                if o ~= nil then return (tostring(o) == myName or tostring(o) == myId) end
-                cur = cur.Parent
-            end
-            return nil
-        end
-        local gardenNew, gardenSeen = 0, 0
-        for _, m in ipairs(pp:GetDescendants()) do
-            if m:IsA("Model") then
-                local uuid = m:GetAttribute("PET_UUID")
-                if not uuid then continue end
-                local key = tostring(uuid):gsub("[{}]","")
-                if key ~= "" and ownerMine(m) ~= false then
-                    if not seen[key] then
-                        seen[key] = true; n = n + 1; gardenNew = gardenNew + 1
-                    else
-                        gardenSeen = gardenSeen + 1
-                    end
-                end
-            end
-        end
-        if gardenNew > 0 or gardenSeen > 0 then
-            print(("[countPets] garden: +%d baru, %d udah ada di backpack"):format(gardenNew, gardenSeen))
-        end
-    end)
-    -- v34.21: override dari UI CategoryTemplate "Pet Items (X/Y)" — paling akurat, termasuk garden
-    pcall(function()
-        local pg = player:FindFirstChild("PlayerGui")
-        if not pg then return end
-        local tradeUI = pg:FindFirstChild("TradingUI")
-        for _, dd in ipairs(pg:GetDescendants()) do
-            if tradeUI and dd:IsDescendantOf(tradeUI) then continue end
-            if (dd:IsA("TextLabel") or dd:IsA("TextButton")) and type(dd.Text)=="string" then
-                local low = dd.Text:lower()
-                if low:find("pet") and low:find("item") then
-                    local a = dd.Text:match("(%d+)%s*/%s*%d+")
-                    if a then local na = tonumber(a); if na and na > 0 then n = na end end
-                end
-            end
-        end
-    end)
     return n
 end
 
@@ -4876,95 +4847,42 @@ local function getGameData()
         _gameDataCache = d; _gameDataTime = tick()
         return d
     end
-    -- v27.190: port cara up6kg — lebih reliable dari terbesar/terkecil
-    -- 1) baca dari UI "Pet Items (X/Y)" -> Y = max ASLI akun (paling akurat, gak ke-kontaminasi getgc)
-    pcall(function()
-        local pg = player:FindFirstChild("PlayerGui")
-        if not pg then return end
-        -- v30.5: skip TradingUI — label "Pet Items X/Y" di sana milik akun target, bukan akun sendiri
-        local tradeUI = pg:FindFirstChild("TradingUI")
-        for _, dd in ipairs(pg:GetDescendants()) do
-            if tradeUI and dd:IsDescendantOf(tradeUI) then continue end
-            if (dd:IsA("TextLabel") or dd:IsA("TextButton")) and type(dd.Text) == "string" then
-                local low = dd.Text:lower()
-                if low:find("pet") and low:find("item") then
-                    local a, b = dd.Text:match("(%d+)%s*/%s*(%d+)")
-                    if a and b then
-                        a, b = tonumber(a), tonumber(b)
-                        if a and b and b > 0 and math.abs(a - _curTotal) <= 10 then
-                            d.maxPets = b
-                            d_src = "UI:"..dd:GetFullName():sub(-30).."="..tostring(b)
-                            break
-                        end
-                    end
-                end
-            end
-        end
-    end)
-    -- 2) v28.1: baca dari pointer MutableStats (no getgc) — simpan di init
+    -- v34.60: 1) RC direct — prioritas utama, tanpa getgc, tanpa UI scan
+    local rcv = _rcGetMaxInv()
+    if rcv then
+        d.maxPets = rcv; d_src = "RC="..tostring(rcv)
+        -- ambil maxEggs + maxEquip sekalian dari RC
+        pcall(function()
+            local data = _rcInst:GetData(player.Name)
+            local pd = rawget(rawget(rawget(data,"Table"),"PlayerPetData"), player.Name)
+            local ms = rawget(pd, "MutableStats")
+            local me = rawget(ms, "MaxEggsInFarm")
+            local mq = rawget(ms, "MaxEquippedPets")
+            if type(me)=="number" and me > 0 then d.maxEggs  = me end
+            if type(mq)=="number" and mq > 0 then d.maxEquip = mq end
+        end)
+    end
+    -- 2) fallback: pointer MutableStats (dari init getgc sekali)
     if not (d.maxPets and d.maxEggs and d.maxEquip) then
         pcall(function()
             local ms = PetDetect._mutableStats
-            if ms then
-                local mp = rawget(ms, "MaxPetsInInventory")
-                local me = rawget(ms, "MaxEggsInFarm")
-                local mq = rawget(ms, "MaxEquippedPets")
-                -- v31.8: validasi — mp harus >= cur dan dalam range wajar
-                -- v34.19: hapus dependency _curTotal — pointer _mutableStats sudah diset saat init ke milik sendiri
-                if type(mp)=="number" and mp >= 10 and mp <= 2000 then
-                    d.maxPets = d.maxPets or mp; d_src = "MS="..tostring(mp)
-                elseif type(mp)=="number" and (mp < _curTotal or mp < 10 or mp > 2000) then
-                    -- pointer salah (akun lain atau nilai aneh) — reset biar GC scan ulang
-                    PetDetect._mutableStats = nil
-                end
-                if type(me)=="number" and me > 0 then d.maxEggs  = d.maxEggs  or me end
-                if type(mq)=="number" and mq > 0 then d.maxEquip = d.maxEquip or mq end
+            if not ms then return end
+            local mp = rawget(ms, "MaxPetsInInventory")
+            local me = rawget(ms, "MaxEggsInFarm")
+            local mq = rawget(ms, "MaxEquippedPets")
+            if type(mp)=="number" and mp >= 10 and mp <= 2000 then
+                d.maxPets = d.maxPets or mp; d_src = "MS="..tostring(mp)
             end
+            if type(me)=="number" and me > 0 then d.maxEggs  = d.maxEggs  or me end
+            if type(mq)=="number" and mq > 0 then d.maxEquip = d.maxEquip or mq end
         end)
     end
-    -- 3) v32.9: player Attribute — pasti milik LocalPlayer, gak bisa kontaminasi dari akun lain
+    -- 3) fallback: player Attribute
     if not d.maxPets then
         pcall(function()
             local mp = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
             if type(mp) == "number" and mp > 0 then
                 d.maxPets = mp; d_src = "ATTR="..tostring(mp)
-            end
-        end)
-    end
-    -- 4) fallback getgc: hanya kalau semua source di atas gagal
-    if not (d.maxPets and d.maxEggs and d.maxEquip) then
-        pcall(function()
-            local floor = _curTotal  -- mp harus >= cur kita
-            for _, obj in ipairs(getGcDump()) do
-                if type(obj) == "table" then
-                    local mp = rawget(obj, "MaxPetsInInventory")
-                    local me = rawget(obj, "MaxEggsInFarm")
-                    local mq = rawget(obj, "MaxEquippedPets")
-                    -- v34.20: hitung kemunculan tiap nilai — yang double = milik sendiri
-                    if type(mp) == "number" and mp > 0 and mp <= 2000
-                    and type(me) == "number" and me > 0
-                    and type(mq) == "number" and mq > 0 then
-                        if not _gcVotes then _gcVotes = {} end
-                        _gcVotes[mp] = (_gcVotes[mp] or 0) + 1
-                        if not _gcObjs then _gcObjs = {} end
-                        if not _gcObjs[mp] then _gcObjs[mp] = {obj=obj, me=me, mq=mq} end
-                    end
-                end
-            end
-            -- ambil mp yang muncul paling banyak (double = milik sendiri)
-            if _gcVotes then
-                local bestMp, bestCount = nil, 0
-                for mp, cnt in pairs(_gcVotes) do
-                    if cnt > bestCount then bestMp = mp; bestCount = cnt end
-                end
-                if bestMp then
-                    local best = _gcObjs[bestMp]
-                    d.maxPets  = d.maxPets  or bestMp
-                    d_src = "GC(x"..bestCount..")="..tostring(bestMp)
-                    d.maxEggs  = d.maxEggs  or best.me
-                    d.maxEquip = d.maxEquip or best.mq
-                    if not PetDetect._mutableStats then PetDetect._mutableStats = best.obj end
-                end
             end
         end)
     end

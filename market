@@ -1,4 +1,4 @@
--- ZENX MARKET v8.520 — fix fetchSnipe: req→_req (upvalue nil), HttpService→_HS
+-- ZENX MARKET v8.525 — RC direct untuk maxInv + totalPet (tanpa getgc, tanpa UI scan)
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -507,24 +507,6 @@ task.spawn(function()
     local lamaDetail = 0   -- v8.460: kapan terakhir kirim payload detail (tiap 5 menit)
     task.wait(8)   -- tunggu UI + BH kebangun
     print("[MarketBridge] jalan | " .. plr.Name)
-    -- v8.516: hitung totalPet sekali di boot — biar langsung ada nilai saat kirim pertama
-    -- (loop hitung normalnya baru jalan setelah 60s, jadi panel dapet 0 selama itu)
-    pcall(function()
-        local bp = plr:FindFirstChild("Backpack")
-        if bp then
-            local nn = 0
-            for _, t in ipairs(bp:GetChildren()) do
-                if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
-                    nn = nn + 1
-                end
-            end
-            if nn > 0 then
-                totalPetTerakhir = nn
-                _G.ZenxMarketTotalPet = nn
-            end
-        end
-    end)
-
     -- v8.329: kirim daftar SEMUA nama pet dari game (PetRegistry, ~421) ke Worker
     -- SEKALI. Panel pakai buat picker jenis pet di editor rule. Jarang berubah,
     -- jadi cukup 1x per sesi (kalau Worker udah punya, dia timpa aja -- murah).
@@ -546,18 +528,106 @@ task.spawn(function()
     --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
     local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
     local totalPetTerakhir, maxInvTerakhir = 0, 0   -- v8.354: total pet backpack + maxInv (buat panel)
-    -- v8.495: detect maxInv startup — port cara hact (leaderstats/Data folder paling langsung)
-    -- 1) HactTelurGetMaxPets pointer (kalau hact running bareng)
-    -- 2) player:GetAttribute("MaxPets"/"MaxPetsInInventory")
-    -- 3) leaderstats/Data/PlayerData folder (IntValue — cara hact, langsung tanpa getgc)
-    -- 4) UI scan "Pet Items (X/Y)" skip TradingUI
-    -- 5) getgc voting + validasi mp >= totalPet
-    -- 6) file lama (cache terakhir)
-    -- simpan ke file hanya kalau nilai >= file lama
+    -- v8.525: RC direct — prioritas utama untuk maxInv + totalPet (tanpa getgc, tanpa UI scan)
+    local _rcInst = nil
+    pcall(function()
+        local RC = require(RS.Modules.ReplicationClass)
+        _rcInst = RC.new("ActivePetsService_Replicator")
+    end)
+    -- v8.525: hitung totalPet sekali di boot — RC direct dulu, fallback backpack scan
+    -- (loop hitung normalnya baru jalan setelah 60s, jadi panel dapet 0 selama itu)
+    pcall(function()
+        -- 1) RC direct (paling akurat: inventory count dari server data)
+        local rcTotal = nil
+        pcall(function()
+            if _rcInst then
+                local data = _rcInst:GetData(plr.Name)
+                if type(data) ~= "table" then return end
+                local tbl = rawget(data, "Table")
+                if type(tbl) ~= "table" then return end
+                local ppd = rawget(tbl, "PlayerPetData")
+                if type(ppd) ~= "table" then return end
+                local pd = rawget(ppd, plr.Name)
+                if type(pd) ~= "table" then return end
+                local pi = rawget(pd, "PetInventory")
+                if type(pi) ~= "table" then return end
+                local dat = rawget(pi, "Data")
+                if type(dat) ~= "table" then return end
+                local cnt = 0
+                for _ in pairs(dat) do cnt = cnt + 1 end
+                if cnt > 0 then rcTotal = cnt end
+            end
+        end)
+        if rcTotal then
+            totalPetTerakhir = rcTotal
+            _G.ZenxMarketTotalPet = rcTotal
+            return
+        end
+        -- 2) fallback: backpack scan
+        local bp = plr:FindFirstChild("Backpack")
+        if bp then
+            local nn = 0
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
+                    nn = nn + 1
+                end
+            end
+            if nn > 0 then
+                totalPetTerakhir = nn
+                _G.ZenxMarketTotalPet = nn
+            end
+        end
+    end)
+    local function _rcGetMaxInv()
+        local result = nil
+        pcall(function()
+            if not _rcInst then return end
+            local data = _rcInst:GetData(plr.Name)
+            if type(data) ~= "table" then return end
+            local tbl = rawget(data, "Table")
+            if type(tbl) ~= "table" then return end
+            local ppd = rawget(tbl, "PlayerPetData")
+            if type(ppd) ~= "table" then return end
+            local pd = rawget(ppd, plr.Name)
+            if type(pd) ~= "table" then return end
+            local ms = rawget(pd, "MutableStats")
+            if type(ms) ~= "table" then return end
+            local mp = rawget(ms, "MaxPetsInInventory")
+            if type(mp) == "number" and mp >= 10 and mp <= 2000 then result = mp end
+        end)
+        return result
+    end
+    local function _rcGetTotalPet()
+        local result = nil
+        pcall(function()
+            if not _rcInst then return end
+            local data = _rcInst:GetData(plr.Name)
+            if type(data) ~= "table" then return end
+            local tbl = rawget(data, "Table")
+            if type(tbl) ~= "table" then return end
+            local ppd = rawget(tbl, "PlayerPetData")
+            if type(ppd) ~= "table" then return end
+            local pd = rawget(ppd, plr.Name)
+            if type(pd) ~= "table" then return end
+            local pi = rawget(pd, "PetInventory")
+            if type(pi) ~= "table" then return end
+            local dat = rawget(pi, "Data")
+            if type(dat) ~= "table" then return end
+            local cnt = 0
+            for _ in pairs(dat) do cnt = cnt + 1 end
+            if cnt > 0 then result = cnt end
+        end)
+        return result
+    end
     local _maxInvFile = plr and plr.Name and ("zenx_maxinv_" .. plr.Name .. ".txt")
     pcall(function()
         if not _maxInvFile then return end
-        -- 1) HactTelurGetMaxPets pointer (kalau hact running bareng)
+        -- 1) RC direct — prioritas utama, paling akurat tanpa getgc
+        if maxInvTerakhir <= 0 then pcall(function()
+            local rcv = _rcGetMaxInv()
+            if rcv then maxInvTerakhir = rcv end
+        end) end
+        -- 2) HactTelurGetMaxPets pointer (kalau hact running bareng)
         if maxInvTerakhir <= 0 then pcall(function()
             if _G.HactTelurGetMaxPets then
                 local d = _G.HactTelurGetMaxPets()
@@ -567,12 +637,12 @@ task.spawn(function()
                 if v and v > 0 then maxInvTerakhir = v end
             end
         end) end
-        -- 2) attribute LocalPlayer
+        -- 3) attribute LocalPlayer
         if maxInvTerakhir <= 0 then pcall(function()
             local mp = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory")
             if type(mp) == "number" and mp > 0 then maxInvTerakhir = mp end
         end) end
-        -- 3) v8.495: leaderstats/Data/PlayerData folder (IntValue) — cara hact, paling langsung
+        -- 4) leaderstats/Data/PlayerData folder (IntValue)
         if maxInvTerakhir <= 0 then pcall(function()
             local folders = {"Data", "leaderstats", "PlayerData"}
             local keys = {"MaxPets", "PetLimit", "max_pets", "MaxPet", "MaxPetsInInventory"}
@@ -589,74 +659,17 @@ task.spawn(function()
                 if maxInvTerakhir > 0 then break end
             end
         end) end
-        -- 3) UI scan "Pet Items (X/Y)" skip TradingUI
-        if maxInvTerakhir <= 0 then
-            local pg2 = plr:FindFirstChild("PlayerGui")
-            if pg2 then
-                local tradeUI2 = pg2:FindFirstChild("TradingUI")
-                for _, d in ipairs(pg2:GetDescendants()) do
-                    if tradeUI2 and d:IsDescendantOf(tradeUI2) then continue end
-                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text)=="string" then
-                        local low = d.Text:lower()
-                        if low:find("pet") and low:find("item") then
-                            local aa, bb = d.Text:match("(%d+)%s*/%s*(%d+)")
-                            if aa and bb then
-                                bb = tonumber(bb)
-                                if bb and bb > 0 then maxInvTerakhir = bb; break end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        -- 4) getgc voting — v8.496: SELALU jalan (bukan hanya kalau <= 0)
-        -- biar bisa koreksi file basi; kalau dapat nilai lebih besar → update
-        if getgc then
-            local tally = {}
-            -- v8.497: hitung dari backpack langsung (UI "Pet Items" gak muncul di market world)
-            local _curTotal = 0
-            pcall(function()
-                local bp = plr:FindFirstChild("Backpack")
-                if bp then
-                    for _, t in ipairs(bp:GetChildren()) do
-                        if t:IsA("Tool") and t:GetAttribute("PET_UUID") then
-                            _curTotal = _curTotal + 1
-                        end
-                    end
-                end
-            end)
-            for _, obj in ipairs(getgc(true)) do
-                if type(obj) == "table" then
-                    local mp = rawget(obj, "MaxPetsInInventory")
-                    -- v8.494: validasi cara hact — mp harus >= total pet kita + dalam range wajar
-                    if type(mp) == "number" and mp > 0 and mp <= 2000
-                        and mp >= _curTotal  -- buang nilai lawan (60 < 259)
-                        and rawget(obj, "MaxEggsInFarm") ~= nil
-                        and rawget(obj, "MaxEquippedPets") ~= nil then
-                        tally[mp] = (tally[mp] or 0) + 1
-                    end
-                end
-            end
-            -- pilih yang count terbanyak; tie → lebih besar
-            local mx, bestN = nil, 0
-            for v, n in pairs(tally) do
-                if n > bestN or (n == bestN and (not mx or v > mx)) then mx = v; bestN = n end
-            end
-            -- v8.496: update kalau getgc dapat nilai LEBIH BESAR dari tersimpan
-            if mx and mx > 0 and mx > maxInvTerakhir then maxInvTerakhir = mx end
-        end
         -- 5) fallback: baca file lama
         if maxInvTerakhir <= 0 and readfile then
-            local ok, mi = pcall(function() return tonumber(readfile(_maxInvFile)) end)
-            if ok and mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
+            local ok2, mi = pcall(function() return tonumber(readfile(_maxInvFile)) end)
+            if ok2 and mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
         end
-        -- 6) simpan ke file kalau berhasil detect
-        -- v8.492: simpan HANYA nilai yang >= tersimpan (gak overwrite file dengan nilai lebih kecil)
+        -- simpan ke file kalau berhasil detect (hanya kalau >= file lama)
         if maxInvTerakhir > 0 then
             _G.__ZenxMaxInv = maxInvTerakhir
             local fileLama = 0
             if readfile then pcall(function() fileLama = tonumber(readfile(_maxInvFile)) or 0 end) end
-            if maxInvTerakhir >= fileLama then  -- hanya update file kalau lebih besar atau sama
+            if maxInvTerakhir >= fileLama then
                 pcall(function() if writefile then writefile(_maxInvFile, tostring(maxInvTerakhir)) end end)
             end
             print("[ZenxMarket] maxInv startup detect: " .. maxInvTerakhir .. " (file lama: " .. fileLama .. ")")
@@ -710,13 +723,18 @@ task.spawn(function()
                     while #pjArr > 80 do table.remove(pjArr) end
                     petJenisTerakhir = pjArr
                 end
-                -- v8.495: maxInv per-tick — sama urutan startup
-                -- 1) HactTelurGetMaxPets, 2) Attribute, 3) leaderstats/Data folder, 4) UI skip TradingUI
+                -- v8.525: maxInv per-tick — RC direct prioritas utama, tanpa getgc, tanpa UI scan
+                -- 1) RC direct, 2) HactTelurGetMaxPets, 3) Attribute, 4) leaderstats/Data folder
                 -- hanya update kalau nilai baru > tersimpan
                 do
                     local mxNew = nil
-                    -- layer 1: HactTelurGetMaxPets
+                    -- layer 1: RC direct
                     pcall(function()
+                        local rcv = _rcGetMaxInv()
+                        if rcv then mxNew = rcv end
+                    end)
+                    -- layer 2: HactTelurGetMaxPets
+                    if not mxNew then pcall(function()
                         if _G.HactTelurGetMaxPets then
                             local d = _G.HactTelurGetMaxPets()
                             local v = nil
@@ -724,13 +742,13 @@ task.spawn(function()
                             elseif type(d) == "table" then v = d.maxPets or d.MaxPets end
                             if v and v > 0 then mxNew = v end
                         end
-                    end)
-                    -- layer 2: attribute
+                    end) end
+                    -- layer 3: attribute
                     if not mxNew then pcall(function()
                         local mp = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory")
                         if type(mp) == "number" and mp > 0 then mxNew = mp end
                     end) end
-                    -- layer 3: leaderstats/Data/PlayerData folder (IntValue) — cara hact
+                    -- layer 4: leaderstats/Data/PlayerData folder (IntValue)
                     if not mxNew then pcall(function()
                         local folders = {"Data", "leaderstats", "PlayerData"}
                         local keys = {"MaxPets", "PetLimit", "max_pets", "MaxPet", "MaxPetsInInventory"}
@@ -747,25 +765,6 @@ task.spawn(function()
                             if mxNew then break end
                         end
                     end) end
-                    -- layer 4: UI scan skip TradingUI
-                    if not mxNew then pcall(function()
-                        local pg = plr:FindFirstChild("PlayerGui")
-                        if pg then
-                            local tradeUI = pg:FindFirstChild("TradingUI")
-                            for _, d in ipairs(pg:GetDescendants()) do
-                                if tradeUI and d:IsDescendantOf(tradeUI) then continue end
-                                if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
-                                    local low = d.Text:lower()
-                                    if low:find("pet") and low:find("item") then
-                                        local aa, bb = d.Text:match("(%d+)%s*/%s*(%d+)")
-                                        if aa and bb then bb = tonumber(bb)
-                                            if bb and bb > 0 then mxNew = bb; break end
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end) end
                     -- apply: hanya update kalau lebih besar dari tersimpan
                     if mxNew and mxNew > 0 then
                         if mxNew > (maxInvTerakhir or 0) then
@@ -773,7 +772,7 @@ task.spawn(function()
                             if _maxInvFile then pcall(function() if writefile then writefile(_maxInvFile, tostring(mxNew)) end end) end
                         end
                     else
-                        -- layer 4: fallback tersimpan
+                        -- fallback tersimpan
                         local mi = tonumber(_G.__ZenxMaxInv)
                         if mi and mi > 0 then maxInvTerakhir = mi end
                     end
