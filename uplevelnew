@@ -1,4 +1,4 @@
--- uplevelnew v8.285 — simplifiy unequipAll debug, task.wait(0) sebelum unequipAll
+-- uplevelnew v8.286 — pcall runSesi1/runSesi2 di main loop agar error terlihat
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.285"
+local VERSION = "v8.286"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3793,8 +3793,15 @@ swEv:Connect(function(nowOn)
             addLog("uplevel.lua "..VERSION.." start!")
             setStatus("Running...",C.accent)
             while not stopRequested do
-                if sesiAktif==1 then runSesi1(); if not stopRequested then sesiAktif=2 end
-                else runSesi2(); if not stopRequested then sesiAktif=1 end end
+                if sesiAktif==1 then
+                    local ok,err = pcall(runSesi1)
+                    if not ok then print("[UPLVL-DBG] runSesi1 ERROR (swEv):", tostring(err)) end
+                    if not stopRequested then sesiAktif=2 end
+                else
+                    local ok,err = pcall(runSesi2)
+                    if not ok then print("[UPLVL-DBG] runSesi2 ERROR (swEv):", tostring(err)) end
+                    if not stopRequested then sesiAktif=1 end
+                end
             end
             running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=SESI1_DEF; _G._UPL_SESI_NUM=1; _G._UPL_SESI_DEF=false; addLog("Loop stop."); setStatus("Stopped")
             setSw(false); if swLbl then swLbl.Text="AUTO LVL — START" end
@@ -3819,8 +3826,15 @@ task.defer(function()
             setStatus("Running...",C.accent)
             while not stopRequested do
                 print("[UPLVL-DBG] loop iter: sesiAktif=", sesiAktif)
-                if sesiAktif==1 then runSesi1(); if not stopRequested then sesiAktif=2 end
-                else runSesi2(); if not stopRequested then sesiAktif=1 end end
+                if sesiAktif==1 then
+                    local ok,err = pcall(runSesi1)
+                    if not ok then print("[UPLVL-DBG] runSesi1 ERROR:", tostring(err)) end
+                    if not stopRequested then sesiAktif=2 end
+                else
+                    local ok,err = pcall(runSesi2)
+                    if not ok then print("[UPLVL-DBG] runSesi2 ERROR:", tostring(err)) end
+                    if not stopRequested then sesiAktif=1 end
+                end
             end
             print("[UPLVL-DBG] loop ENDED: stopRequested=", stopRequested)
             running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=SESI1_DEF; _G._UPL_SESI_NUM=1; _G._UPL_SESI_DEF=false; addLog("Loop stop."); setStatus("Stopped")
