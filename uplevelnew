@@ -1,4 +1,4 @@
--- uplevelnew v8.284 — debug print di dalam unequipAll tiap step
+-- uplevelnew v8.285 — simplifiy unequipAll debug, task.wait(0) sebelum unequipAll
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.284"
+local VERSION = "v8.285"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2782,35 +2782,28 @@ local _geLogged = false      -- gameEvents log cukup sekali
 -- JANGAN loop seluruh container — bisa ratusan pet, bikin rate-limit + equip setelahnya drop
 -- Mirip pickupAll uplevel asli: scan modelByUuid + workspace fresh, retry 3x
 local function unequipAll()
-    print("[UPLVL-DBG] unequipAll START")
-    -- pause healer + swap-loop selama transisi
+    print("[UPLVL-DBG] unequipAll A")
     _isTransisi = true
-    -- clear healer tracker dulu (jangan re-equip selama proses unequip)
     for k in pairs(_activeUuids) do _activeUuids[k]=nil end
-    print("[UPLVL-DBG] unequipAll: modelByUuid count=", (function() local n=0; for _ in pairs(modelByUuid) do n=n+1 end; return n end)())
+    print("[UPLVL-DBG] unequipAll B")
     for tri = 1, 3 do
-        print("[UPLVL-DBG] unequipAll tri=", tri)
-        -- kumpul semua uuid yg ada model di workspace (equipped only)
         local uuids = {}
         for uuid in pairs(modelByUuid) do uuids[uuid] = true end
-        print("[UPLVL-DBG] unequipAll: dari modelByUuid=", (function() local n=0; for _ in pairs(uuids) do n=n+1 end; return n end)())
-        -- scan workspace fresh (tangkap model yang baru spawn / belum ke-register)
         pcall(function()
             for _, d in ipairs(workspace:GetDescendants()) do
                 if d:IsA("Model") and tostring(d.Name):sub(1,1) == "{" then uuids[d.Name] = true end
             end
         end)
-        print("[UPLVL-DBG] unequipAll: total uuids (incl ws scan)=", (function() local n=0; for _ in pairs(uuids) do n=n+1 end; return n end)())
+        print("[UPLVL-DBG] unequipAll tri=", tri)
         local any = false
         for uuid in pairs(uuids) do
             unequipPet(uuid); any = true; task.wait(0.05)
         end
-        print("[UPLVL-DBG] unequipAll: tri=", tri, "any=", any)
-        task.wait(0.5)  -- tunggu server konfirmasi unequip sebelum retry
-        if not any then print("[UPLVL-DBG] unequipAll: no pets, break"); break end
+        task.wait(0.5)
+        if not any then break end
     end
-    task.wait(0.8)  -- jeda tambahan sebelum equip (beri server waktu settle)
-    print("[UPLVL-DBG] unequipAll END")
+    task.wait(0.8)
+    print("[UPLVL-DBG] unequipAll Z")
     -- _isTransisi di-clear oleh equipSesi setelah semua pet ter-equip
 end
 
@@ -3494,6 +3487,7 @@ local function runSesiUtama(sesiNum, def, label, col)
     _activeSesiDef = def; _G._UPL_SESI_DEF = def
     addLog("[DBG] sebelum unequipAll")
     print("[UPLVL-DBG] sebelum unequipAll")
+    task.wait(0)  -- flush console sebelum unequipAll
     unequipAll()
     print("[UPLVL-DBG] unequipAll DONE — sebelum equipSesi")
     addLog("[DBG] sebelum equipSesi")
