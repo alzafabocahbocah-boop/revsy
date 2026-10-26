@@ -1,4 +1,4 @@
--- ZENX MARKET v8.525 — RC direct untuk maxInv + totalPet (tanpa getgc, tanpa UI scan)
+-- ZENX MARKET v8.526 — RC direct untuk maxInv + totalPet + memContainer (ZERO getgc untuk pet data)
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -1840,57 +1840,34 @@ do
         return nil
     end
 
-    -- v8.124: scan getgc untuk find UUID→PetData container (bypass require!)
+    -- v8.526: RC direct — ZERO getgc untuk pet data (ganti getgc scan lama)
     function ZAPS.findMemoryContainer()
-        if not getgc then return nil, 0 end
-        local best, bestCount, bestScore = nil, 0, 0
-        -- v8.248: kumpulin UUID pet kita sendiri (dari backpack) buat verifikasi container yg BENAR
-        local myUuids = {}
+        local result, count = nil, 0
         pcall(function()
-            local plr = Players.LocalPlayer
-            local bp = plr and plr:FindFirstChild("Backpack")
-            if bp then
-                for _, t in ipairs(bp:GetChildren()) do
-                    if t:IsA("Tool") then
-                        local u = t:GetAttribute("PET_UUID")
-                        if u then
-                            local k = tostring(u)
-                            if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
-                            myUuids[k] = true
-                        end
-                    end
+            local RC = require(RS.Modules.ReplicationClass)
+            local inst = RC.new("ActivePetsService_Replicator")
+            local data = inst:GetData(player.Name)
+            if type(data) ~= "table" then return end
+            local tbl = rawget(data, "Table")
+            if type(tbl) ~= "table" then return end
+            local ppd = rawget(tbl, "PlayerPetData")
+            if type(ppd) ~= "table" then return end
+            local pd = rawget(ppd, player.Name)
+            if type(pd) ~= "table" then return end
+            local pi = rawget(pd, "PetInventory")
+            if type(pi) ~= "table" then return end
+            local dat = rawget(pi, "Data")
+            if type(dat) ~= "table" then return end
+            local out = {}
+            for uuid, entry in pairs(dat) do
+                if type(entry) == "table" then
+                    out[tostring(uuid)] = entry
+                    count = count + 1
                 end
             end
+            if next(out) then result = out end
         end)
-        local ok = pcall(function()
-            for _, obj in pairs(getgc(true)) do
-                if type(obj) == "table" then
-                    -- v8.248: hitung entry valid (key string UUID-like + value tabel ber-PetData).
-                    -- Cek banyak entry, bukan cuma 1 sample (lebih robust).
-                    local validEntries = 0
-                    local containsMine = false
-                    local scanned = 0
-                    for k, v in pairs(obj) do
-                        if type(k) == "string" and #k >= 32 and k:find("-")
-                           and type(v) == "table" and rawget(v, "PetData") then
-                            validEntries = validEntries + 1
-                            if myUuids[k] then containsMine = true end
-                        end
-                        scanned = scanned + 1
-                        if scanned > 800 then break end  -- jangan scan tabel kegedean
-                    end
-                    if validEntries >= 3 then
-                        -- v8.248: container yg BERISI pet kita SELALU menang (paling akurat,
-                        -- mirip cek "sample UUID in container: YES"). Kalo gak ketemu, pilih terbesar.
-                        local score = validEntries + (containsMine and 1000000 or 0)
-                        if score > bestScore then
-                            best = obj; bestCount = validEntries; bestScore = score
-                        end
-                    end
-                end
-            end
-        end)
-        return best, bestCount
+        return result, count
     end
 
     -- v8.122: populate persistent cache dari APS (call kalo APS work)
@@ -1975,13 +1952,12 @@ do
 
     getgenv().ZenxAPS = ZAPS
 
-    -- v8.124: GETGC-FIRST INIT — bypass require entirely!
-    -- Game's own scripts udah load APS data ke memory. getgc baca langsung.
+    -- v8.526: RC-FIRST INIT — ZERO getgc, RC direct untuk memContainer
     task.spawn(function()
-        -- Step 1: Scan getgc untuk memory container (FAST + RELIABLE)
+        -- Step 1: RC direct untuk memory container
         ZAPS.memContainer, ZAPS.memContainerCount = ZAPS.findMemoryContainer()
         if ZAPS.memContainer then
-            L("[APS] memContainer FOUND: "..ZAPS.memContainerCount.." entries (bypass require!)")
+            L("[APS] memContainer FOUND: "..ZAPS.memContainerCount.." entries (RC direct, ZERO getgc)")
         else
             L("[APS] memContainer NOT FOUND — fallback ke require")
         end
@@ -2065,24 +2041,14 @@ do
             if BH.refreshPriceCounts then BH.refreshPriceCounts() end
         end)
 
-        -- Periodic memContainer re-scan (catch new pets/keep reference live)
-        -- v8.238: akun baru sering telat load container — scan agresif di awal
+        -- v8.526: Periodic memContainer refresh — RC ringan, tiap 15s
         task.spawn(function()
-            -- 2 menit pertama: scan tiap 5 detik (cepet detect di akun baru)
-            for i = 1, 24 do
-                task.wait(5)
+            while true do
+                task.wait(15)
                 local new, newCnt = ZAPS.findMemoryContainer()
                 if new and newCnt > 0 then
                     ZAPS.memContainer = new; ZAPS.memContainerCount = newCnt
                     if BH.refreshPriceCounts then pcall(BH.refreshPriceCounts) end
-                end
-            end
-            -- setelah itu: scan tiap 60 detik
-            while true do
-                task.wait(60)
-                local new, newCnt = ZAPS.findMemoryContainer()
-                if new and newCnt > 0 then
-                    ZAPS.memContainer = new; ZAPS.memContainerCount = newCnt
                 end
             end
         end)
