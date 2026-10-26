@@ -1,4 +1,4 @@
--- uplevelnew v8.273 — container: RC direct, ZERO getgc — findMemoryContainer pakai RC
+-- uplevelnew v8.274 — debug print lengkap: RC chain, listPetsAll, listPetsEngine, picker refresh
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.273"
+local VERSION = "v8.274"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -683,30 +683,60 @@ local _kgMutableStats = nil   -- tidak dipakai lagi (RC dipakai untuk maxInv), d
 -- Format return sama: {uuid -> {PetData={BaseWeight,Level,...}, PetType="..."}}
 local function findMemoryContainer()
     local result = nil
-    pcall(function()
+    local ok, err = pcall(function()
         local RC = require(RS.Modules.ReplicationClass)
+        if not RC then warn("[UPLVL-DBG] RC nil"); return end
         local inst = RC.new("ActivePetsService_Replicator")
+        if not inst then warn("[UPLVL-DBG] RC inst nil"); return end
         local data = inst:GetData(plr.Name)
-        if type(data) ~= "table" then return end
+        print("[UPLVL-DBG] RC:GetData type=", type(data))
+        if type(data) ~= "table" then warn("[UPLVL-DBG] data bukan table:", type(data)); return end
         local tbl = rawget(data, "Table")
-        if type(tbl) ~= "table" then return end
+        print("[UPLVL-DBG] data.Table type=", type(tbl))
+        if type(tbl) ~= "table" then warn("[UPLVL-DBG] Table bukan table"); return end
         local ppd = rawget(tbl, "PlayerPetData")
-        if type(ppd) ~= "table" then return end
+        print("[UPLVL-DBG] PlayerPetData type=", type(ppd))
+        if type(ppd) ~= "table" then warn("[UPLVL-DBG] PlayerPetData bukan table"); return end
         local pd = rawget(ppd, plr.Name)
-        if type(pd) ~= "table" then return end
+        print("[UPLVL-DBG] pd[plr.Name] type=", type(pd), "| plr.Name=", plr.Name)
+        if type(pd) ~= "table" then warn("[UPLVL-DBG] pd bukan table"); return end
         local pi = rawget(pd, "PetInventory")
-        if type(pi) ~= "table" then return end
+        print("[UPLVL-DBG] PetInventory type=", type(pi))
+        if type(pi) ~= "table" then warn("[UPLVL-DBG] PetInventory bukan table"); return end
         local dat = rawget(pi, "Data")
-        if type(dat) ~= "table" then return end
+        print("[UPLVL-DBG] PetInventory.Data type=", type(dat))
+        if type(dat) ~= "table" then warn("[UPLVL-DBG] Data bukan table"); return end
         -- bangun tabel format sama seperti _kgContainer lama
         local out = {}
+        local count = 0
         for uuid, entry in pairs(dat) do
             if type(entry) == "table" then
                 out[tostring(uuid)] = entry  -- struktur RC sudah {PetData={...}, PetType="..."}
+                count = count + 1
+            end
+        end
+        print("[UPLVL-DBG] RC pet count=", count)
+        if count > 0 then
+            -- print sample 1 pet buat cek struktur
+            local sampleUUID, sampleEntry = next(out)
+            print("[UPLVL-DBG] sample uuid=", sampleUUID)
+            print("[UPLVL-DBG] sample entry keys:", sampleEntry and table.concat((function()
+                local k={}; for kk in pairs(sampleEntry) do k[#k+1]=kk end; return k
+            end)(), ", ") or "nil")
+            if sampleEntry and sampleEntry.PetData then
+                print("[UPLVL-DBG] sample PetType=", sampleEntry.PetType)
+                print("[UPLVL-DBG] sample PetData.BaseWeight=", sampleEntry.PetData.BaseWeight)
+                print("[UPLVL-DBG] sample PetData.Level=", sampleEntry.PetData.Level)
             end
         end
         if next(out) then result = out end
     end)
+    if not ok then warn("[UPLVL-DBG] findMemoryContainer ERROR:", err) end
+    if result then
+        print("[UPLVL-DBG] findMemoryContainer SUCCESS, pets=", (function() local n=0; for _ in pairs(result) do n=n+1 end; return n end)())
+    else
+        warn("[UPLVL-DBG] findMemoryContainer RETURN NIL")
+    end
     return result
 end
 local function ambilContainer()
@@ -738,8 +768,20 @@ end
 -- listPetsEngine: dari backpack (PET_UUID attr, tipe dari attr atau Name strip, age dari container)
 -- PENTING: tidak boleh hanya andalkan attr "f" — banyak Tool yang tidak punya attr itu
 local function listPetsEngine()
-    local bp=plr:FindFirstChild("Backpack"); if not bp then return {} end
+    local bp=plr:FindFirstChild("Backpack")
+    if not bp then warn("[UPLVL-DBG] listPetsEngine: Backpack NOT FOUND"); return {} end
+    local toolCount=0; local toolWithUUID=0
     local out={}
+    for _,t in ipairs(bp:GetChildren()) do
+        if t:IsA("Tool") then
+            toolCount=toolCount+1
+            local rawUUID=t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+            if rawUUID then
+                toolWithUUID=toolWithUUID+1
+            end
+        end
+    end
+    print("[UPLVL-DBG] listPetsEngine: Backpack Tools=", toolCount, "dengan UUID=", toolWithUUID)
     for _,t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
             local rawUUID=t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
@@ -774,8 +816,17 @@ end
 -- Container punya PetType field — ini yg dipakai uplevel asli utk picker
 local function listPetsAll()
     local c=_kgContainer
-    if not c then return listPetsEngine() end
+    print("[UPLVL-DBG] listPetsAll: _kgContainer=", c and "ADA" or "NIL")
+    if not c then
+        print("[UPLVL-DBG] listPetsAll: fallback ke listPetsEngine")
+        local eng=listPetsEngine()
+        print("[UPLVL-DBG] listPetsEngine return", #eng, "pets")
+        return eng
+    end
+    local cCount=0; for _ in pairs(c) do cCount=cCount+1 end
+    print("[UPLVL-DBG] listPetsAll: container punya", cCount, "entries")
     local out={}
+    local skipCount=0
     for uuid,e in pairs(c) do
         if type(e)=="table" and (e.PetType or (e.PetData and e.PetData.PetType)) then
             local rawTipe=tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
@@ -785,9 +836,22 @@ local function listPetsAll()
             local lv=tonumber(pd.Level) or 0
             local kg=bw*(lv+10)/10  -- kg current (sama dgn uplevel asli)
             out[#out+1]={uuid=fmtUUID(uuid), tipe=tipe, age=lv, kg=kg, fullName=rawTipe}
+        else
+            skipCount=skipCount+1
+            if skipCount<=3 then
+                warn("[UPLVL-DBG] skip entry uuid=", uuid, "type=", type(e),
+                    "PetType=", type(e)=="table" and tostring(e.PetType) or "N/A",
+                    "PetData=", type(e)=="table" and type(e.PetData) or "N/A")
+            end
         end
     end
-    if #out==0 then return listPetsEngine() end
+    print("[UPLVL-DBG] listPetsAll: out=", #out, "skip=", skipCount)
+    if #out==0 then
+        print("[UPLVL-DBG] listPetsAll: out kosong, fallback ke Engine")
+        local eng=listPetsEngine()
+        print("[UPLVL-DBG] listPetsEngine return", #eng, "pets")
+        return eng
+    end
     return out
 end
 
@@ -963,9 +1027,11 @@ local function openPetPicker(sesiNum, nama, idx, onPicked)
             if c~=clrEntry and (c:IsA("TextButton") or c:IsA("TextLabel")) then c:Destroy() end
         end
         -- update status container
-        ctainerLbl.Text=_kgContainer and "● data OK" or "● data belum ready (tunggu getgc)"
+        ctainerLbl.Text=_kgContainer and "● data OK" or "● loading data RC..."
         ctainerLbl.TextColor3=_kgContainer and C.accent or Color3.fromRGB(220,160,60)
+        print("[UPLVL-DBG] picker refresh: nama=", nama, "filter=", filter, "_kgContainer=", _kgContainer and "ADA" or "NIL")
         local pets=listPetsBackpack(nama)
+        print("[UPLVL-DBG] picker listPetsBackpack(", nama, ") return", #pets, "pets")
         filter=(filter or ""):lower()
         local shown=0
         for _,p in ipairs(pets) do
@@ -995,9 +1061,10 @@ local function openPetPicker(sesiNum, nama, idx, onPicked)
             for _,p in ipairs(allPets) do
                 if not seen[p.tipe] then seen[p.tipe]=true; tipeFound[#tipeFound+1]=p.tipe end
             end
+            warn("[UPLVL-DBG] picker shown=0 | allPets=", #allPets, "| tipe ditemukan:", table.concat(tipeFound,", "))
             local dbgStr
             if not _kgContainer then
-                dbgStr="getgc belum ready — klik Refresh\n(tunggu ~5 detik lalu coba lagi)"
+                dbgStr="RC belum ready — klik Refresh\n(tunggu ~5 detik lalu coba lagi)"
             elseif #allPets==0 then
                 dbgStr="Container kosong / backpack kosong\nPastikan ada pet di backpack"
             else
@@ -1010,12 +1077,12 @@ local function openPetPicker(sesiNum, nama, idx, onPicked)
         end
         -- tombol refresh
         local refBtn=mk("TextButton",{Size=UDim2.new(1,-4,0,30),BackgroundColor3=C.card,
-            Text="🔄  Refresh (getgc ulang)",Font=FONT_B,TextSize=11,TextColor3=C.textDim,
+            Text="🔄  Refresh data",Font=FONT_B,TextSize=11,TextColor3=C.textDim,
             AutoButtonColor=true,ZIndex=302,Parent=plist}); corner(refBtn,7)
         refBtn.MouseButton1Click:Connect(function()
             refBtn.Text="loading..."; refBtn.TextColor3=C.accent
             task.spawn(function()
-                pcall(function() _kgContainer=findMemoryContainer() end)
+                pcall(ambilContainer)  -- FIX: pakai ambilContainer bukan findMemoryContainer langsung
                 task.wait(0.5)
                 refresh(psrch.Text)
             end)
