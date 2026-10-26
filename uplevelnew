@@ -1,4 +1,4 @@
--- uplevelnew v8.286 — pcall runSesi1/runSesi2 di main loop agar error terlihat
+-- uplevelnew v8.287 — fix scope bug: unequipAll/unequipAllExceptBahan/equipSesi forward-declare di luar do-block
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.286"
+local VERSION = "v8.287"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2694,6 +2694,11 @@ local _mimicSlotByUuid = {}
 local farmCenter
 local _clusterPos = nil  -- cache posisi kebun, di-refresh tiap awal sesi
 
+-- forward-declare fungsi-fungsi di dalam do-block AUTO TENGAH agar visible di runSesiUtama, runSesi2, dll
+local unequipAll
+local unequipAllExceptBahan
+local equipSesi
+
 -- ===================== AUTO TENGAH =====================
 do
 -- Peacock, Ghostly Spider, Baku → di-hold ke tengah kebun
@@ -2781,7 +2786,7 @@ local _geLogged = false      -- gameEvents log cukup sekali
 -- unequipAll: hanya unequip pet yg SEDANG di-equip (ada model di workspace)
 -- JANGAN loop seluruh container — bisa ratusan pet, bikin rate-limit + equip setelahnya drop
 -- Mirip pickupAll uplevel asli: scan modelByUuid + workspace fresh, retry 3x
-local function unequipAll()
+unequipAll = function()
     print("[UPLVL-DBG] unequipAll A")
     _isTransisi = true
     for k in pairs(_activeUuids) do _activeUuids[k]=nil end
@@ -2807,7 +2812,7 @@ local function unequipAll()
     -- _isTransisi di-clear oleh equipSesi setelah semua pet ter-equip
 end
 
-local function unequipAllExceptBahan()
+unequipAllExceptBahan = function()
     -- Sama seperti unequipAll tapi skip Bahan yang sedang aktif
     for k in pairs(_activeUuids) do _activeUuids[k]=nil end
     for tri = 1, 3 do
@@ -2834,7 +2839,7 @@ end
 
 -- equipSesi: equip pet sesuai defs
 -- Prioritas: slot manual dari sesiPool → auto dari container by tipe → fallback backpack
-local function equipSesi(sesiNum, defs)
+equipSesi = function(sesiNum, defs)
     print("[UPLVL-DBG] equipSesi ENTER: sesiNum=", sesiNum, "defs=", defs and #defs or "NIL")
     -- clear active uuid tracker + mimic slot tracker
     for k in pairs(_activeUuids) do _activeUuids[k]=nil end
