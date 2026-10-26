@@ -1,4 +1,4 @@
--- ZENX MARKET v8.527 — RC direct untuk maxInv + totalPet + memContainer, reuse instance (ZERO getgc)
+-- ZENX MARKET v8.528 — ZERO getgc total: memContainer + getMaxPetsZenx semua RC direct
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -13667,37 +13667,32 @@ L("  - Inventory capacity")
 end)()
 
 
--- v8.429: ambil MaxPetsInInventory pake MODE (paling sering) — dulu ambil TERBESAR (salah:
--- ke-ambil default game 210/275). Sama kayak up6kg v10.64 / uplevel v0.25. Filter PlayerData asli + >= pet.
+-- v8.528: getMaxPetsZenx — RC direct (ganti getgc), reuse _rcInst dari boot
 local _zenxMaxPetsCache, _zenxMaxPetsTime = nil, 0
 local function getMaxPetsZenx()
     if _zenxMaxPetsCache and (tick() - _zenxMaxPetsTime) < 5 then return _zenxMaxPetsCache end
-    local best, bestN = nil, 0
-    local floor = (tonumber(_G.__ZenxMarketTotalPet) or 0) - 5
-    if getgc then
-        local tally = {}
-        pcall(function()
-            for _, obj in ipairs(getgc(true)) do
-                if type(obj) == "table" then
-                    local mp = rawget(obj, "MaxPetsInInventory")
-                    if type(mp) == "number" and mp > 0
-                        and rawget(obj, "MaxEggsInFarm") ~= nil
-                        and rawget(obj, "MaxEquippedPets") ~= nil
-                        and mp >= floor then
-                        tally[mp] = (tally[mp] or 0) + 1
-                    end
-                end
-            end
-        end)
-        for v, n in pairs(tally) do
-            if n > bestN or (n == bestN and (not best or v < best)) then best = v; bestN = n end
-        end
-    end
-    -- fallback: atribut player kalau memory gak ketemu
+    local best = nil
+    -- 1) RC direct (MutableStats.MaxPetsInInventory) — ZERO getgc
+    pcall(function()
+        if not _rcInst then return end
+        local data = _rcInst:GetData(player.Name)
+        if type(data) ~= "table" then return end
+        local tbl = rawget(data, "Table")
+        if type(tbl) ~= "table" then return end
+        local ppd = rawget(tbl, "PlayerPetData")
+        if type(ppd) ~= "table" then return end
+        local pd = rawget(ppd, player.Name)
+        if type(pd) ~= "table" then return end
+        local ms = rawget(pd, "MutableStats")
+        if type(ms) ~= "table" then return end
+        local mp = rawget(ms, "MaxPetsInInventory")
+        if type(mp) == "number" and mp >= 10 and mp <= 2000 then best = mp end
+    end)
+    -- 2) fallback: atribut player
     if not best then
         for _, attr in ipairs({"MaxPetsInInventory", "MaxPets", "MaxInventory"}) do
             local v = player:GetAttribute(attr)
-            if v and tonumber(v) and tonumber(v) > 0 then best = tonumber(v) break end
+            if v and tonumber(v) and tonumber(v) > 0 then best = tonumber(v); break end
         end
     end
     _zenxMaxPetsCache = best; _zenxMaxPetsTime = tick()
