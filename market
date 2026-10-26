@@ -1,4 +1,4 @@
--- ZENX MARKET v8.534 — snipe optimized: delta cache + early filter + parallel buy queue
+-- ZENX MARKET v8.535 — snipe optimized: delta cache + early filter + parallel buy queue
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
@@ -180,6 +180,108 @@ do
     end
 end
 
+-- v8.535: FarmCleaner dipindah ke AWAL (setelah denyut) supaya pasti jalan
+-- meski executor kepotong di tengah file (file 773KB, bisa kena limit executor)
+if not _G.__ZenxFarmCleaner then
+    _G.__ZenxFarmCleaner = true
+    task.spawn(function()
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        local VISUAL_CLASS = {
+            Part=true, BasePart=true, MeshPart=true, UnionOperation=true,
+            SpecialMesh=true, CylinderMesh=true, ParticleEmitter=true,
+            Highlight=true, Sound=true, Decal=true, Texture=true,
+            PointLight=true, SpotLight=true, SurfaceGui=true, BillboardGui=true,
+            Script=true, LocalScript=true, ProximityPrompt=true, Attachment=true,
+        }
+        -- Booth cleaner: destroy DynamicInstances + dekorasi, keep Base/Pads/Sign buat claim
+        local function cleanBooth(booth)
+            pcall(function()
+                local di = booth:FindFirstChild("DynamicInstances")
+                if di then di:Destroy() end
+                local def = booth:FindFirstChild("Default")
+                if def then
+                    local model = def:FindFirstChild("Model")
+                    if model then model:Destroy() end
+                    local boothM = def:FindFirstChild("Booth")
+                    if boothM then
+                        local stand = boothM:FindFirstChild("Stand")
+                        if stand then stand:Destroy() end
+                    end
+                end
+            end)
+        end
+        task.spawn(function()
+            task.wait(2)
+            pcall(function()
+                local tw = workspace:FindFirstChild("TradeWorld")
+                local booths = tw and tw:FindFirstChild("Booths")
+                if not booths then return end
+                for _, booth in ipairs(booths:GetChildren()) do cleanBooth(booth) end
+                booths.ChildAdded:Connect(function(booth)
+                    task.wait(0.5)
+                    cleanBooth(booth)
+                end)
+                print("[FarmCleaner] booth clean selesai")
+            end)
+        end)
+        task.wait(3)
+        pcall(function()
+            for _, nm in ipairs({"PermPortalPlatform","GardenCoinShop","PetAgeMachine"}) do
+                local obj = workspace:FindFirstChild(nm)
+                if obj then for _, v in ipairs(obj:GetDescendants()) do if VISUAL_CLASS[v.ClassName] then pcall(function() v:Destroy() end) end end end
+            end
+            local inter = workspace:FindFirstChild("Interaction")
+            if inter then for _, v in ipairs(inter:GetDescendants()) do if VISUAL_CLASS[v.ClassName] then pcall(function() v:Destroy() end) end end end
+            -- TradeWorld dekorasi berat
+            local tw = workspace:FindFirstChild("TradeWorld")
+            if tw then
+                for _, nm in ipairs({"PortalPetePlatform","Ring"}) do
+                    local obj = tw:FindFirstChild(nm)
+                    if obj then pcall(function() obj:Destroy() end) end
+                end
+                for _, v in ipairs(tw:GetChildren()) do
+                    if v.ClassName == "Model" and v.Name ~= "You" then
+                        pcall(function() v:Destroy() end)
+                    end
+                end
+            end
+            print("[FarmCleaner] world clean selesai")
+        end)
+        while _G.__ZenxFarmCleaner do
+            task.wait(5)
+            if not _G.__ZenxFarmCleaner then break end
+            pcall(function()
+                local farm = workspace:FindFirstChild("Farm")
+                if not farm then return end
+                local mySubfarm
+                for _, sf in ipairs(farm:GetChildren()) do
+                    pcall(function()
+                        local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                        if sign and sign:GetAttribute("_owner") == plrName then mySubfarm = sf end
+                    end)
+                end
+                if not mySubfarm then return end
+                local imp = mySubfarm:FindFirstChild("Important")
+                local pp = imp and imp:FindFirstChild("Plants_Physical")
+                if not pp then return end
+                for _, tree in ipairs(pp:GetChildren()) do
+                    for _, ch in ipairs(tree:GetChildren()) do
+                        if VISUAL_CLASS[ch.ClassName] then pcall(function() ch:Destroy() end) end
+                    end
+                    local fruits = tree:FindFirstChild("Fruits")
+                    if fruits then
+                        for _, buah in ipairs(fruits:GetChildren()) do
+                            for _, ch in ipairs(buah:GetChildren()) do
+                                if VISUAL_CLASS[ch.ClassName] then pcall(function() ch:Destroy() end) end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+end
+
 -- v8.373: STARTUP TOUCH (port dari up6kg/uplevel v1.08) -- keyboard(Space) + TOUCH TAP layar
 -- (cloud phone) + mouse klik CUMA pas LOADING (belum ada karakter) buat dismiss "click/tap to
 -- continue". Market TELEPORT (garden<->TradeWorld) -> tiap exec jalan -> lewatin loading masuk
@@ -351,7 +453,7 @@ do
     end
 end
 
-local VERSION_DATE = "v8.533: booth cleaner + TradeWorld dekorasi clean (FPS boost) | v8.532: booth cleaner auto-on (destroy DynamicInstances+Stand, keep Base/Pads/Sign) | v8.520: fix fetchSnipe req→_req (upvalue nil di scope ini, sama kayak fetchRule v8.512) + debug log tiap kondisi gagal | v8.519: debug print tiap loop — tok/pet/bacaTotalPet raw + trigger kirim | v8.518: bacaTotalPet() ringan barengan bacaTokens di loop 20s — gak nunggu thread 60s lagi | v8.517: tambah warn di kirim() kalau POST gagal — biar ketauan di console SC kenapa panel 0 | v8.516: hitung totalPet sekali di boot sebelum loop kirim (fix panel 0 pet sampai 60s) | v8.515: hapus loop laporHargaPasar tiap 15s | v8.514: skin booth ke atas di manual snipe list (sort isSkin first) | v8.513: fix snipe gak ke-apply — merge logic baca r.type padahal panel+lokal pakai r.petType | v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
+local VERSION_DATE = "v8.535: FarmCleaner dipindah ke awal file (fix gak jalan — executor kepotong file 773KB) | v8.534: kill switch X stop semua auto loop | v8.533: booth cleaner + TradeWorld dekorasi clean (FPS boost) | v8.532: booth cleaner auto-on (destroy DynamicInstances+Stand, keep Base/Pads/Sign) | v8.520: fix fetchSnipe req→_req (upvalue nil di scope ini, sama kayak fetchRule v8.512) + debug log tiap kondisi gagal | v8.519: debug print tiap loop — tok/pet/bacaTotalPet raw + trigger kirim | v8.518: bacaTotalPet() ringan barengan bacaTokens di loop 20s — gak nunggu thread 60s lagi | v8.517: tambah warn di kirim() kalau POST gagal — biar ketauan di console SC kenapa panel 0 | v8.516: hitung totalPet sekali di boot sebelum loop kirim (fix panel 0 pet sampai 60s) | v8.515: hapus loop laporHargaPasar tiap 15s | v8.514: skin booth ke atas di manual snipe list (sort isSkin first) | v8.513: fix snipe gak ke-apply — merge logic baca r.type padahal panel+lokal pakai r.petType | v8.512: fix PANEL_URL nil di fetchRuleFromPanel — define ulang URL+KUNCI di dalam fungsi karena beda scope | v8.511: warn tiap step fetchRule gagal (HTTP/body/JSON/ver/apply) + print skip/apply | v8.510: fix rule+snipe gak ke-apply setelah rejoin — clear rulesVer+snipeVer setelah loadState, paksa fetch fresh tiap boot | v8.509: fix rule tab gak update — loop break cek return value fetchRule (bukan pcall ok), retry tiap 30s sampai dapat rule | v8.508: INFO tab label permanen tim aktif"
 
 warn("============================================")
 warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
@@ -1141,7 +1243,7 @@ do
             xBtn.MouseButton1Click:Connect(function() ov.Visible=false end)
             return ov, box
         end
-        local ovInfoMkt, boxInfoMkt = mkModalMkt("INFO  ·  market v8.533", Color3.fromRGB(251,191,36))
+        local ovInfoMkt, boxInfoMkt = mkModalMkt("INFO  ·  market v8.535", Color3.fromRGB(251,191,36))
         btnInfoMkt.MouseButton1Click:Connect(function() ovInfoMkt.Visible=not ovInfoMkt.Visible end)
 
         -- ── STAT BAR dalam modal: 4 col (total pet / token / snipe / leveling) ──
@@ -15579,105 +15681,4 @@ task.spawn(function()
     end
 end)
 
--- Farm Cleaner always-on — hapus visual Part/Script/ProximityPrompt di kebun sendiri
--- + hapus Part visual di Halloween event models dan bangunan berat lainnya
-if not _G.__ZenxFarmCleaner then
-    _G.__ZenxFarmCleaner = true
-    task.spawn(function()
-        local plrName = game:GetService("Players").LocalPlayer.Name
-        local VISUAL_CLASS = {
-            Part=true, BasePart=true, MeshPart=true, UnionOperation=true,
-            SpecialMesh=true, CylinderMesh=true, ParticleEmitter=true,
-            Highlight=true, Sound=true, Decal=true, Texture=true,
-            PointLight=true, SpotLight=true, SurfaceGui=true, BillboardGui=true,
-            Script=true, LocalScript=true, ProximityPrompt=true, Attachment=true,
-        }
-        -- Booth cleaner: destroy DynamicInstances + dekorasi, keep Base/Pads/Sign buat claim
-        local function cleanBooth(booth)
-            pcall(function()
-                local di = booth:FindFirstChild("DynamicInstances")
-                if di then di:Destroy() end
-                local def = booth:FindFirstChild("Default")
-                if def then
-                    local model = def:FindFirstChild("Model")
-                    if model then model:Destroy() end
-                    local boothM = def:FindFirstChild("Booth")
-                    if boothM then
-                        local stand = boothM:FindFirstChild("Stand")
-                        if stand then stand:Destroy() end
-                    end
-                end
-            end)
-        end
-        task.spawn(function()
-            task.wait(2)
-            pcall(function()
-                local tw = workspace:FindFirstChild("TradeWorld")
-                local booths = tw and tw:FindFirstChild("Booths")
-                if not booths then return end
-                for _, booth in ipairs(booths:GetChildren()) do cleanBooth(booth) end
-                booths.ChildAdded:Connect(function(booth)
-                    task.wait(0.5)
-                    cleanBooth(booth)
-                end)
-                print("[FarmCleaner] booth clean selesai")
-            end)
-        end)
-        task.wait(3)
-        pcall(function()
-            for _, nm in ipairs({"PermPortalPlatform","GardenCoinShop","PetAgeMachine"}) do
-                local obj = workspace:FindFirstChild(nm)
-                if obj then for _, v in ipairs(obj:GetDescendants()) do if VISUAL_CLASS[v.ClassName] then pcall(function() v:Destroy() end) end end end
-            end
-            local inter = workspace:FindFirstChild("Interaction")
-            if inter then for _, v in ipairs(inter:GetDescendants()) do if VISUAL_CLASS[v.ClassName] then pcall(function() v:Destroy() end) end end end
-            -- TradeWorld dekorasi berat
-            local tw = workspace:FindFirstChild("TradeWorld")
-            if tw then
-                for _, nm in ipairs({"PortalPetePlatform","Ring"}) do
-                    local obj = tw:FindFirstChild(nm)
-                    if obj then pcall(function() obj:Destroy() end) end
-                end
-                -- destroy semua Model langsung di TradeWorld (dekorasi, bukan Booths)
-                for _, v in ipairs(tw:GetChildren()) do
-                    if v.ClassName == "Model" and v.Name ~= "You" then
-                        pcall(function() v:Destroy() end)
-                    end
-                end
-            end
-            print("[FarmCleaner] world clean selesai")
-        end)
-        while _G.__ZenxFarmCleaner do
-            task.wait(5)
-            if not _G.__ZenxFarmCleaner then break end
-            pcall(function()
-                local farm = workspace:FindFirstChild("Farm")
-                if not farm then return end
-                local mySubfarm
-                for _, sf in ipairs(farm:GetChildren()) do
-                    pcall(function()
-                        local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
-                        if sign and sign:GetAttribute("_owner") == plrName then mySubfarm = sf end
-                    end)
-                end
-                if not mySubfarm then return end
-                local imp = mySubfarm:FindFirstChild("Important")
-                local pp = imp and imp:FindFirstChild("Plants_Physical")
-                if not pp then return end
-                for _, tree in ipairs(pp:GetChildren()) do
-                    for _, ch in ipairs(tree:GetChildren()) do
-                        if VISUAL_CLASS[ch.ClassName] then pcall(function() ch:Destroy() end) end
-                    end
-                    local fruits = tree:FindFirstChild("Fruits")
-                    if fruits then
-                        for _, buah in ipairs(fruits:GetChildren()) do
-                            for _, ch in ipairs(buah:GetChildren()) do
-                                if VISUAL_CLASS[ch.ClassName] then pcall(function() ch:Destroy() end) end
-                            end
-                        end
-                    end
-                end
-            end)
-        end
-    end)
-end
+-- (FarmCleaner dipindah ke awal file v8.535 — lihat baris ~182)
