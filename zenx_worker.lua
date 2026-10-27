@@ -10138,8 +10138,11 @@ if PERINTAH == "delta" then
     local versiDelta = rel:match('"name":%s*"delta%.%d+_([%d%.]+)_clone%.apk"') or "2.743.1059"
     print("versi delta: " .. versiDelta)
     for _, n in ipairs(nums) do
-        -- match: delta + nomor + versi, apapun formatnya
-        local url = rel:match('"(https://[^"]*[Dd]elta[^"]*' .. n .. '[^"]*%.apk)"')
+        -- match: delta + separator + nomor langsung (titik/spasi/underscore) + apapun + .apk
+        local url = rel:match('"(https://[^"]*[Dd]elta[%.%s_]' .. n .. '[%.%s_][^"]*%.apk)"')
+        if not url then
+            url = rel:match('"(https://[^"]*[Dd]elta[%.%s_]0*' .. n .. '[^%d][^"]*%.apk)"')
+        end
         if not url then
             print("[delta " .. n .. "] URL gak ketemu di rilis JSON (skip). Cek manual nama file 'delta." .. n .. "_..._clone.apk' di rilis worker_64.")
         else
