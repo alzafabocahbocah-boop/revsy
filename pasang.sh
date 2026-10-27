@@ -261,6 +261,27 @@ case "$PRESET" in
             warn "Loader Arceus GAGAL ketulis (cek akses su / folder Arceus X ada)."
             info "Manual:  su -c 'echo ... > \"$AX_LOADER\"'"
         fi
+
+        # tulis juga ke Delta/Workspace (auto-execute Delta)
+        printf "\n${B}[+] Tulis loader Delta (Workspace)${N}\n"
+        DL_DIR="/sdcard/Delta/Workspace"
+        DL_LOADER="$DL_DIR/zenx.lua"
+        DL_EXTRA="$DL_DIR/zenx_extra.lua"
+        su -c "mkdir -p \"$DL_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$DL_LOADER\"" 2>/dev/null
+        if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
+            su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$DL_EXTRA\"" 2>/dev/null
+        else
+            su -c "rm -f \"$DL_EXTRA\"" 2>/dev/null
+        fi
+        DL_CEK=$(su -c "cat \"$DL_LOADER\" 2>/dev/null" 2>/dev/null)
+        if printf '%s' "$DL_CEK" | grep -q "HttpGet"; then
+            ok "Loader Delta ketulis: $DL_LOADER ($SC_LABEL)"
+            if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
+                ok "Extra script Delta: $DL_EXTRA"
+            fi
+        else
+            warn "Loader Delta GAGAL ketulis (cek akses su / folder Delta/Workspace ada)."
+        fi
         ;;
 esac
 
