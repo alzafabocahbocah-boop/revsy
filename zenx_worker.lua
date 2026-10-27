@@ -10124,6 +10124,49 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
     return
 end
 
+if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "delta" then
+    local rentang = arg[3] or ""
+    local nums = {}
+    local lo, hi = rentang:match("^(%d+)%s*%-%s*(%d+)$")
+    if lo then for i = tonumber(lo), tonumber(hi) do nums[#nums + 1] = i end
+    else for n in rentang:gmatch("%d+") do nums[#nums + 1] = tonumber(n) end end
+    if #nums == 0 then print("Pakai: zenx download delta 1-4   (atau: zenx download delta 1 3 5)"); return end
+    print("== DOWNLOAD DELTA: no " .. rentang .. " ==")
+    print("ambil daftar rilis GitHub...")
+    local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
+    -- cek versi delta terbaru dari releases (ambil angka versi dari nama file delta)
+    local versiDelta = rel:match('"name":%s*"delta%s+%d+_([%d%.]+)%.apk"') or "2.743.1059"
+    print("versi delta: " .. versiDelta)
+    for _, n in ipairs(nums) do
+        -- pola: "delta 1_2.743.1059.apk" atau "delta 2 _2.743.1059.apk"
+        -- match fleksibel: ada/tidaknya spasi sebelum _
+        local url = rel:match('"(https://[^"]*delta%s+' .. n .. '%s*_[^"]*%.apk)"')
+        if not url then
+            -- fallback: match exact filename dari releases
+            url = rel:match('"(https://[^"]*[Dd]elta%s+' .. n .. '[^"]*%.apk)"')
+        end
+        if not url then
+            print("[delta " .. n .. "] URL gak ketemu di rilis JSON (skip). Cek manual nama file 'delta " .. n .. "_...' di rilis worker_64.")
+        else
+            local namaApk = "/sdcard/delta" .. n .. ".apk"
+            print("[delta " .. n .. "] download...")
+            os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 '" .. url .. "' -o '" .. namaApk .. "' 2>/dev/null")
+            local szRaw = sh("su -c 'stat -c%s \"" .. namaApk .. "\" 2>/dev/null' 2>/dev/null") or "0"
+            local sz = tonumber((szRaw:gsub("%s", ""))) or 0
+            if sz < 1000000 then
+                print("[delta " .. n .. "] download GAGAL/partial (" .. sz .. " byte) -> SKIP")
+            else
+                print("[delta " .. n .. "] " .. math.floor(sz/1048576) .. "MB, install...")
+                local r = sh("su -c 'cat \"" .. namaApk .. "\" | pm install -r -S " .. sz .. "' 2>&1") or ""
+                print("[delta " .. n .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
+            end
+            sh("rm -f '" .. namaApk .. "' 2>/dev/null")
+        end
+    end
+    print("== SELESAI download delta ==")
+    return
+end
+
 if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then
     print("== UPDATE ARCEUS (yg udah ada doang) ==")
     local cntRaw = sh("su -c 'pm list packages 2>/dev/null' 2>/dev/null | grep -c 'com.roblox.clien'") or "0"
