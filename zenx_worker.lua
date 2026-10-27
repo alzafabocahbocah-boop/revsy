@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.561 — paksa matiin enable_freeform_support di semua titik (setup + denyut loop)
+-- zenx_worker v9.563 — blokir freeform stack: semua Roblox dipindah ke fullscreen otomatis tiap 10s
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.562"
+local VERSION = "9.563"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5104,12 +5104,64 @@ local function run(cfg)
     pcall(function() sync_autoexec_clones(cfg) end)  -- v9.546: isi autoexec clone yang kosong
 
     TMB.readerStart()   -- v9.489: mulai baca URL tembak dari terminal
+
+    -- v9.562: blokir freeform stack — timestamp cek terakhir
+    local FREEFORM_CEK_TS = 0
+
     while true do
         if ada_stop() then
             bersih(cfg, "diminta stop")
             return
         end
         TMB.cek(cfg)   -- v9.489: cek ada paste URL PS -> menu tembak client
+
+        -- v9.562: tiap 10 detik cek kalau ada Roblox yang nyasar ke freeform stack -> pindah ke fullscreen
+        if os.time() - FREEFORM_CEK_TS >= 10 then
+            FREEFORM_CEK_TS = os.time()
+            pcall(function()
+                local pkgs = split(cfg.pkgs or "")
+                if #pkgs == 0 then return end
+                local raw = sh("su -c 'am stack list 2>/dev/null'") or ""
+                if raw == "" then return end
+                -- parse stack: id -> windowingMode, task -> stackId
+                local stacks, taskStack, taskPkg = {}, {}, {}
+                local curStack = nil
+                for baris in raw:gmatch("[^\r\n]+") do
+                    local sid = baris:match("^Stack id=(%d+)")
+                    if sid then curStack = tonumber(sid); stacks[curStack] = "fullscreen" end
+                    if curStack and baris:find("mWindowingMode=") then
+                        local wm = baris:match("mWindowingMode=(%a+)")
+                        if wm and wm ~= "undefined" then stacks[curStack] = wm end
+                    end
+                    local tid, pkg_full = baris:match("taskId=(%d+):%s*(com%.roblox%.[a-z]+)/")
+                    if tid and pkg_full and curStack then
+                        taskStack[tonumber(tid)] = curStack
+                        taskPkg[tonumber(tid)] = pkg_full
+                    end
+                end
+                -- cari stack fullscreen (bukan 0=home, bukan 6=recents)
+                local stackFS = nil
+                for sid, wm in pairs(stacks) do
+                    if wm == "fullscreen" and sid ~= 0 and sid ~= 6 then
+                        if not stackFS or sid < stackFS then stackFS = sid end
+                    end
+                end
+                if not stackFS then return end
+                -- pindah semua Roblox yang di freeform stack
+                local cmds = {}
+                for tid, p in pairs(taskPkg) do
+                    local inPkgs = false
+                    for _, pkg in ipairs(pkgs) do if pkg == p then inPkgs = true; break end end
+                    if inPkgs and stacks[taskStack[tid]] == "freeform" then
+                        cmds[#cmds+1] = string.format("am stack move-task %d %d true", tid, stackFS)
+                        warn("[full] " .. p:gsub("com%.roblox%.","") .. " nyasar ke freeform stack -> dipindah ke fullscreen")
+                    end
+                end
+                if #cmds > 0 then
+                    sh_silent("su -c '" .. table.concat(cmds, "; ") .. "'")
+                end
+            end)
+        end
 
         if cfg.auto_delta and os.time() - DELTA_CEK_TS >= 600 then
             DELTA_CEK_TS = os.time()
