@@ -1,4 +1,4 @@
--- uplevelnew v8.290 — tombol X kill semua loop (FarmCleaner, Denyut)
+-- uplevelnew v8.291 — tambah auto ascend (BuyRebirth tiap 2 menit, skip kalau pet > 200)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -5550,3 +5550,31 @@ do
     end)
 
 end
+
+-- ============================================================
+-- AUTO ASCEND — fire GameEvents.BuyRebirth tiap 2 menit.
+-- SKIP kalau inventory pet > 200 (biar gak ascend pas pet lagi banyak).
+-- Server enforce cooldown 4j + cek sheckles otomatis.
+-- ============================================================
+task.spawn(function()
+    local RS = game:GetService("ReplicatedStorage")
+    while true do
+        task.wait(120)
+        pcall(function()
+            -- cek total pet dari ZenxKgStat kalau ada, fallback cek inventory langsung
+            local total = 0
+            local kgSt = _G.ZenxKgStat
+            if kgSt and kgSt.totalAll then
+                total = tonumber(kgSt.totalAll) or 0
+            else
+                local plr = game:GetService("Players").LocalPlayer
+                local inv = plr:FindFirstChild("Inventory") or plr:FindFirstChild("Pets")
+                if inv then total = #inv:GetChildren() end
+            end
+            if total > 200 then return end   -- inventory banyak -> skip ascend
+            local ge = RS:FindFirstChild("GameEvents")
+            local re = ge and ge:FindFirstChild("BuyRebirth")
+            if re then re:FireServer() end
+        end)
+    end
+end)
