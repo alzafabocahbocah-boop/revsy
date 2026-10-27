@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/sh
 # ============================================================
-# ZENX PASANG  v1.0  --  pintu masuk tunggal buat RF baru
+# ZENX PASANG  v1.2  --  tulis loader ke Arceus Autoexec + Delta Autoexecute
 #
 # Dipakai:
 #   curl -sL <REPO>/pasang.sh | sh -s seed
