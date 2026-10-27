@@ -10124,13 +10124,13 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
     return
 end
 
-if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "delta" then
-    local rentang = arg[3] or ""
+if PERINTAH == "delta" then
+    local rentang = arg[2] or ""
     local nums = {}
     local lo, hi = rentang:match("^(%d+)%s*%-%s*(%d+)$")
     if lo then for i = tonumber(lo), tonumber(hi) do nums[#nums + 1] = i end
     else for n in rentang:gmatch("%d+") do nums[#nums + 1] = tonumber(n) end end
-    if #nums == 0 then print("Pakai: zenx download delta 1-4   (atau: zenx download delta 1 3 5)"); return end
+    if #nums == 0 then print("Pakai: zenx delta 1-4   (atau: zenx delta 1 3 5)"); return end
     print("== DOWNLOAD DELTA: no " .. rentang .. " ==")
     print("ambil daftar rilis GitHub...")
     local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
