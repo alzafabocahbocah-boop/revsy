@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.559 — pasang.sh tulis loader ke Delta/Autoexecute juga
+-- zenx_worker v9.560 — semua executor paksa matiin enable_freeform_support (sama kayak Arceus)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.559"
+local VERSION = "9.560"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -4558,13 +4558,13 @@ local function run(cfg)
         cfg.win_mode = 0
         warn("Arceus: win_mode dipaksa 0 (Arceus auto-freeform; --windowingMode bikin bingkai DOBEL)")
     end
-    if cfg.executor == "arceus" then
+    do  -- v9.560: semua executor paksa matiin freeform (sama kayak Arceus — cegah bingkai dobel)
         local ff = (sh("su -c 'settings get global enable_freeform_support'") or ""):gsub("%s+","")
         if ff == "1" then
             sh_silent("su -c 'settings put global enable_freeform_support 0'")
             sh_silent("su -c 'settings put global force_resizable_activities 0'")
-            warn("Arceus: enable_freeform_support dimatiin (0) -> cegah bingkai DOBEL (App Cloner + Android freeform tabrakan)")
-            ok("Arceus: pake grid prefs App Cloner (rapi) + support OFF (1 bingkai)")
+            warn((cfg.executor or "?")..": enable_freeform_support dimatiin (0) -> cegah bingkai DOBEL")
+            ok((cfg.executor or "?")..": freeform OFF (1 bingkai)")
         end
     end
     if cfg.deteksi_longgar == true then
@@ -7070,9 +7070,7 @@ local function run(cfg)
                 SUDAH_GRID = false   -- nata grid/tiling ulang
                 GRID_CACHE = nil     -- v7.61: hitung grid fresh sesi baru
                 lastOpen = 0         -- buka client dari 1/8 lagi (gak nunggu reopen_sec)
-                if cfg.executor == "arceus" then
-                    sh_silent("su -c 'settings put global enable_freeform_support 0; settings put global force_resizable_activities 0;'")
-                end
+                sh_silent("su -c 'settings put global enable_freeform_support 0; settings put global force_resizable_activities 0;'")  -- v9.560: semua executor
                 do
                     local daftarF = isi:match("FORCE:([%w%.%_,]+)")
                     local targetF = {}
