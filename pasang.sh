@@ -262,25 +262,31 @@ case "$PRESET" in
             info "Manual:  su -c 'echo ... > \"$AX_LOADER\"'"
         fi
 
-        # tulis juga ke Delta/Autoexecute (auto-execute Delta)
-        printf "\n${B}[+] Tulis loader Delta (Autoexecute)${N}\n"
-        DL_DIR="/sdcard/Delta/Autoexecute"
-        DL_LOADER="$DL_DIR/zenx.txt"
-        DL_EXTRA="$DL_DIR/zenx_extra.txt"
-        su -c "mkdir -p \"$DL_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$DL_LOADER\"" 2>/dev/null
-        if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
-            su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$DL_EXTRA\"" 2>/dev/null
-        else
-            su -c "rm -f \"$DL_EXTRA\"" 2>/dev/null
-        fi
-        DL_CEK=$(su -c "cat \"$DL_LOADER\" 2>/dev/null" 2>/dev/null)
-        if printf '%s' "$DL_CEK" | grep -q "HttpGet"; then
-            ok "Loader Delta ketulis: $DL_LOADER ($SC_LABEL)"
+        # tulis ke Delta Autoexecute di tiap client
+        # path: /sdcard/Android/data/com.roblox.clien*/files/gloop/external/autoexecute/
+        printf "\n${B}[+] Tulis loader Delta (Autoexecute tiap client)${N}\n"
+        DL_OK=0
+        for DL_PKG_DIR in /sdcard/Android/data/com.roblox.clien*/files/gloop/external; do
+            [ -d "$DL_PKG_DIR" ] || continue
+            DL_DIR="$DL_PKG_DIR/autoexecute"
+            DL_LOADER="$DL_DIR/zenx.txt"
+            DL_EXTRA="$DL_DIR/zenx_extra.txt"
+            su -c "mkdir -p \"$DL_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$DL_LOADER\"" 2>/dev/null
             if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
-                ok "Extra script Delta: $DL_EXTRA"
+                su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$DL_EXTRA\"" 2>/dev/null
+            else
+                su -c "rm -f \"$DL_EXTRA\"" 2>/dev/null
             fi
+            DL_CEK=$(su -c "cat \"$DL_LOADER\" 2>/dev/null" 2>/dev/null)
+            if printf '%s' "$DL_CEK" | grep -q "HttpGet"; then
+                ok "Delta: $DL_LOADER ($SC_LABEL)"
+                DL_OK=$((DL_OK + 1))
+            fi
+        done
+        if [ "$DL_OK" -eq 0 ]; then
+            warn "Delta Autoexecute: gak ada folder client ketemu (gak masalah kalau Delta belum keinstall)."
         else
-            warn "Loader Delta GAGAL ketulis (cek akses su / folder Delta/Autoexecute ada)."
+            ok "Delta loader ketulis ke $DL_OK client"
         fi
         ;;
 esac
