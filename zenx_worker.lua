@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.561 — paksa matiin enable_freeform_support di semua titik (setup + denyut loop)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.561"
+local VERSION = "9.562"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -12982,6 +12982,104 @@ if PERINTAH == "layar" then
     return
 end
 
+-- v9.562: zenx full -- pindah Roblox dari stack freeform ke stack fullscreen
+if PERINTAH == "full" or PERINTAH == "fullscreen" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada."); return end
+
+    local pkgs = split(cfg.pkgs)
+    if #pkgs == 0 then err("Gak ada client di config."); return end
+
+    -- Parse am stack list: cari task Roblox yang di stack freeform, dan stack fullscreen yg ada
+    local raw = sh("su -c 'am stack list 2>&1'") or ""
+
+    -- Kumpulin semua stack: id -> windowingMode
+    local stacks = {}       -- { stackId -> "fullscreen"/"freeform"/... }
+    local taskStack = {}    -- { taskId -> stackId }
+    local taskPkg = {}      -- { taskId -> pkg }
+
+    local curStack = nil
+    for baris in raw:gmatch("[^\r\n]+") do
+        -- "Stack id=5 bounds=..."
+        local sid = baris:match("^Stack id=(%d+)")
+        if sid then
+            curStack = tonumber(sid)
+            local wm = baris:match("mWindowingMode=(%a+)") or
+                       baris:match("windowingMode=(%a+)") or "fullscreen"
+            -- cari di baris config berikutnya juga (kadang di baris kedua)
+            stacks[curStack] = wm
+        end
+        -- update windowingMode dari baris configuration
+        if curStack and baris:find("mWindowingMode=") then
+            local wm = baris:match("mWindowingMode=(%a+)")
+            if wm and wm ~= "undefined" then stacks[curStack] = wm end
+        end
+        -- "taskId=480: com.roblox.clienv/..."
+        local tid, pkg_full = baris:match("taskId=(%d+):%s*(com%.roblox%.[a-z]+)/")
+        if tid and pkg_full and curStack then
+            taskStack[tonumber(tid)] = curStack
+            taskPkg[tonumber(tid)] = pkg_full
+        end
+    end
+
+    -- Cari stack fullscreen standard (bukan freeform, bukan home, bukan recents)
+    -- ambil yang paling kecil ID-nya yang fullscreen dan punya task non-roblox atau kosong
+    local stackFullscreen = nil
+    for sid, wm in pairs(stacks) do
+        if wm == "fullscreen" then
+            -- cek bukan home/recents (stack 0 = home, stack 6 = recents biasanya)
+            -- pilih stack yang ada task standard atau stack 4 (Termux area)
+            if sid ~= 0 and sid ~= 6 then
+                if not stackFullscreen or sid < stackFullscreen then
+                    stackFullscreen = sid
+                end
+            end
+        end
+    end
+
+    if not stackFullscreen then
+        -- fallback: pakai stack 4 (biasanya fullscreen standard)
+        stackFullscreen = 4
+        warn("Stack fullscreen gak ketemu otomatis, coba stack 4")
+    end
+
+    -- Cari semua Roblox yang ada di stack freeform
+    local cmds = {}
+    local berhasil = {}
+    local sudahFullscreen = {}
+
+    for _, pkg in ipairs(pkgs) do
+        for tid, p in pairs(taskPkg) do
+            if p == pkg then
+                local sid = taskStack[tid]
+                if stacks[sid] == "freeform" then
+                    cmds[#cmds+1] = string.format("am stack move-task %d %d true", tid, stackFullscreen)
+                    berhasil[#berhasil+1] = pkg:gsub("com%.roblox%.", "") ..
+                                            "(task " .. tid .. " stack " .. sid .. "→" .. stackFullscreen .. ")"
+                else
+                    sudahFullscreen[#sudahFullscreen+1] = pkg:gsub("com%.roblox%.", "")
+                end
+            end
+        end
+    end
+
+    if #cmds > 0 then
+        local out = sh("su -c '" .. table.concat(cmds, "; ") .. "' 2>&1") or ""
+        if out:lower():find("exception") or out:lower():find("error") then
+            err("Gagal pindah stack: " .. out:sub(1, 120))
+        else
+            ok("Dipindah ke fullscreen: " .. table.concat(berhasil, ", "))
+        end
+    else
+        if #sudahFullscreen > 0 then
+            ok("Semua Roblox sudah fullscreen: " .. table.concat(sudahFullscreen, ", "))
+        else
+            warn("Gak ada Roblox yang ketemu di stack list.")
+        end
+    end
+    return
+end
+
 if PERINTAH ~= "" then
     err("Perintah '" .. PERINTAH .. "' gak dikenal di v" .. VERSION)
     print()
@@ -13014,6 +13112,7 @@ if PERINTAH ~= "" then
     info("   zenx script             -> ganti script autoexec (STAR FARM / STAR SEED / MARKET)")
     info("   zenx script seed        -> langsung ke STAR SEED, tanpa nanya")
     info("   zenx layar [client]     -> dump sinyal layar (buat bedain Home vs di game)")
+    info("   zenx full               -> pindah Roblox dari freeform stack ke fullscreen")
     print()
     info("Kalau perintahnya harusnya ada, versi di RF ini ketinggalan -- tarik ulang:")
     info("   curl -fsSL <repo>/zenx_worker.lua -o ~/zenx_worker.lua")
