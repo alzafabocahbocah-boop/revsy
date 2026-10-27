@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.560 — semua executor paksa matiin enable_freeform_support (sama kayak Arceus)
+-- zenx_worker v9.561 — paksa matiin enable_freeform_support di semua titik (setup + denyut loop)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.560"
+local VERSION = "9.561"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -4607,31 +4607,16 @@ local function run(cfg)
     info("Pemicu: "..cfg.targets.." | poll "..cfg.poll_sec.."s")
 
     local wm = 0   -- v9.319: --windowingMode DIPAKSA OFF
-    if wm == 5 then
+    -- v9.561: paksa matiin freeform di sini juga (denyut loop) sama kayak setup
+    do
         local ff = sh("su -c 'settings get global enable_freeform_support'"):gsub("%s+","")
-        if ff ~= "1" then
-            warn("enable_freeform_support = "..(ff == "" and "null" or ff).." -> freeform MATI di sistem")
-            info("Nyalain...")
-            sh_silent("su -c 'settings put global enable_freeform_support 1'")
-            local cek = sh("su -c 'settings get global enable_freeform_support'"):gsub("%s+","")
-            if cek == "1" then
-                ok("freeform dinyalain")
-                warn("Sebagian device baru ngefek abis restart.")
-            else
-                err("Gagal nyalain. Root beneran jalan?")
-            end
-        else
-            ok("enable_freeform_support = 1")
-        end
-
-        local fr = sh("su -c 'settings get global force_resizable_activities'"):gsub("%s+","")
-        if fr ~= "1" then
-            info("force_resizable_activities = "..(fr == "" and "null" or fr))
-            info("Kalau Roblox nolak freeform, coba: settings put global force_resizable_activities 1")
+        if ff == "1" then
+            sh_silent("su -c 'settings put global enable_freeform_support 0; settings put global force_resizable_activities 0;'")
+            warn("enable_freeform_support dimatiin (0) -> cegah bingkai DOBEL")
         end
     end
 
-    info("Window: "..(wm == 5 and "freeform (5)" or wm == 6 and "multi-window (6)" or "fullscreen (bawaan)"))
+    info("Window: fullscreen (freeform OFF)")
 
     local tes = api_get(cfg, "/perintah?tim=" .. cfg.tim)
     if tes == "" then
