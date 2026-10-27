@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.265 (fallback getgc kalau RC container fail)  ║
+-- ║  UP KG — v10.265 (port findMemoryContainer dari uplevelnew) ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -1149,26 +1149,27 @@ end
 local _kgContainer = nil
 local _kgContainerDone = false
 local _kgMutableStats = nil   -- tidak dipakai lagi (RC dipakai untuk maxInv), dibiarkan nil
--- v10.262: findMemoryContainer → RC langsung, ZERO getgc
+-- v10.265: findMemoryContainer → RC langsung, port dari uplevelnew yg sudah gacor
 -- Format return sama: {uuid -> {PetData={BaseWeight,Level,...}, PetType="..."}}
 local function findMemoryContainer()
     local result = nil
-    -- cara 1: RC direct (v10.262, ZERO getgc)
-    pcall(function()
+    local ok, err = pcall(function()
         local RC = require(RS.Modules.ReplicationClass)
+        if not RC then warn("[UP6KG-DBG] RC nil"); return end
         local inst = RC.new("ActivePetsService_Replicator")
+        if not inst then warn("[UP6KG-DBG] RC inst nil"); return end
         local data = inst:GetData(player.Name)
-        if type(data) ~= "table" then return end
+        if type(data) ~= "table" then warn("[UP6KG-DBG] data bukan table:", type(data)); return end
         local tbl = rawget(data, "Table")
-        if type(tbl) ~= "table" then return end
+        if type(tbl) ~= "table" then warn("[UP6KG-DBG] Table bukan table"); return end
         local ppd = rawget(tbl, "PlayerPetData")
-        if type(ppd) ~= "table" then return end
+        if type(ppd) ~= "table" then warn("[UP6KG-DBG] PlayerPetData bukan table"); return end
         local pd = rawget(ppd, player.Name)
-        if type(pd) ~= "table" then return end
+        if type(pd) ~= "table" then warn("[UP6KG-DBG] pd["..player.Name.."] bukan table"); return end
         local pi = rawget(pd, "PetInventory")
-        if type(pi) ~= "table" then return end
+        if type(pi) ~= "table" then warn("[UP6KG-DBG] PetInventory bukan table"); return end
         local dat = rawget(pi, "Data")
-        if type(dat) ~= "table" then return end
+        if type(dat) ~= "table" then warn("[UP6KG-DBG] Data bukan table"); return end
         local out = {}
         for uuid, entry in pairs(dat) do
             if type(entry) == "table" then
@@ -1177,41 +1178,7 @@ local function findMemoryContainer()
         end
         if next(out) then result = out end
     end)
-    if result then return result end
-    -- v10.265: fallback getgc — kalau RC fail (path berubah / Modules gak ada)
-    if getgc then
-        pcall(function()
-            local out = {}
-            for _, obj in ipairs(getgc(true)) do
-                if type(obj) == "table" then
-                    -- cari tabel PetInventory.Data: key = uuid "{...}", value = {PetData={BaseWeight,...}, PetType="..."}
-                    local ok, v = pcall(rawget, obj, "PetData")
-                    if ok and type(v) == "table" and rawget(v, "BaseWeight") then
-                        -- ini satu entry pet — cari parent-nya
-                    end
-                    -- atau cari map langsung: key seperti "{xxx}" -> table punya PetData
-                    local isMap = false
-                    local samplePet = nil
-                    for k, vv in pairs(obj) do
-                        if type(k) == "string" and k:sub(1,1) == "{" and type(vv) == "table" then
-                            local pd2 = rawget(vv, "PetData")
-                            if type(pd2) == "table" and rawget(pd2, "BaseWeight") then
-                                isMap = true; samplePet = vv; break
-                            end
-                        end
-                    end
-                    if isMap then
-                        for k, vv in pairs(obj) do
-                            if type(k) == "string" and k:sub(1,1) == "{" and type(vv) == "table" then
-                                out[k] = vv
-                            end
-                        end
-                        if next(out) then result = out; return end
-                    end
-                end
-            end
-        end)
-    end
+    if not ok then warn("[UP6KG-DBG] findMemoryContainer ERROR:", err) end
     return result
 end
 local function ambilContainer()
