@@ -265,8 +265,8 @@ case "$PRESET" in
         # tulis juga ke Delta/Autoexecute (auto-execute Delta)
         printf "\n${B}[+] Tulis loader Delta (Autoexecute)${N}\n"
         DL_DIR="/sdcard/Delta/Autoexecute"
-        DL_LOADER="$DL_DIR/zenx.lua"
-        DL_EXTRA="$DL_DIR/zenx_extra.lua"
+        DL_LOADER="$DL_DIR/zenx.txt"
+        DL_EXTRA="$DL_DIR/zenx_extra.txt"
         su -c "mkdir -p \"$DL_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$DL_LOADER\"" 2>/dev/null
         if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
             su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$DL_EXTRA\"" 2>/dev/null
