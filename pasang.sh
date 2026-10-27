@@ -262,9 +262,9 @@ case "$PRESET" in
             info "Manual:  su -c 'echo ... > \"$AX_LOADER\"'"
         fi
 
-        # tulis juga ke Delta/Workspace (auto-execute Delta)
-        printf "\n${B}[+] Tulis loader Delta (Workspace)${N}\n"
-        DL_DIR="/sdcard/Delta/Workspace"
+        # tulis juga ke Delta/Autoexecute (auto-execute Delta)
+        printf "\n${B}[+] Tulis loader Delta (Autoexecute)${N}\n"
+        DL_DIR="/sdcard/Delta/Autoexecute"
         DL_LOADER="$DL_DIR/zenx.lua"
         DL_EXTRA="$DL_DIR/zenx_extra.lua"
         su -c "mkdir -p \"$DL_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$DL_LOADER\"" 2>/dev/null
@@ -280,7 +280,7 @@ case "$PRESET" in
                 ok "Extra script Delta: $DL_EXTRA"
             fi
         else
-            warn "Loader Delta GAGAL ketulis (cek akses su / folder Delta/Workspace ada)."
+            warn "Loader Delta GAGAL ketulis (cek akses su / folder Delta/Autoexecute ada)."
         fi
         ;;
 esac
