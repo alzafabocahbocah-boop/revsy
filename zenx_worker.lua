@@ -10135,18 +10135,17 @@ if PERINTAH == "delta" then
     print("ambil daftar rilis GitHub...")
     local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
     -- cek versi delta terbaru dari releases (ambil angka versi dari nama file delta)
-    local versiDelta = rel:match('"name":%s*"delta%s+%d+_([%d%.]+)%.apk"') or "2.743.1059"
+    local versiDelta = rel:match('"name":%s*"delta%.%d+_([%d%.]+)_clone%.apk"') or "2.743.1059"
     print("versi delta: " .. versiDelta)
     for _, n in ipairs(nums) do
-        -- pola: "delta 1_2.743.1059.apk" atau "delta 2 _2.743.1059.apk"
-        -- match fleksibel: ada/tidaknya spasi sebelum _
-        local url = rel:match('"(https://[^"]*delta%s+' .. n .. '%s*_[^"]*%.apk)"')
+        -- pola: "delta.1_2.743.1059_clone.apk"
+        local url = rel:match('"(https://[^"]*delta%.' .. n .. '_[^"]*_clone%.apk)"')
         if not url then
-            -- fallback: match exact filename dari releases
-            url = rel:match('"(https://[^"]*[Dd]elta%s+' .. n .. '[^"]*%.apk)"')
+            -- fallback lebih longgar
+            url = rel:match('"(https://[^"]*[Dd]elta[%.%s]' .. n .. '[^"]*%.apk)"')
         end
         if not url then
-            print("[delta " .. n .. "] URL gak ketemu di rilis JSON (skip). Cek manual nama file 'delta " .. n .. "_...' di rilis worker_64.")
+            print("[delta " .. n .. "] URL gak ketemu di rilis JSON (skip). Cek manual nama file 'delta." .. n .. "_..._clone.apk' di rilis worker_64.")
         else
             local namaApk = "/sdcard/delta" .. n .. ".apk"
             print("[delta " .. n .. "] download...")
