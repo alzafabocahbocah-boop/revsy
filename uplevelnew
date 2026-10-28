@@ -1,4 +1,4 @@
--- uplevelnew v8.350 — getMtsPets: debug getAgeFromContainer nil + pcall guard
+-- uplevelnew v8.351 — fix swap lineup: verifikasi modelByUuid + enforce skip saat _isTransisi
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.350"
+local VERSION = "v8.351"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6181,32 +6181,48 @@ local function _mutSwapLineup(def, label, fase)
     _mutLog("👕 Swap → "..label, Color3.fromRGB(180,180,80))
     _mutSetFase(fase or label)
     _mutCurrentDef = def  -- simpan def aktif untuk enforce
-    -- retry equip sampai 3x kalau gagal
+
+    -- step 1: unequip semua
+    if type(unequipAll)=="function" then pcall(unequipAll) end
+    task.wait(1.5)
+
+    -- step 2: equip lineup baru
+    if type(equipSesi)=="function" then pcall(equipSesi, 99, def) end
+    -- equipSesi sudah punya retry internal (tunggu 1.5s + re-equip yang hilang)
+
+    -- step 3: verifikasi — tunggu sampai model benar-benar masuk kebun (cek modelByUuid)
+    -- sama seperti cara auto lvl verifikasi: tunggu max 10s
     local swapOk = false
-    for attempt = 1, 3 do
-        if type(unequipAll)=="function" then pcall(unequipAll) end
-        task.wait(1.5)
-        if type(equipSesi)=="function" then pcall(equipSesi, 99, def) end
-        task.wait(1.5)
-        -- verifikasi: cek _activeUuids ada isi (artinya equipSesi berhasil equip sesuatu)
+    for waitTick = 1, 10 do
+        task.wait(1)
+        local inGarden = 0
+        for uuid in pairs(_activeUuids or {}) do
+            if modelByUuid[uuid] then inGarden = inGarden + 1 end
+        end
+        if inGarden > 0 then
+            _mutLog("✓ Lineup aktif: "..label.." ("..inGarden.." pet di kebun)", Color3.fromRGB(78,214,204))
+            swapOk = true; break
+        end
+    end
+
+    if not swapOk then
+        -- cek _activeUuids ada isi atau tidak
         local activeCount = 0
         for _ in pairs(_activeUuids or {}) do activeCount = activeCount + 1 end
         if activeCount > 0 then
-            swapOk = true; break
+            -- equip sudah dipanggil tapi model belum muncul — server mungkin lambat
+            _mutLog("⚠ Lineup equip ok tapi model belum di kebun, lanjut dulu: "..label, Color3.fromRGB(255,200,60))
+        else
+            _mutLog("⚠ Lineup gagal masuk setelah 10s: "..label, Color3.fromRGB(255,80,80))
         end
-        _mutLog("⚠ Lineup belum masuk, retry "..attempt.."/3...", Color3.fromRGB(255,140,60))
-        task.wait(2)
-    end
-    if swapOk then
-        _mutLog("✓ Lineup aktif: "..label, Color3.fromRGB(78,214,204))
-    else
-        _mutLog("⚠ Lineup gagal masuk setelah 3x retry: "..label, Color3.fromRGB(255,80,80))
     end
 end
 
 -- helper: enforce lineup MTS + re-equip yang hilang
 local function _mutEnforceLineup(def)
     if not def then return end
+    -- skip kalau sedang dalam proses swap/equip (hindari konflik dengan _mutSwapLineup)
+    if _isTransisi then return end
     pcall(function()
         -- 1. unequip pet asing (bukan dari def)
         if type(enforceEquip) == "function" then
