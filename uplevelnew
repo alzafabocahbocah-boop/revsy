@@ -1,4 +1,4 @@
--- uplevelnew v8.299 — AUTO MTS pakai do..end (bukan pcall) agar error keluar langsung
+-- uplevelnew v8.300 — rejoin tiap jam tepat WIB (00.00 01.00 dst), kick wait 40s
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.299"
+local VERSION = "v8.300"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -1600,16 +1600,17 @@ local function arStart()
     task.spawn(function()
         local TS = game:GetService("TeleportService")
         while _G.ZenxArOn and _arGen == gen do
+            -- v8.300: tiap jam tepat (00.00 01.00 02.00 dst WIB), bukan tiap 30 menit
             local wib = os.time() + 7*3600
-            local dtk = wib % 3600
-            local sisa = (dtk < 1800) and (1800 - dtk) or (3600 - dtk)
+            local sisa = 3600 - (wib % 3600)  -- sisa detik ke jam berikutnya
+            if sisa >= 3600 then sisa = 0 end
             _G.ZenxRejoinSisa = sisa
             if sisa <= 1 then
                 _arLabel.Text = "Auto-Rejoin: ON  |  sisa: 0s — REJOIN!"
-                -- kick dulu -> rejoin server sama (jobId) -> fallback Teleport polos
+                -- kick dulu 40s -> rejoin server sama (jobId) -> fallback Teleport polos
                 local jobId = game.JobId
                 pcall(function() plr:Kick("zenx rejoin") end)
-                task.wait(30)
+                task.wait(40)
                 pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
                 task.wait(6)
                 pcall(function() TS:Teleport(game.PlaceId, plr) end)
