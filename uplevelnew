@@ -1,4 +1,4 @@
--- uplevelnew v8.354 — getMtsPets: baca _kgContainer langsung, tidak lewat getAgeFromContainer
+-- uplevelnew v8.355 — tab MTS: panel lineup mesin (sesi 1 & 2) — nama, UUID pendek, kg
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.354"
+local VERSION = "v8.355"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6107,6 +6107,100 @@ task.spawn(function()
             else
                 mtsPetLbl.Text = "🐾 pet: (kosong)"
                 mtsPetLbl.TextColor3 = C.textMute
+            end
+        end)
+    end
+end)
+
+-- ---- LINEUP INFO PANEL ----
+mtsHdr("• LINEUP MESIN",9)
+local mutLineupBox=mk("Frame",{Size=UDim2.new(1,0,0,120),BackgroundColor3=C.card,
+    BorderSizePixel=0,LayoutOrder=10,Parent=mtsScroll}); corner(mutLineupBox,10); stroke(mutLineupBox,C.border,1)
+mk("UIPadding",{PaddingTop=UDim.new(0,8),PaddingBottom=UDim.new(0,8),
+    PaddingLeft=UDim.new(0,12),PaddingRight=UDim.new(0,12),Parent=mutLineupBox})
+local mutLineupLayout=mk("UIListLayout",{Padding=UDim.new(0,3),SortOrder=Enum.SortOrder.LayoutOrder,Parent=mutLineupBox})
+
+local mutLineupS1Hdr=lbl(mutLineupBox,"Sesi 1 (Mimic+Golem):",10,Color3.fromRGB(78,214,204))
+mutLineupS1Hdr.Font=FONT_B; mutLineupS1Hdr.Size=UDim2.new(1,0,0,14); mutLineupS1Hdr.LayoutOrder=1
+local mutLineupS1Lbl=lbl(mutLineupBox,"—",9,C.textMute)
+mutLineupS1Lbl.Size=UDim2.new(1,0,0,28); mutLineupS1Lbl.LayoutOrder=2
+mutLineupS1Lbl.TextWrapped=true; mutLineupS1Lbl.TextXAlignment=Enum.TextXAlignment.Left
+
+local mutLineupS2Hdr=lbl(mutLineupBox,"Sesi 2 (Gremlin):",10,Color3.fromRGB(180,120,255))
+mutLineupS2Hdr.Font=FONT_B; mutLineupS2Hdr.Size=UDim2.new(1,0,0,14); mutLineupS2Hdr.LayoutOrder=3
+local mutLineupS2Lbl=lbl(mutLineupBox,"—",9,C.textMute)
+mutLineupS2Lbl.Size=UDim2.new(1,0,0,28); mutLineupS2Lbl.LayoutOrder=4
+mutLineupS2Lbl.TextWrapped=true; mutLineupS2Lbl.TextXAlignment=Enum.TextXAlignment.Left
+
+-- resize box otomatis
+mutLineupBox.AutomaticSize=Enum.AutomaticSize.Y
+
+-- fungsi build teks lineup dari _activeUuids + _kgContainer
+local function _mutBuildLineupText(def)
+    local c = _kgContainer
+    if not c or not _activeUuids then return "—" end
+    -- kumpulkan uuid yang tipenya cocok dengan def ini
+    local allowed = {}
+    for _,d in ipairs(def) do allowed[d.nama] = true end
+    local lines = {}
+    for uuid in pairs(_activeUuids) do
+        local key = tostring(uuid)
+        if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+        local e = c[key]
+        if type(e)=="table" then
+            local rawTipe = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+            local tipe = rawTipe
+            -- strip mutation prefix
+            for _,p in ipairs(MUTATION_PREFIXES) do
+                if tipe:sub(1,#p)==p then tipe=tipe:sub(#p+1); break end
+            end
+            if allowed[tipe] then
+                local pd = e.PetData or {}
+                local bw = tonumber(pd.BaseWeight) or 0
+                local lv = tonumber(pd.Level) or 0
+                local kg = bw*(lv+10)/10
+                local shortUuid = tostring(uuid):sub(1,8)
+                if shortUuid:sub(1,1)=="{" then shortUuid=shortUuid:sub(2) end
+                local kgStr = string.format("%.2f", kg)
+                lines[#lines+1] = tipe.." ["..shortUuid.."] "..kgStr.."kg"
+            end
+        end
+    end
+    if #lines == 0 then return "(belum equip)" end
+    table.sort(lines)
+    return table.concat(lines, "\n")
+end
+
+-- update lineup info tiap 3s saat tab aktif
+task.spawn(function()
+    while true do
+        task.wait(3)
+        pcall(function()
+            if not mtsContent.Visible then return end
+            if not _mutRunning then
+                mutLineupS1Lbl.Text = "(mesin tidak jalan)"
+                mutLineupS1Lbl.TextColor3 = C.textMute
+                mutLineupS2Lbl.Text = "(mesin tidak jalan)"
+                mutLineupS2Lbl.TextColor3 = C.textMute
+                return
+            end
+            -- sesi 1
+            local fase = tostring(_mtsFaseNow or "")
+            if fase:find("Mimic") or fase:find("Golem") then
+                mutLineupS1Lbl.Text = _mutBuildLineupText(MTS_LINEUP_DEF)
+                mutLineupS1Lbl.TextColor3 = Color3.fromRGB(78,214,204)
+                mutLineupS2Lbl.Text = "(belum fase ini)"
+                mutLineupS2Lbl.TextColor3 = C.textMute
+            elseif fase:find("Gremlin") then
+                mutLineupS1Lbl.Text = "(sudah lewat)"
+                mutLineupS1Lbl.TextColor3 = C.textMute
+                mutLineupS2Lbl.Text = _mutBuildLineupText(SESI2_MUT_DEF)
+                mutLineupS2Lbl.TextColor3 = Color3.fromRGB(180,120,255)
+            else
+                mutLineupS1Lbl.Text = _mutBuildLineupText(MTS_LINEUP_DEF)
+                mutLineupS1Lbl.TextColor3 = C.textDim
+                mutLineupS2Lbl.Text = _mutBuildLineupText(SESI2_MUT_DEF)
+                mutLineupS2Lbl.TextColor3 = C.textDim
             end
         end)
     end
