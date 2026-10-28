@@ -1,4 +1,4 @@
--- uplevelnew v8.333 — gift merata: setelah gift jumlah pet semua target hampir sama
+-- uplevelnew v8.334 — gift: distribusi proporsional ruang kosong, max inv per target bisa diatur
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.333"
+local VERSION = "v8.334"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5808,6 +5808,35 @@ if type(_G.ZenxMtsState) ~= "table" then _G.ZenxMtsState = {targets={}, autoStar
 if next(_G.ZenxMtsState.targets) == nil then _mtsLoad() end
 local _mtsTargets = _G.ZenxMtsState.targets  -- {nama=true}
 
+-- max inventory per target (bisa diatur manual, default 500)
+local MTS_MAXINV_FILE = "zenx_mts_maxinv.txt"
+local _mtsMaxInv = {}  -- {[nama]=number}
+
+local function _mtsSaveMaxInv()
+    pcall(function()
+        if not writefile then return end
+        local parts = {}
+        for nm, v in pairs(_mtsMaxInv) do
+            parts[#parts+1] = nm .. "=" .. tostring(v)
+        end
+        writefile(MTS_MAXINV_FILE, table.concat(parts, ","))
+    end)
+end
+
+local function _mtsLoadMaxInv()
+    pcall(function()
+        if not readfile then return end
+        local ok, s = pcall(readfile, MTS_MAXINV_FILE)
+        if ok and s and s ~= "" then
+            for pair in s:gmatch("[^,]+") do
+                local nm, v = pair:match("^(.+)=(%d+)$")
+                if nm and v then _mtsMaxInv[nm] = tonumber(v) end
+            end
+        end
+    end)
+end
+_mtsLoadMaxInv()
+
 -- cache total pet inventory target {[nama]=count or "?"}
 local _mtsInvCache = {}
 
@@ -5852,23 +5881,22 @@ local function buildMtsPlayerList()
         idx = idx + 1
         local online = inServer[savedNm] == true
         local rowBg = online and Color3.fromRGB(30,60,40) or C.cardSel
-        local row=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=rowBg,
+        local row=mk("TextButton",{Size=UDim2.new(1,0,0,62),BackgroundColor3=rowBg,
             Text="",AutoButtonColor=false,BorderSizePixel=0,LayoutOrder=idx,Parent=mtsPlrFrame})
         corner(row,8); stroke(row, C.accent, 1.5)
         local nameLbl=lbl(row,savedNm,13,C.accent)
-        nameLbl.Font=FONT_B; nameLbl.Position=UDim2.new(0,14,0,0); nameLbl.Size=UDim2.new(0.65,0,0.5,0)
+        nameLbl.Font=FONT_B; nameLbl.Position=UDim2.new(0,14,0,0); nameLbl.Size=UDim2.new(0.6,0,0,20)
         -- status online/offline
         local statusTxt = online and "✓ online" or "⚫ offline"
         local statusCol = online and Color3.fromRGB(60,200,80) or Color3.fromRGB(180,80,80)
         local selLbl=lbl(row,statusTxt,10,statusCol)
-        selLbl.Position=UDim2.new(1,-75,0,2); selLbl.Size=UDim2.new(0,70,0,18)
+        selLbl.Position=UDim2.new(1,-78,0,2); selLbl.Size=UDim2.new(0,74,0,18)
         selLbl.TextXAlignment=Enum.TextXAlignment.Right
         -- total pet inventory (dari cache, update async)
         local cached = _mtsInvCache[savedNm]
         local invTxt, invCol
         if cached then
             invTxt = "🎒 "..cached.age500.."/<500 ("..cached.total..")"
-            -- makin sedikit age500 → makin hijau (bisa terima banyak)
             invCol = (cached.age500 < 50) and Color3.fromRGB(60,220,80)
                 or (cached.age500 < 150) and Color3.fromRGB(200,200,60)
                 or Color3.fromRGB(220,80,80)
@@ -5876,12 +5904,44 @@ local function buildMtsPlayerList()
             invTxt = "🎒 scan..."; invCol = C.textMute
         end
         local invLbl=lbl(row,invTxt,9,invCol)
-        invLbl.Position=UDim2.new(1,-80,0,22); invLbl.Size=UDim2.new(0,76,0,16)
+        invLbl.Position=UDim2.new(1,-82,0,21); invLbl.Size=UDim2.new(0,78,0,16)
         invLbl.TextXAlignment=Enum.TextXAlignment.Right
         -- hint uncheck di bawah nama
         local uncheckHint=lbl(row,"✕ uncheck",9,Color3.fromRGB(180,80,80))
-        uncheckHint.Position=UDim2.new(0,14,0.5,2); uncheckHint.Size=UDim2.new(0.5,0,0.4,0)
+        uncheckHint.Position=UDim2.new(0,14,0,22); uncheckHint.Size=UDim2.new(0.45,0,0,16)
         uncheckHint.TextXAlignment=Enum.TextXAlignment.Left
+        -- input max inventory
+        local maxLblTxt = lbl(row, "max inv:", 9, C.textMute)
+        maxLblTxt.Position = UDim2.new(0,14,0,42); maxLblTxt.Size = UDim2.new(0,52,0,16)
+        maxLblTxt.TextXAlignment = Enum.TextXAlignment.Left
+        local curMax = _mtsMaxInv[savedNm] or 500
+        local maxBox = mk("TextBox",{
+            Size=UDim2.new(0,60,0,16), Position=UDim2.new(0,70,0,42),
+            BackgroundColor3=Color3.fromRGB(20,20,30), TextColor3=Color3.fromRGB(200,220,255),
+            Text=tostring(curMax), Font=FONT, TextSize=10, PlaceholderText="500",
+            BorderSizePixel=0, ClearTextOnFocus=false, Parent=row
+        }); corner(maxBox,4); stroke(maxBox,C.border,1)
+        local pNameMax = savedNm
+        maxBox.FocusLost:Connect(function()
+            local v = tonumber(maxBox.Text)
+            if v and v > 0 then
+                _mtsMaxInv[pNameMax] = math.floor(v)
+                _mtsSaveMaxInv()
+            else
+                maxBox.Text = tostring(_mtsMaxInv[pNameMax] or 500)
+            end
+        end)
+        -- cegah klik box nyebar ke row (uncheck)
+        maxBox.MouseButton1Down:Connect(function() end)
+        row.MouseButton1Click:Connect(function()
+            -- cek kalau fokus di textbox, jangan uncheck
+            if maxBox:IsFocused() then return end
+            _mtsTargets[pNameMax] = nil
+            _mtsMaxInv[pNameMax] = nil
+            _mtsSaveMaxInv(); _mtsSave(); buildMtsPlayerList()
+            local n=0; for _ in pairs(_mtsTargets) do n=n+1 end
+            mtsVTgt.Text=tostring(n)
+        end)
         -- fetch inv count async kalau online dan belum di-cache
         if online then
             local pObj = game:GetService("Players"):FindFirstChild(savedNm)
@@ -5899,13 +5959,6 @@ local function buildMtsPlayerList()
                 end)
             end
         end
-        local pName=savedNm
-        row.MouseButton1Click:Connect(function()
-            _mtsTargets[pName] = nil  -- klik = uncheck (hapus dari target)
-            _mtsSave(); buildMtsPlayerList()
-            local n=0; for _ in pairs(_mtsTargets) do n=n+1 end
-            mtsVTgt.Text=tostring(n)
-        end)
     end
 
     -- bagian 2: player di server yang belum dipilih
@@ -6325,7 +6378,8 @@ local function _loopGift()
                     if data then _mtsInvCache[nm] = data end
                 end
                 local score = data and data.age500 or 999
-                list[#list+1] = {nm=nm, score=score, plr=tPlr}
+                local maxInv = _mtsMaxInv[nm] or 500
+                list[#list+1] = {nm=nm, score=score, maxInv=maxInv, plr=tPlr}
             end
         end
         -- sort: score terkecil (paling kosong) di depan
@@ -6334,11 +6388,11 @@ local function _loopGift()
     end
 
     -- hitung jatah gift per target dari total pet yang tersedia
-    -- tujuan: setelah gift, jumlah pet semua target jadi hampir sama (rata)
-    -- contoh: target=[40,50,60], total=50pet
-    --   total akhir = (40+50+60)+50 = 200, rata2 = 200/3 ≈ 67
-    --   T1 butuh 67-40=27, T2 butuh 67-50=17, T3 butuh 67-60=7
-    --   hasil: T1=27, T2=17, T3=6 (sisa ke T3)
+    -- tujuan: setelah gift, jumlah pet semua target mendekati rata-rata
+    -- pakai maxInv per target (user setting, default 500)
+    -- contoh: T1=40 max=500, T2=50 max=300, T3=60 max=400, gift=50
+    --   ruang T1=460, T2=250, T3=340 → total ruang=1050
+    --   T1=50*(460/1050)=22, T2=50*(250/1050)=12, T3=50*(340/1050)=16
     local function calcJatah(targets, totalPet)
         if #targets == 0 then return {} end
         -- kalau pet < target count, gift 1 per target dari yang paling kosong
@@ -6349,36 +6403,27 @@ local function _loopGift()
             end
             return jatah
         end
-        -- hitung total pet sekarang + yang akan di-gift
-        local totalNow = 0
-        for _,t in ipairs(targets) do totalNow = totalNow + t.score end
-        local totalAfter = totalNow + totalPet
-        local avg = totalAfter / #targets  -- target rata-rata per orang
 
-        -- hitung kebutuhan tiap target (berapa yang perlu sampai avg)
-        local needs = {}
-        local sumNeeds = 0
+        -- hitung ruang kosong tiap target (maxInv - score)
+        local spaces = {}
+        local sumSpaces = 0
         for _,t in ipairs(targets) do
-            local need = math.max(0, avg - t.score)
-            needs[t.nm] = need
-            sumNeeds = sumNeeds + need
+            local space = math.max(0, t.maxInv - t.score)
+            spaces[t.nm] = space
+            sumSpaces = sumSpaces + space
         end
 
         local jatah = {}
         local assigned = 0
-        if sumNeeds == 0 then
-            -- semua target udah sama, bagi rata aja
-            local base = math.floor(totalPet / #targets)
-            local sisa = totalPet - base * #targets
-            for i,t in ipairs(targets) do
-                jatah[t.nm] = base + (i <= sisa and 1 or 0)
-            end
+        if sumSpaces == 0 then
+            -- semua penuh, ga ada yang di-gift
+            for _,t in ipairs(targets) do jatah[t.nm] = 0 end
         else
-            -- proporsional dari kebutuhan masing-masing
+            -- proporsional dari ruang kosong masing-masing
             for i,t in ipairs(targets) do
-                local raw = (needs[t.nm] / sumNeeds) * totalPet
+                local raw = (spaces[t.nm] / sumSpaces) * totalPet
                 local n = (i == #targets) and (totalPet - assigned) or math.floor(raw)
-                n = math.max(0, n)
+                n = math.max(0, math.min(n, spaces[t.nm]))  -- jangan melebihi ruang kosong
                 jatah[t.nm] = n
                 assigned = assigned + n
             end
