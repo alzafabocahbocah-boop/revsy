@@ -1,4 +1,4 @@
--- uplevelnew v8.313 — AUTO MTS start otomatis pause AUTO LVL
+-- uplevelnew v8.314 — AUTO MTS start: equip 7 Mimic Octopus + 1 Golem
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.313"
+local VERSION = "v8.314"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -174,6 +174,11 @@ local SESI_CADANGAN_DEF = {
 local SESI_CADANGAN2_DEF = {
     {nama="Mimic Octopus", jml=4},
     {nama="Baku",          jml=1},
+}
+-- v8.314: lineup equip saat AUTO MTS start
+MTS_LINEUP_DEF = {
+    {nama="Mimic Octopus", jml=7},
+    {nama="Golem",         jml=1},
 }
 local CFG = {
     bahanType      = "Bahan",
@@ -2802,9 +2807,10 @@ local farmCenter
 local _clusterPos = nil  -- cache posisi kebun, di-refresh tiap awal sesi
 
 -- forward-declare fungsi-fungsi di dalam do-block AUTO TENGAH agar visible di runSesiUtama, runSesi2, dll
-local unequipAll
+-- v8.314: unequipAll dan equipSesi global agar accessible dari block AUTO MTS
+unequipAll = nil
 local unequipAllExceptBahan
-local equipSesi
+equipSesi = nil
 local getPetTipeFromUUID
 local getUUIDAlt
 local getAgeFallback
@@ -5873,6 +5879,15 @@ local function startMts()
         stopRequested=true
         if setSw then pcall(setSw,false) end
     end
+    -- v8.314: unequip semua lalu equip 7 Mimic + 1 Golem untuk MTS
+    mtsStatLbl.Text="⟳ ganti lineup..."; mtsStatLbl.TextColor3=C.textDim
+    task.spawn(function()
+        if unequipAll then pcall(unequipAll) end
+        task.wait(1.5)
+        if equipSesi then pcall(equipSesi,99,MTS_LINEUP_DEF) end
+        task.wait(1)
+    end)
+    task.wait(3)  -- tunggu equip selesai sebelum mulai gifting
     _mtsRunning=true; _G.ZenxMtsState.autoStart=true
     mtsStartBtn.Visible=false; mtsStopBtn.Visible=true
     mtsStatLbl.TextColor3=C.accent
