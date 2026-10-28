@@ -1,4 +1,4 @@
--- uplevelnew v8.380 — getMtsPets: skip pet lineup/kebun (_mutPool+_activeUuids), scan Character juga
+-- uplevelnew v8.390 — detect "transenden" (nama resmi di game)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.380"
+local VERSION = "v8.385"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -668,16 +668,29 @@ end
 
 -- ===================== MUTATION STRIP (mirip uplevel asli) =====================
 -- NOTE: Rainbow TIDAK dihapus (Rainbow Dilop = jenis tersendiri, bukan mutasi)
+-- Dari PetMutationRegistry game (EnumId -> nama):
+-- EV=Everchanted, f=Frozen, b=Golden, d=Shiny, c=Rainbow, n=Ascended,
+-- A=Nightmare, Q=Nocturnal, w=Nutty, X=Venom, p=Corrupted, EH=Everhaunted,
+-- LB=Lunarbound, SS=SpiritSparkle, Z=Alienated, U=JollyDecorator, T=MerryNursery,
+-- S=ChristmasRally, L=Rhino, N=Lion, K=Giraffe, J=Oxpecker, O=Forger, s=Silver,
+-- P=HyperHunger, R=Peppermint, e=Windy, j=Tiny, k=IronSkin, r=Aromatic,
+-- u=Glimmering, v=Luminous, y=Soulflame, z=Spectral, B=Tethered,
+-- GG=Gigantic (Level500Only, size tier)
 local MUTATION_PREFIXES={
-    "Everchanted ","Frozen ","Inverted ","Golden ","Diamond ",
-    "Mythical ","Hexed ","Ascended ","Radiant ","Shocked ","Bloodlit ",
+    -- dari PetMutationRegistry resmi:
+    "Everchanted ","Frozen ","Golden ","Shiny ","Rainbow ","Ascended ",
+    "Nightmare ","Nocturnal ","Nutty ","Venom ","Corrupted ","Everhaunted ",
+    "Lunarbound ","Spirit Sparkle ","Alienated ","Jolly Decorator ","Merry Nursery ",
+    "Christmas Rally ","Rhino ","Lion ","Giraffe ","Oxpecker ","Forger ","Silver ",
+    "HyperHunger ","Peppermint ","Windy ","Tiny ","IronSkin ","Aromatic ",
+    "Glimmering ","Luminous ","Soulflame ","Spectral ","Tethered ",
+    -- legacy / versi lain (tidak di registry tapi mungkin ada):
+    "Inverted ","Diamond ","Mythical ","Hexed ","Radiant ","Shocked ","Bloodlit ",
     "Twilight ","Voidtouched ","Foxfire ","Aurora ","Static ","Stormcloud ",
-    "Frost ","Burnt ","Lethal ","Cooked ","Choc ",
-    -- extra yg umum di versi lain:
-    "Nightmare ","Nocturnal ","Nutty ","Mega ","Prismatic ","Shiny ","Sparkle ",
-    "Holographic ","Disco ","Crystal ","Corrupted ","Angelic ","Infernal ",
+    "Frost ","Burnt ","Lethal ","Cooked ","Choc ","Prismatic ","Sparkle ",
+    "Holographic ","Disco ","Crystal ","Angelic ","Infernal ",
     "Titanic ","Colossal ","Gargantuan ","Celestial ","Void ","Moonlit ","Galactic ",
-    "Rainbow ",
+    -- GIGANTIC TIDAK di sini — itu SIZE tier bukan warna mutasi
 }
 local function stripMutation(s)
     if not s then return "" end
@@ -6202,6 +6215,10 @@ mutLineupS2Lbl.TextWrapped=true; mutLineupS2Lbl.TextXAlignment=Enum.TextXAlignme
 -- resize box otomatis
 mutLineupBox.AutomaticSize=Enum.AutomaticSize.Y
 
+-- PENTING: _mutState disimpan dalam tabel agar tidak bisa di-shadow oleh
+-- deklarasi `local _mutRunning` di scope lain. Akses SELALU via _mutState.running
+local _mutState = { running = false }
+
 -- ===== MTS POOL PERSIST =====
 -- simpan UUID tim MTS via _G + file, survive rejoin
 local _mutPoolFile = "zenx_mts_pool_"..(plr.Name or "x")..".txt"
@@ -6449,7 +6466,7 @@ task.spawn(function()
             -- selalu tampilkan pool detail kalau ada, baru fallback ke lineup equip / status
             local s1Detail = _mutBuildPoolDetail(1)
             local s2Detail = _mutBuildPoolDetail(2)
-            if not _mutRunning then
+            if not _mutState.running then
                 if s1Detail then
                     mutLineupS1Lbl.Text = s1Detail
                     mutLineupS1Lbl.TextColor3 = Color3.fromRGB(78,214,204)
@@ -6537,7 +6554,7 @@ end
 -- SESI2_MUT_DEF sudah didefinisikan global di atas (line ~182), tidak perlu redefine
 local DELAY_MUT_PP  = 0.6
 local DELAY_MUT_STEP= 0.6
-local _mutRunning   = false
+-- (_mutState sudah dideklarasikan di atas, baris ~6207)
 
 local function _mutLog(txt, col)
     -- dipanggil sebelum mtsAddLog didefinisikan, jadi pakai _G late-bind
@@ -6698,7 +6715,7 @@ local function _mutWaitDone()
     -- poll getMtsMachineTimer() langsung (tidak pakai timerLbl agar tidak stale)
     local lastLog = -1
     local nilStreak = 0  -- hitung berapa kali timer nil berturut-turut
-    while _mutRunning do
+    while _mutState.running do
         local txt = getMtsMachineTimer()
         local secs = _mutParseTimer(txt or "")
         if not secs or secs <= 0 then
@@ -6746,7 +6763,7 @@ local function _mutDoSiklus(skipSubmit)
             if secsExist and secsExist > 0 then
                 _mutLog("⏳ Mesin masih running ("..existingPet..") "..secsExist.."s, tunggu selesai...", Color3.fromRGB(255,200,60))
                 _mutWaitDone()
-                if not _mutRunning then return false end
+                if not _mutState.running then return false end
             elseif getMtsMachinePet() then
                 -- timer nil tapi pet masih ada — sudah selesai, langsung claim
                 _mutLog("ℹ Mesin selesai ("..existingPet.."), langsung claim...", Color3.fromRGB(200,140,255))
@@ -6760,7 +6777,7 @@ local function _mutDoSiklus(skipSubmit)
             task.wait(2)
             -- verifikasi pet sudah keluar (max 10s)
             local clearWait = 0
-            while _mutRunning and clearWait < 10 do
+            while _mutState.running and clearWait < 10 do
                 local stillPet = getMtsMachinePet()
                 if not stillPet then
                     _mutLog("✓ Mesin bersih, siap siklus baru", Color3.fromRGB(60,200,80))
@@ -6768,11 +6785,11 @@ local function _mutDoSiklus(skipSubmit)
                 end
                 task.wait(2); clearWait = clearWait + 2
             end
-            if not _mutRunning then return false end
+            if not _mutState.running then return false end
         end
 
-        -- hold 1 pet age-500 ke tangan (hum:EquipTool) sebelum SubmitHeldPet
-        -- syarat: age=500, BUKAN bagian dari pool MTS S1 maupun S2
+        -- hold 1 pet age>=500 ke tangan (hum:EquipTool) sebelum SubmitHeldPet
+        -- syarat: age>=500, BUKAN bagian dari pool MTS S1/S2 atau _activeUuids
         do
             -- bangun set UUID yang "dilindungi" (jangan disubmit ke mesin)
             local protected = {}
@@ -6785,39 +6802,58 @@ local function _mutDoSiklus(skipSubmit)
                     end
                 end
             end
+            for u in pairs(_activeUuids or {}) do
+                local uclean = tostring(u):gsub("[{}]","")
+                protected[uclean] = true; protected["{"..uclean.."}"] = true
+            end
             local char = plr.Character
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
             local bp   = plr:FindFirstChild("Backpack")
-            local c2   = _kgContainer
+            local c2   = _kgContainer  -- bisa nil, ada fallback di bawah
             local found = false
-            if hum and bp and c2 then
-                for _,t in ipairs(bp:GetChildren()) do
-                    if t:IsA("Tool") then
-                        local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
-                        if uuid then
-                            local uclean = tostring(uuid):gsub("[{}]","")
-                            if not protected[uclean] then
+            if hum then
+                -- scan backpack + character (konsisten sama getMtsPets)
+                local scan = {}
+                if bp then for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
+                if char then for _,t in ipairs(char:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
+                for _,t in ipairs(scan) do
+                    local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
+                    if uuid then
+                        local uclean = tostring(uuid):gsub("[{}]","")
+                        if not protected[uclean] and not protected["{"..uclean.."}"] then
+                            -- 1) dari container (paling akurat)
+                            local lv = nil
+                            if c2 then
                                 local key = "{"..uclean.."}"
                                 local e = c2[key]
-                                local lv = e and e.PetData and tonumber(e.PetData.Level) or 0
-                                if lv >= 500 then
-                                    local nm = tostring(t:GetAttribute("PetType") or t.Name or ""):sub(1,30)
-                                    _mutLog("🤲 Hold ke tangan → submit: "..nm.." ("..uclean:sub(1,8)..")", Color3.fromRGB(120,180,120))
-                                    -- sama persis dengan mtsGiftOne: EquipTool supaya pet di tangan
-                                    pcall(function() hum:EquipTool(t) end); task.wait(0.4)
-                                    if t.Parent ~= char then
-                                        pcall(function() hum:EquipTool(t) end); task.wait(0.4)
-                                    end
-                                    found = true
-                                    break
+                                if type(e)=="table" and e.PetData then
+                                    lv = tonumber(e.PetData.Level)
                                 end
+                            end
+                            -- 2) fallback atribut Tool (kalau container nil/missing)
+                            if lv == nil then
+                                lv = tonumber(t:GetAttribute("Level"))
+                                    or tonumber(t:GetAttribute("Age"))
+                                    or tonumber(t:GetAttribute("age"))
+                                    or tonumber(t:GetAttribute("level"))
+                            end
+                            -- 3) masih nil → skip (tidak tahu umurnya, jangan submit sembarangan)
+                            if lv and lv >= 500 then
+                                local nm = tostring(t:GetAttribute("PetType") or t.Name or ""):sub(1,30)
+                                _mutLog("🤲 Hold → submit: "..nm.." age="..lv.." ("..uclean:sub(1,8)..")", Color3.fromRGB(120,180,120))
+                                pcall(function() hum:EquipTool(t) end); task.wait(0.4)
+                                if t.Parent ~= char then
+                                    pcall(function() hum:EquipTool(t) end); task.wait(0.4)
+                                end
+                                found = true
+                                break
                             end
                         end
                     end
                 end
             end
             if not found then
-                _mutLog("⚠ Tidak ada pet age-500 bebas di backpack untuk submit!", Color3.fromRGB(255,80,80))
+                _mutLog("⚠ Tidak ada pet age>=500 bebas untuk submit!", Color3.fromRGB(255,80,80))
                 return false
             end
         end
@@ -6852,7 +6888,7 @@ local function _mutDoSiklus(skipSubmit)
     task.wait(3)
     -- pastikan timer benar-benar ada sebelum mulai poll
     local timerCheck = 0
-    while _mutRunning and timerCheck < 10 do
+    while _mutState.running and timerCheck < 10 do
         local t = getMtsMachineTimer()
         local s = _mutParseTimer(t or "")
         if s and s > 0 then break end
@@ -6862,7 +6898,7 @@ local function _mutDoSiklus(skipSubmit)
 
     -- tunggu mesin SIAP
     _mutWaitDone()
-    if not _mutRunning then return false end
+    if not _mutState.running then return false end
     task.wait(0.5)
     _mutLog("✅ Masuk Sesi 2 — swap ke Gremlin", Color3.fromRGB(60,200,80))
 
@@ -6872,7 +6908,7 @@ local function _mutDoSiklus(skipSubmit)
     -- tunggu Gremlin beneran masuk kebun (cek model di workspace)
     local gremlinTarget = SESI2_MUT_DEF[1] and SESI2_MUT_DEF[1].jml or 2
     local waited = 0
-    while _mutRunning and waited < 15 do
+    while _mutState.running and waited < 15 do
         local cnt = 0
         pcall(function()
             -- scan workspace: model yang namanya UUID (format {...}) = pet di kebun
@@ -6908,7 +6944,7 @@ local function _mutDoSiklus(skipSubmit)
     end
     -- countdown 3s sebelum claim
     for i=3,1,-1 do
-        if not _mutRunning then return false end
+        if not _mutState.running then return false end
         _mutLog("🎰 Claim dalam "..i.."s...", Color3.fromRGB(180,120,255))
         task.wait(1)
     end
@@ -6942,7 +6978,7 @@ local mtsStatLbl=mk("TextLabel",{Size=UDim2.new(0.5,-3,1,0),BackgroundColor3=C.c
 corner(mtsStatLbl,6); mk("UIPadding",{PaddingLeft=UDim.new(0,8),Parent=mtsStatLbl})
 
 local _mtsRunning=false
-local _mutRunning=false
+-- _mutState sudah dideklarasikan di atas (baris ~6540) via tabel, tidak perlu re-declare.
 
 local mtsStartBtn=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=Color3.fromRGB(34,197,94),
     Text="▶  START AUTO MTS",Font=FONT_B,TextSize=14,TextColor3=Color3.new(0,0,0),
@@ -6953,14 +6989,14 @@ local mtsStopBtn=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=Colo
 
 -- loop MUTASI MESIN (terpisah)
 local function _loopMutasi()
-    _mutRunning = true; _G.ZenxMutRunning = true
+    _mutState.running = true; _G.ZenxMutRunning = true
     mutStatLbl.Text="⚙ mesin: start..."; mutStatLbl.TextColor3=Color3.fromRGB(180,120,255)
 
     -- background loop: enforce lineup tiap 3s (terpisah dari main flow)
     task.spawn(function()
-        while _mutRunning do
+        while _mutState.running do
             task.wait(3)
-            if _mutRunning and not _isTransisi then
+            if _mutState.running and not _isTransisi then
                 pcall(_mutEnforceLineup, _mutCurrentDef)
             end
         end
@@ -6974,7 +7010,7 @@ local function _loopMutasi()
         -- tunggu sampai pet keluar dari mesin; kalau timer 0 tapi pet masih ada → claim
         local lastLogMenit = -1
         local claimTriedAt = 0
-        while _mutRunning do
+        while _mutState.running do
             local pet = getMtsMachinePet()
             if not pet then _mutLog("✓ Mesin kosong, siap lanjut", Color3.fromRGB(60,200,80)); break end
             local txt = getMtsMachineTimer()
@@ -6997,12 +7033,12 @@ local function _loopMutasi()
             end
             task.wait(3)
         end
-        if _mutRunning then
+        if _mutState.running then
             task.wait(0.5)
             _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰", 2)
             -- tunggu Gremlin masuk kebun sebelum claim
             local gWaited = 0
-            while _mutRunning and gWaited < 15 do
+            while _mutState.running and gWaited < 15 do
                 local gCnt = 0
                 pcall(function()
                     for _,d in ipairs(game.Workspace:GetDescendants()) do
@@ -7022,7 +7058,7 @@ local function _loopMutasi()
             end
             if gWaited >= 15 then _mutLog("⚠ Gremlin timeout, lanjut claim", Color3.fromRGB(255,140,60)) end
             for i=3,1,-1 do
-                if not _mutRunning then break end
+                if not _mutState.running then break end
                 _mutLog("🎰 Claim dalam "..i.."s...", Color3.fromRGB(180,120,255))
                 task.wait(1)
             end
@@ -7035,7 +7071,7 @@ local function _loopMutasi()
         end
     end
     local siklus = 0
-    while _mutRunning do
+    while _mutState.running do
         siklus = siklus + 1
         mutStatLbl.Text="⚙ mesin: siklus "..siklus
         _mutLog(string.format("━━━ Siklus %d ━━━", siklus), Color3.fromRGB(100,100,200))
@@ -7112,8 +7148,19 @@ local function getMtsPets()
                 -- 3) masih nil: asumsikan bahan biasa, include age=0
                 if age == nil then age = 0 end
                 if age < 500 then
+                    -- mutationType dari RC container PetData.MutationType (GG=Gigantic, MG=Mega, TR=Transcendent)
+                    -- fallback: parse t.Name kalau RC tidak ada
+                    local mutType = ""
+                    if c then
+                        local e = c["{"..uStr.."}"]
+                        if type(e)=="table" and type(e.PetData)=="table" then
+                            mutType = tostring(e.PetData.MutationType or "")
+                        end
+                    end
                     out[#out+1] = {uuid=tostring(uuid), tool=t, age=age,
-                        fullName=tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name or "")}
+                        fullName=tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name or ""),
+                        displayName=tostring(t.Name or ""),
+                        mutationType=mutType}
                 end
             end
         end
@@ -7423,10 +7470,17 @@ local function updateMtsStat()
     local nAge=0; local nGig=0; local nMega=0; local nTrans=0
     nAge=#pets
     for _,p in ipairs(pets) do
-        local fn=p.fullName:lower()
-        if fn:find("^transcendent ") then nTrans=nTrans+1
-        elseif fn:find("^mega ") then nMega=nMega+1
-        elseif fn:find("^gigantic ") then nGig=nGig+1
+        -- detect size tier:
+        -- Mega & Transcendent by displayName (belum ada MutationType resmi di game)
+        -- Gigantic: MutationType=="GG" dari RC (resmi), fallback by name jika RC kosong
+        local dn = (p.displayName or p.fullName or ""):lower()
+        local mt = p.mutationType or ""
+        if dn:find("transenden") then
+            nTrans = nTrans + 1
+        elseif dn:find("mega") then
+            nMega = nMega + 1
+        elseif mt == "GG" or dn:find("gigantic") then
+            nGig = nGig + 1
         end
     end
     mtsVAge.Text=tostring(nAge)
@@ -7448,7 +7502,7 @@ task.spawn(function()
 end)
 
 mtsStartBtn.MouseButton1Click:Connect(function()
-    if _mtsRunning or _mutRunning then return end
+    if _mtsRunning or _mutState.running then return end
     local targets={}; for nm in pairs(_mtsTargets) do targets[#targets+1]=nm end
     if #targets==0 then
         mtsStatLbl.Text="🎁 ⚠ pilih target dulu!"; mtsStatLbl.TextColor3=Color3.fromRGB(255,120,80); return
@@ -7463,13 +7517,13 @@ mtsStartBtn.MouseButton1Click:Connect(function()
     task.spawn(_loopGift)
     -- pantau keduanya, kalau keduanya berhenti → balik tombol
     task.spawn(function()
-        while _mtsRunning or _mutRunning do task.wait(1) end
+        while _mtsRunning or _mutState.running do task.wait(1) end
         mtsStartBtn.Visible=true; mtsStopBtn.Visible=false
     end)
 end)
 
 mtsStopBtn.MouseButton1Click:Connect(function()
-    _mtsRunning=false; _mutRunning=false
+    _mtsRunning=false; _mutState.running=false
     _mtsSaveAutoStart(false); _G.ZenxMutRunning=false
     mtsStartBtn.Visible=true; mtsStopBtn.Visible=false
     mtsStatLbl.Text="🎁 gift: —"; mtsStatLbl.TextColor3=C.textMute
