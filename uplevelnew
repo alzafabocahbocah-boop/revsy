@@ -1,4 +1,4 @@
--- uplevelnew v8.329 — target tersimpan: tetap terpilih, indikator online/offline, klik untuk uncheck
+-- uplevelnew v8.330 — target player: tampil total pet inventory via ViewInventory
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.329"
+local VERSION = "v8.330"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5808,6 +5808,25 @@ if type(_G.ZenxMtsState) ~= "table" then _G.ZenxMtsState = {targets={}, autoStar
 if next(_G.ZenxMtsState.targets) == nil then _mtsLoad() end
 local _mtsTargets = _G.ZenxMtsState.targets  -- {nama=true}
 
+-- cache total pet inventory target {[nama]=count or "?"}
+local _mtsInvCache = {}
+
+local function _mtsGetInvCount(playerObj)
+    -- pakai ViewInventory:InvokeServer (sama seperti up6kg oper ele)
+    local ok, total = pcall(function()
+        local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+        te = te and te:FindFirstChild("TradeEvents")
+        local vi = te and te:FindFirstChild("ViewInventory")
+        if not vi then return nil end
+        local res = vi:InvokeServer(playerObj)
+        if type(res) ~= "table" then return nil end
+        local n = 0
+        for _ in pairs(res) do n = n + 1 end
+        return n
+    end)
+    return (ok and total) or nil
+end
+
 local function buildMtsPlayerList()
     for _,c in ipairs(mtsPlrFrame:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
     local me = game:GetService("Players").LocalPlayer
@@ -5827,16 +5846,41 @@ local function buildMtsPlayerList()
         idx = idx + 1
         local online = inServer[savedNm] == true
         local rowBg = online and Color3.fromRGB(30,60,40) or C.cardSel
-        local row=mk("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=rowBg,
+        local row=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=rowBg,
             Text="",AutoButtonColor=false,BorderSizePixel=0,LayoutOrder=idx,Parent=mtsPlrFrame})
         corner(row,8); stroke(row, C.accent, 1.5)
         local nameLbl=lbl(row,savedNm,13,C.accent)
-        nameLbl.Font=FONT_B; nameLbl.Position=UDim2.new(0,14,0,0); nameLbl.Size=UDim2.new(0.6,0,1,0)
+        nameLbl.Font=FONT_B; nameLbl.Position=UDim2.new(0,14,0,0); nameLbl.Size=UDim2.new(0.65,0,0.5,0)
+        -- status online/offline
         local statusTxt = online and "✓ online" or "⚫ offline"
         local statusCol = online and Color3.fromRGB(60,200,80) or Color3.fromRGB(180,80,80)
         local selLbl=lbl(row,statusTxt,10,statusCol)
-        selLbl.Position=UDim2.new(1,-75,0,0); selLbl.Size=UDim2.new(0,70,1,0)
+        selLbl.Position=UDim2.new(1,-75,0,2); selLbl.Size=UDim2.new(0,70,0,18)
         selLbl.TextXAlignment=Enum.TextXAlignment.Right
+        -- total pet inventory (dari cache, update async)
+        local cached = _mtsInvCache[savedNm]
+        local invTxt = cached and ("🎒 "..cached.." pet") or "🎒 ..."
+        local invCol = Color3.fromRGB(180,180,80)
+        local invLbl=lbl(row,invTxt,10,invCol)
+        invLbl.Position=UDim2.new(1,-75,0,20); invLbl.Size=UDim2.new(0,70,0,18)
+        invLbl.TextXAlignment=Enum.TextXAlignment.Right
+        -- hint uncheck di bawah nama
+        local uncheckHint=lbl(row,"✕ uncheck",9,Color3.fromRGB(180,80,80))
+        uncheckHint.Position=UDim2.new(0,14,0.5,2); uncheckHint.Size=UDim2.new(0.5,0,0.4,0)
+        uncheckHint.TextXAlignment=Enum.TextXAlignment.Left
+        -- fetch inv count async kalau online dan belum di-cache
+        if online then
+            local pObj = game:GetService("Players"):FindFirstChild(savedNm)
+            if pObj then
+                task.spawn(function()
+                    local cnt = _mtsGetInvCount(pObj)
+                    if cnt then
+                        _mtsInvCache[savedNm] = cnt
+                        pcall(function() invLbl.Text = "🎒 "..cnt.." pet"; invLbl.TextColor3=invCol end)
+                    end
+                end)
+            end
+        end
         local pName=savedNm
         row.MouseButton1Click:Connect(function()
             _mtsTargets[pName] = nil  -- klik = uncheck (hapus dari target)
@@ -5844,10 +5888,6 @@ local function buildMtsPlayerList()
             local n=0; for _ in pairs(_mtsTargets) do n=n+1 end
             mtsVTgt.Text=tostring(n)
         end)
-        -- label hint uncheck
-        local uncheckHint=lbl(row,"✕ uncheck",9,Color3.fromRGB(180,80,80))
-        uncheckHint.Position=UDim2.new(0,14,0.6,0); uncheckHint.Size=UDim2.new(0.5,0,0.4,0)
-        uncheckHint.TextXAlignment=Enum.TextXAlignment.Left
     end
 
     -- bagian 2: player di server yang belum dipilih
@@ -5885,7 +5925,10 @@ local function buildMtsPlayerList()
         e.Size=UDim2.new(1,0,0,26); e.LayoutOrder=1
     end
 end
-mtsRefreshBtn.MouseButton1Click:Connect(buildMtsPlayerList)
+mtsRefreshBtn.MouseButton1Click:Connect(function()
+    _mtsInvCache = {}  -- reset cache supaya fetch ulang saat refresh
+    buildMtsPlayerList()
+end)
 buildMtsPlayerList()
 
 -- ---- PENGATURAN ----
