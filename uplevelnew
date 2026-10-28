@@ -1,4 +1,4 @@
--- uplevelnew v8.366 — debug log equip UUID + ZenxModelByUuid count
+-- uplevelnew v8.367 — expose equipPet/unequipAll/equipSesi via _G agar MTS bisa akses
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.366"
+local VERSION = "v8.367"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2931,6 +2931,7 @@ equipPet = function(uuid)
         print("[UPLVL-DBG] equipPet FireServer ok=", ok, err)
     end
 end
+_G.ZenxEquipPet = equipPet  -- expose ke MTS scope (di luar _startEngine)
 unequipPet = function(uuid)
     if not equipRE then return end
     pcall(function() equipRE:FireServer("UnequipPet", fmtUUID(uuid)) end)
@@ -5295,6 +5296,10 @@ do
     end)
 end -- end TAB TRADE ALL
 
+-- expose fungsi engine ke MTS scope (di luar _startEngine) via _G
+_G.ZenxUnequipAll = unequipAll
+_G.ZenxEquipSesi  = equipSesi
+
 end -- closes _startEngine
 _startEngine()
 
@@ -6526,7 +6531,8 @@ local function _mutSwapLineup(def, label, fase, sesiNum)
     _mutCurrentSesi = sesiNum
 
     -- step 1: unequip semua
-    if type(unequipAll)=="function" then pcall(unequipAll) end
+    local _unequipAll = _G.ZenxUnequipAll or unequipAll
+    if type(_unequipAll)=="function" then pcall(_unequipAll) end
     task.wait(2)
 
     -- step 2: clear _activeUuids
@@ -6540,23 +6546,28 @@ local function _mutSwapLineup(def, label, fase, sesiNum)
     if poolCount > 0 then
         _mutLog("🎯 Pool S"..sesiNum..": "..poolCount.." UUID → equip langsung", Color3.fromRGB(78,214,204))
         -- equip tiap UUID dari pool
+        local _equipPet = _G.ZenxEquipPet or equipPet
         for uuid in pairs(pool) do
-            if type(equipPet)=="function" then
+            if type(_equipPet)=="function" then
                 _mutLog("🐾 equip: "..tostring(uuid):sub(1,20), Color3.fromRGB(120,180,120))
-                local ok, err = pcall(equipPet, uuid)
+                local ok, err = pcall(_equipPet, uuid)
                 if not ok then _mutLog("⚠ equip err: "..tostring(err):sub(1,40), Color3.fromRGB(255,80,80)) end
                 task.wait(0.12)
+            else
+                _mutLog("⚠ equipPet nil! _G.ZenxEquipPet="..tostring(_G.ZenxEquipPet), Color3.fromRGB(255,80,80))
+                break
             end
         end
-        -- tandai _activeUuids (best-effort, bisa beda closure setelah re-execute)
+        -- tandai _activeUuids (best-effort)
         for uuid in pairs(pool) do
             if _activeUuids then _activeUuids[uuid] = true end
         end
     else
         -- fallback: equipSesi auto-pick
         _mutLog("⚠ Pool S"..sesiNum.." kosong — auto-pick dari container", Color3.fromRGB(255,180,60))
-        if type(equipSesi)=="function" then
-            local ok, err = pcall(equipSesi, 1, def)
+        local _equipSesi = _G.ZenxEquipSesi or equipSesi
+        if type(_equipSesi)=="function" then
+            local ok, err = pcall(_equipSesi, 1, def)
             if not ok then _mutLog("⚠ equipSesi error: "..tostring(err), Color3.fromRGB(255,80,80)) end
         end
     end
@@ -6625,19 +6636,20 @@ local function _mutEnforceLineup(def)
         local poolCount = 0
         for _ in pairs(pool) do poolCount = poolCount + 1 end
         local mbu = _G.ZenxModelByUuid or {}
+        local _equipPet2 = _G.ZenxEquipPet or equipPet
         if poolCount > 0 then
             for uuid in pairs(pool) do
                 if not mbu[uuid] then
-                    if type(equipPet)=="function" then
-                        pcall(function() equipPet(uuid) end); task.wait(0.15)
+                    if type(_equipPet2)=="function" then
+                        pcall(function() _equipPet2(uuid) end); task.wait(0.15)
                     end
                 end
             end
         else
             for uuid in pairs(_activeUuids or {}) do
                 if not mbu[uuid] then
-                    if type(equipPet)=="function" then
-                        pcall(function() equipPet(uuid) end); task.wait(0.15)
+                    if type(_equipPet2)=="function" then
+                        pcall(function() _equipPet2(uuid) end); task.wait(0.15)
                     end
                 end
             end
