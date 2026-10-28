@@ -1,4 +1,4 @@
--- uplevelnew v8.360 — fix Pilih Tim: pcall wrapper, tampilkan error kalau crash
+-- uplevelnew v8.361 — fix Pilih Tim: inline scan _kgContainer, tidak bergantung listPetsAll
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.360"
+local VERSION = "v8.361"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6203,12 +6203,42 @@ if not next(_mutPool[1]) and not next(_mutPool[2]) then _mutPoolLoad() end
 
 -- helper: scan pet di kebun sekarang, filter sesuai def, simpan ke pool
 local function _mutPickTim(sesi, def, statusLbl)
+    -- guard: def harus table
+    if type(def) ~= "table" then
+        statusLbl.Text = "def nil/invalid!"; statusLbl.TextColor3 = Color3.fromRGB(255,80,80)
+        warn("[MTS] _mutPickTim: def bukan table, sesi="..tostring(sesi))
+        return
+    end
+
     -- hitung total slot yang dibutuhkan per tipe
     local needPerTipe = {}
     for _,d in ipairs(def) do needPerTipe[d.nama] = (needPerTipe[d.nama] or 0) + d.jml end
 
-    -- pakai listPetsAll() — sudah terbukti bisa baca container (256 entries ok di log)
-    local allPets = listPetsAll()
+    -- scan langsung dari _kgContainer (tidak bergantung listPetsAll)
+    local allPets = {}
+    local c = _kgContainer
+    if c then
+        for uuid, e in pairs(c) do
+            if type(e) == "table" then
+                local rawTipe = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+                local tipe = rawTipe:gsub("^Rainbow%s+",""):gsub("^Enchanted%s+",""):gsub("^Exalted%s+",""):gsub("^Everchanted%s+",""):gsub("^Gurita%s+","")
+                local pd = e.PetData or {}
+                local bw = tonumber(pd.BaseWeight) or 0
+                local lv = tonumber(pd.Level) or 0
+                local kg = bw*(lv+10)/10
+                local uuidStr = tostring(uuid)
+                if uuidStr:sub(1,1) ~= "{" then uuidStr = "{"..uuidStr.."}" end
+                allPets[#allPets+1] = {uuid=uuidStr, tipe=tipe, kg=kg}
+            end
+        end
+    end
+    if #allPets == 0 then
+        -- fallback: coba via listPetsAll kalau ada
+        local ok2, pets2 = pcall(function()
+            return type(listPetsAll)=="function" and listPetsAll() or {}
+        end)
+        if ok2 and type(pets2)=="table" then allPets = pets2 end
+    end
     if #allPets == 0 then
         statusLbl.Text = "container kosong!"; statusLbl.TextColor3 = Color3.fromRGB(255,80,80)
         return
@@ -6217,7 +6247,7 @@ local function _mutPickTim(sesi, def, statusLbl)
     -- kelompokkan per tipe, filter sesuai def
     local byTipe = {}
     for _, pet in ipairs(allPets) do
-        local tipe = pet.tipe  -- sudah di-stripMutation oleh listPetsAll
+        local tipe = pet.tipe
         if needPerTipe[tipe] then
             if not byTipe[tipe] then byTipe[tipe] = {} end
             byTipe[tipe][#byTipe[tipe]+1] = {uuid=pet.uuid, kg=pet.kg}
