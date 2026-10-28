@@ -1,4 +1,4 @@
--- uplevelnew v8.327 — persist MTS targets ke file executor, survive rejoin
+-- uplevelnew v8.328 — target player tetap tampil setelah rejoin (online/offline status)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.327"
+local VERSION = "v8.328"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5812,30 +5812,71 @@ local function buildMtsPlayerList()
     for _,c in ipairs(mtsPlrFrame:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
     local me = game:GetService("Players").LocalPlayer
     local players = game:GetService("Players"):GetPlayers()
+    local inServer = {}
+    for _,p in ipairs(players) do if p~=me then inServer[p.Name]=true end end
+
     local idx = 0
+
+    -- bagian 1: target tersimpan (meski tidak ada di server sekarang) — selalu tampil di atas
+    local hasSaved = next(_mtsTargets) ~= nil
+    if hasSaved then
+        local sepLbl=lbl(mtsPlrFrame,"— target tersimpan —",10,C.textMute)
+        sepLbl.Size=UDim2.new(1,0,0,20); sepLbl.LayoutOrder=0
+    end
+    for savedNm in pairs(_mtsTargets) do
+        idx = idx + 1
+        local online = inServer[savedNm] == true
+        local rowBg = online and Color3.fromRGB(30,60,40) or C.cardSel
+        local row=mk("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=rowBg,
+            Text="",AutoButtonColor=false,BorderSizePixel=0,LayoutOrder=idx,Parent=mtsPlrFrame})
+        corner(row,8); stroke(row, C.accent, 1.5)
+        local nameLbl=lbl(row,savedNm,13,C.accent)
+        nameLbl.Font=FONT_B; nameLbl.Position=UDim2.new(0,14,0,0); nameLbl.Size=UDim2.new(0.6,0,1,0)
+        local statusTxt = online and "✓ online" or "⚫ offline"
+        local statusCol = online and Color3.fromRGB(60,200,80) or Color3.fromRGB(180,80,80)
+        local selLbl=lbl(row,statusTxt,10,statusCol)
+        selLbl.Position=UDim2.new(1,-75,0,0); selLbl.Size=UDim2.new(0,70,1,0)
+        selLbl.TextXAlignment=Enum.TextXAlignment.Right
+        local pName=savedNm
+        row.MouseButton1Click:Connect(function()
+            _mtsTargets[pName] = nil  -- klik = hapus dari target
+            _mtsSave()
+            buildMtsPlayerList()
+            local n=0; for _ in pairs(_mtsTargets) do n=n+1 end
+            mtsVTgt.Text=tostring(n)
+        end)
+    end
+
+    -- bagian 2: player di server yang belum dipilih
+    local hasOther = false
     for _,p in ipairs(players) do
-        if p ~= me then
+        if p~=me and not _mtsTargets[p.Name] then
+            if not hasOther then
+                hasOther=true
+                idx=idx+1
+                local sepLbl2=lbl(mtsPlrFrame,"— tambah target —",10,C.textMute)
+                sepLbl2.Size=UDim2.new(1,0,0,20); sepLbl2.LayoutOrder=idx
+            end
             idx = idx + 1
-            local isOn = _mtsTargets[p.Name] == true
-            local row=mk("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=isOn and C.cardSel or C.card,
+            local row=mk("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.card,
                 Text="",AutoButtonColor=false,BorderSizePixel=0,LayoutOrder=idx,Parent=mtsPlrFrame})
-            corner(row,8); stroke(row, isOn and C.accent or C.border, isOn and 1.5 or 1)
-            local nameLbl=lbl(row,p.Name,13,isOn and C.accent or C.text)
+            corner(row,8); stroke(row, C.border, 1)
+            local nameLbl=lbl(row,p.Name,13,C.text)
             nameLbl.Font=FONT_B; nameLbl.Position=UDim2.new(0,14,0,0); nameLbl.Size=UDim2.new(0.6,0,1,0)
-            local selLbl=lbl(row,isOn and "✓ DIPILIH" or "+ pilih",11,isOn and C.accent or C.textMute)
+            local selLbl=lbl(row,"+ pilih",11,C.textMute)
             selLbl.Position=UDim2.new(1,-70,0,0); selLbl.Size=UDim2.new(0,66,1,0)
             selLbl.TextXAlignment=Enum.TextXAlignment.Right
             local pName=p.Name
             row.MouseButton1Click:Connect(function()
-                _mtsTargets[pName] = not _mtsTargets[pName] or nil
-                _mtsSave()  -- persist ke file supaya survive rejoin
+                _mtsTargets[pName] = true
+                _mtsSave()
                 buildMtsPlayerList()
-                -- update stat target count
                 local n=0; for _ in pairs(_mtsTargets) do n=n+1 end
                 mtsVTgt.Text=tostring(n)
             end)
         end
     end
+
     if idx==0 then
         local e=lbl(mtsPlrFrame,"(tidak ada player lain di server)",11,C.textMute)
         e.Size=UDim2.new(1,0,0,26); e.LayoutOrder=1
