@@ -1,4 +1,4 @@
--- uplevelnew v8.375 — fix infinite loop crash: _mutWaitDone cek pet+timer, min wait per siklus
+-- uplevelnew v8.376 — enforce lineup jalan di background loop terpisah (task.spawn), bukan blocking di _mutWaitDone
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.375"
+local VERSION = "v8.376"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6714,8 +6714,6 @@ local function _mutWaitDone()
             _mutLog(string.format("⏳ Mesin running... sisa %d:%02d", menit, secs%60),
                 Color3.fromRGB(255,200,60))
         end
-        -- enforce lineup: keluarkan pet asing, re-equip yang hilang
-        _mutEnforceLineup(_mutCurrentDef)
         task.wait(3)
     end
 end
@@ -6945,6 +6943,16 @@ local mtsStopBtn=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=Colo
 local function _loopMutasi()
     _mutRunning = true; _G.ZenxMutRunning = true
     mutStatLbl.Text="⚙ mesin: start..."; mutStatLbl.TextColor3=Color3.fromRGB(180,120,255)
+
+    -- background loop: enforce lineup tiap 3s (terpisah dari main flow)
+    task.spawn(function()
+        while _mutRunning do
+            task.wait(3)
+            if _mutRunning and not _isTransisi then
+                pcall(_mutEnforceLineup, _mutCurrentDef)
+            end
+        end
+    end)
     -- kalau mesin sedang running, ikut dari tengah
     local timerNow = getMtsMachineTimer()
     local secsNow  = _mutParseTimer(timerNow or "")
