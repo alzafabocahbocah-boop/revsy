@@ -1,4 +1,4 @@
--- uplevelnew v8.378 — fix getMtsPets: fallback atribut Tool + include pet yg gak ada di container (age=0)
+-- uplevelnew v8.379 — fix stuck "tunggu pet keluar mesin": auto claim kalau timer 0 tapi pet masih di mesin
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.378"
+local VERSION = "v8.379"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6971,8 +6971,9 @@ local function _loopMutasi()
     if secsNow and secsNow > 0 then
         _mutLog("🔁 Mesin running! Ikut dari Fase 1...", Color3.fromRGB(255,200,60))
         _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳", 1)
-        -- tunggu sampai pet keluar dari mesin (bukan hanya timer = 0)
+        -- tunggu sampai pet keluar dari mesin; kalau timer 0 tapi pet masih ada → claim
         local lastLogMenit = -1
+        local claimTriedAt = 0
         while _mutRunning do
             local pet = getMtsMachinePet()
             if not pet then _mutLog("✓ Mesin kosong, siap lanjut", Color3.fromRGB(60,200,80)); break end
@@ -6984,11 +6985,16 @@ local function _loopMutasi()
                 if secs and secs > 0 then
                     _mutLog(string.format("⏳ Mesin running... sisa %d:%02d (%s)", math.floor(secs/60), secs%60, pet), Color3.fromRGB(255,200,60))
                 else
-                    _mutLog("⏳ tunggu pet keluar mesin... ("..pet..")", Color3.fromRGB(255,200,60))
+                    -- timer 0 tapi pet masih di mesin → harus claim
+                    local now = tick()
+                    if now - claimTriedAt >= 5 then
+                        claimTriedAt = now
+                        _mutLog("🎁 Timer selesai, claim pet: "..pet.."...", Color3.fromRGB(200,140,255))
+                        pcall(function() RE_mut:FireServer("ClaimMutatedPet") end)
+                        task.wait(2)
+                    end
                 end
             end
-            -- enforce lineup selama nunggu (keluarkan asing, re-equip yang hilang)
-            _mutEnforceLineup(_mutCurrentDef)
             task.wait(3)
         end
         if _mutRunning then
