@@ -1,4 +1,4 @@
--- uplevelnew v8.373 — submit hanya pet age-500 yang bukan bagian pool MTS S1/S2
+-- uplevelnew v8.374 — hold pet via hum:EquipTool sebelum SubmitHeldPet (bukan equipPet ke kebun)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.373"
+local VERSION = "v8.374"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6742,41 +6742,44 @@ local function _mutDoSiklus(skipSubmit)
             if not _mutRunning then return false end
         end
 
-        -- equip 1 pet age 500 ke tangan sebelum SubmitHeldPet
-        -- syarat: age=500, BUKAN bagian dari pool MTS S1 maupun S2 (pool = "working pets")
+        -- hold 1 pet age-500 ke tangan (hum:EquipTool) sebelum SubmitHeldPet
+        -- syarat: age=500, BUKAN bagian dari pool MTS S1 maupun S2
         do
             -- bangun set UUID yang "dilindungi" (jangan disubmit ke mesin)
             local protected = {}
             if _mutPool then
                 for _, p in pairs(_mutPool) do
-                    for u in pairs(p) do protected[tostring(u)] = true end
+                    for u in pairs(p) do
+                        local uclean = tostring(u):gsub("[{}]","")
+                        protected[uclean] = true
+                        protected["{"..uclean.."}"] = true
+                    end
                 end
             end
-            local bp = plr:FindFirstChild("Backpack")
-            local c2 = _kgContainer
+            local char = plr.Character
+            local hum  = char and char:FindFirstChildOfClass("Humanoid")
+            local bp   = plr:FindFirstChild("Backpack")
+            local c2   = _kgContainer
             local found = false
-            if bp and c2 then
+            if hum and bp and c2 then
                 for _,t in ipairs(bp:GetChildren()) do
                     if t:IsA("Tool") then
                         local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
                         if uuid then
-                            local ustr = tostring(uuid)
-                            -- strip kurung kurawal untuk cek protected
-                            local ustrClean = ustr:gsub("[{}]","")
-                            local ustrBrack = "{"..ustrClean.."}"
-                            if not protected[ustrClean] and not protected[ustrBrack] then
-                                local key = ustrBrack
+                            local uclean = tostring(uuid):gsub("[{}]","")
+                            if not protected[uclean] then
+                                local key = "{"..uclean.."}"
                                 local e = c2[key]
                                 local lv = e and e.PetData and tonumber(e.PetData.Level) or 0
                                 if lv >= 500 then
                                     local nm = tostring(t:GetAttribute("PetType") or t.Name or ""):sub(1,30)
-                                    _mutLog("🐾 Equip ke tangan → submit: "..nm.." ("..ustrClean:sub(1,8)..")", Color3.fromRGB(120,180,120))
-                                    local _equipPet = _G.ZenxEquipPet or equipPet
-                                    if type(_equipPet)=="function" then
-                                        pcall(_equipPet, ustr)
-                                        task.wait(1.5)
-                                        found = true
+                                    _mutLog("🤲 Hold ke tangan → submit: "..nm.." ("..uclean:sub(1,8)..")", Color3.fromRGB(120,180,120))
+                                    -- sama persis dengan mtsGiftOne: EquipTool supaya pet di tangan
+                                    pcall(function() hum:EquipTool(t) end); task.wait(0.4)
+                                    if t.Parent ~= char then
+                                        pcall(function() hum:EquipTool(t) end); task.wait(0.4)
                                     end
+                                    found = true
                                     break
                                 end
                             end
