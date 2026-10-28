@@ -1,4 +1,4 @@
--- uplevelnew v8.293 — anti-afk permanen tiap 4 menit (Space + VirtualUser)
+-- uplevelnew v8.294 — auto-rejoin global sync :00/:30 WIB di tab MISC
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -1584,7 +1584,59 @@ for i,mins in ipairs({10,20,30,45,60}) do
         pb.TextColor3=C.accent
     end)
 end
-sectionHeader(miscScroll,"• TOOLS",4)
+-- v8.294: Auto-Rejoin global sync :00 & :30 WIB
+local _arGen = 0
+local _arLabel = mk("TextLabel",{Size=UDim2.new(1,0,0,20),BackgroundTransparency=1,
+    Text="Auto-Rejoin: OFF  |  sisa: --",Font=FONT_B,TextSize=11,
+    TextColor3=C.textDim,TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=3,Parent=miscScroll})
+local arToggle = mk("TextButton",{Size=UDim2.new(1,0,0,34),BackgroundColor3=C.card,
+    Text="⏱  Auto-Rejoin :00/:30 WIB — OFF",Font=FONT_B,TextSize=12,
+    TextColor3=C.textDim,AutoButtonColor=false,LayoutOrder=4,Parent=miscScroll})
+corner(arToggle,8); stroke(arToggle,C.border,1.5)
+local _arOn = false
+local function arStart()
+    _arGen = _arGen + 1
+    local gen = _arGen
+    task.spawn(function()
+        local TS = game:GetService("TeleportService")
+        while _arOn and _arGen == gen do
+            local wib = os.time() + 7*3600
+            local dtk = wib % 3600
+            local sisa = (dtk < 1800) and (1800 - dtk) or (3600 - dtk)
+            if sisa <= 1 then
+                _arLabel.Text = "Auto-Rejoin: ON  |  sisa: 0s — REJOIN!"
+                -- kick dulu -> rejoin server sama (jobId) -> fallback Teleport polos
+                local jobId = game.JobId
+                pcall(function() plr:Kick("zenx rejoin") end)
+                task.wait(3)
+                pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
+                task.wait(6)
+                pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                task.wait(6)
+            else
+                local m = math.floor(sisa/60); local s = sisa%60
+                _arLabel.Text = string.format("Auto-Rejoin: ON  |  sisa: %dm %02ds", m, s)
+            end
+            task.wait(1)
+        end
+        if not _arOn then _arLabel.Text = "Auto-Rejoin: OFF  |  sisa: --" end
+    end)
+end
+arToggle.MouseButton1Click:Connect(function()
+    _arOn = not _arOn
+    if _arOn then
+        arToggle.Text = "⏱  Auto-Rejoin :00/:30 WIB — ON"
+        arToggle.TextColor3 = C.accent
+        stroke(arToggle, C.accent, 1.5)
+        arStart()
+    else
+        _arGen = _arGen + 1
+        arToggle.Text = "⏱  Auto-Rejoin :00/:30 WIB — OFF"
+        arToggle.TextColor3 = C.textDim
+        stroke(arToggle, C.border, 1.5)
+    end
+end)
+sectionHeader(miscScroll,"• TOOLS",5)
 -- Unfav Semua Buah: sekali pencet langsung fire UnfavoriteAllPlants, pencet lagi untuk ulang
 local unfavAllRE = game:GetService("ReplicatedStorage"):WaitForChild("GameEvents",10):FindFirstChild("UnfavoriteAllPlants")
 local unfavBtn=mk("TextButton",{
