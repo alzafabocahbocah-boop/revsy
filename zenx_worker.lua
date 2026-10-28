@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.565 — delta: notifikasi versi sudah terbaru juga
+-- zenx_worker v9.566 — freeform tetap hidup, Roblox dipaksa ke stack 4
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.565"
+local VERSION = "9.566"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -4558,15 +4558,7 @@ local function run(cfg)
         cfg.win_mode = 0
         warn("Arceus: win_mode dipaksa 0 (Arceus auto-freeform; --windowingMode bikin bingkai DOBEL)")
     end
-    do  -- v9.560: semua executor paksa matiin freeform (sama kayak Arceus — cegah bingkai dobel)
-        local ff = (sh("su -c 'settings get global enable_freeform_support'") or ""):gsub("%s+","")
-        if ff == "1" then
-            sh_silent("su -c 'settings put global enable_freeform_support 0'")
-            sh_silent("su -c 'settings put global force_resizable_activities 0'")
-            warn((cfg.executor or "?")..": enable_freeform_support dimatiin (0) -> cegah bingkai DOBEL")
-            ok((cfg.executor or "?")..": freeform OFF (1 bingkai)")
-        end
-    end
+    -- v9.566: freeform dibiarkan hidup (app lain boleh freeform); Roblox dipaksa ke stack 4 via am stack move-task
     if cfg.deteksi_longgar == true then
         DETEKSI_LONGGAR = true
         warn("Deteksi LONGGAR nyala: ada ActivityRecord = dianggap jalan")
@@ -4607,16 +4599,8 @@ local function run(cfg)
     info("Pemicu: "..cfg.targets.." | poll "..cfg.poll_sec.."s")
 
     local wm = 0   -- v9.319: --windowingMode DIPAKSA OFF
-    -- v9.561: paksa matiin freeform di sini juga (denyut loop) sama kayak setup
-    do
-        local ff = sh("su -c 'settings get global enable_freeform_support'"):gsub("%s+","")
-        if ff == "1" then
-            sh_silent("su -c 'settings put global enable_freeform_support 0; settings put global force_resizable_activities 0;'")
-            warn("enable_freeform_support dimatiin (0) -> cegah bingkai DOBEL")
-        end
-    end
-
-    info("Window: fullscreen (freeform OFF)")
+    -- v9.566: freeform dibiarkan hidup; Roblox dipaksa ke stack 4 lewat loop tiap 10s
+    info("Window: Roblox dipaksa stack 4 (freeform tetap hidup buat app lain)")
 
     local tes = api_get(cfg, "/perintah?tim=" .. cfg.tim)
     if tes == "" then
@@ -5139,22 +5123,16 @@ local function run(cfg)
                         taskPkg[tonumber(tid)] = pkg_full
                     end
                 end
-                -- cari stack fullscreen (bukan 0=home, bukan 6=recents)
-                local stackFS = nil
-                for sid, wm in pairs(stacks) do
-                    if wm == "fullscreen" and sid ~= 0 and sid ~= 6 then
-                        if not stackFS or sid < stackFS then stackFS = sid end
-                    end
-                end
-                if not stackFS then return end
-                -- pindah semua Roblox yang di freeform stack
+                -- v9.566: paksa ke stack 4 (hardcode, freeform tetap hidup buat app lain)
+                local stackFS = 4
+                -- pindah semua Roblox yang di freeform stack ke stack 4
                 local cmds = {}
                 for tid, p in pairs(taskPkg) do
                     local inPkgs = false
                     for _, pkg in ipairs(pkgs) do if pkg == p then inPkgs = true; break end end
                     if inPkgs and stacks[taskStack[tid]] == "freeform" then
-                        cmds[#cmds+1] = string.format("am stack move-task %d %d true", tid, stackFS)
-                        warn("[full] " .. p:gsub("com%.roblox%.","") .. " nyasar ke freeform stack -> dipindah ke fullscreen")
+                        cmds[#cmds+1] = string.format("am stack move-task %d 4 true", tid)
+                        warn("[full] " .. p:gsub("com%.roblox%.","") .. " nyasar ke freeform -> dipaksa ke stack 4")
                     end
                 end
                 if #cmds > 0 then
@@ -7119,7 +7097,7 @@ local function run(cfg)
                 SUDAH_GRID = false   -- nata grid/tiling ulang
                 GRID_CACHE = nil     -- v7.61: hitung grid fresh sesi baru
                 lastOpen = 0         -- buka client dari 1/8 lagi (gak nunggu reopen_sec)
-                sh_silent("su -c 'settings put global enable_freeform_support 0; settings put global force_resizable_activities 0;'")  -- v9.560: semua executor
+                -- v9.566: freeform dibiarkan hidup; Roblox dipaksa stack 4 via loop
                 do
                     local daftarF = isi:match("FORCE:([%w%.%_,]+)")
                     local targetF = {}
@@ -13086,26 +13064,8 @@ if PERINTAH == "full" or PERINTAH == "fullscreen" then
         end
     end
 
-    -- Cari stack fullscreen standard (bukan freeform, bukan home, bukan recents)
-    -- ambil yang paling kecil ID-nya yang fullscreen dan punya task non-roblox atau kosong
-    local stackFullscreen = nil
-    for sid, wm in pairs(stacks) do
-        if wm == "fullscreen" then
-            -- cek bukan home/recents (stack 0 = home, stack 6 = recents biasanya)
-            -- pilih stack yang ada task standard atau stack 4 (Termux area)
-            if sid ~= 0 and sid ~= 6 then
-                if not stackFullscreen or sid < stackFullscreen then
-                    stackFullscreen = sid
-                end
-            end
-        end
-    end
-
-    if not stackFullscreen then
-        -- fallback: pakai stack 4 (biasanya fullscreen standard)
-        stackFullscreen = 4
-        warn("Stack fullscreen gak ketemu otomatis, coba stack 4")
-    end
+    -- v9.566: hardcode ke stack 4 (freeform tetap hidup buat app lain)
+    local stackFullscreen = 4
 
     -- Cari semua Roblox yang ada di stack freeform
     local cmds = {}
