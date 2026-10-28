@@ -1,4 +1,4 @@
--- uplevelnew v8.370 — auto MTS resume setelah rejoin: simpan autoStart ke file
+-- uplevelnew v8.371 — fix: claim sisa mesin sebelum siklus baru (bukan tunggu pet keluar sendiri)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.370"
+local VERSION = "v8.371"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6715,23 +6715,29 @@ local function _mutDoSiklus(skipSubmit)
         -- pastikan mesin kosong (tidak ada pet di dalamnya) sebelum submit
         local existingPet = getMtsMachinePet()
         if existingPet then
-            _mutLog("⏳ Mesin masih ada pet ("..existingPet.."), tunggu selesai...", Color3.fromRGB(255,200,60))
-            _mutWaitDone()
-            if not _mutRunning then return false end
-            -- tunggu konfirmasi pet benar-benar hilang dari mesin (max 15s setelah timer habis)
+            -- cek timer: kalau masih running, tunggu dulu
+            local timerExist = getMtsMachineTimer()
+            local secsExist  = _mutParseTimer(timerExist or "")
+            if secsExist and secsExist > 0 then
+                _mutLog("⏳ Mesin masih running ("..existingPet.."), tunggu selesai...", Color3.fromRGB(255,200,60))
+                _mutWaitDone()
+                if not _mutRunning then return false end
+            else
+                _mutLog("ℹ Mesin sudah selesai ("..existingPet.."), langsung claim...", Color3.fromRGB(200,140,255))
+            end
+            -- claim pet yang ada di mesin sebelum mulai siklus baru
+            _mutLog("🎁 Claim sisa mesin sebelumnya...", Color3.fromRGB(200,140,255))
+            pcall(function() RE_mut:FireServer("ClaimMutatedPet") end)
+            task.wait(2)
+            -- verifikasi pet sudah keluar (max 10s)
             local clearWait = 0
-            while _mutRunning and clearWait < 30 do
+            while _mutRunning and clearWait < 10 do
                 local stillPet = getMtsMachinePet()
                 if not stillPet then
-                    _mutLog("✓ Pet keluar mesin, lanjut sesi 2", Color3.fromRGB(60,200,80))
+                    _mutLog("✓ Mesin bersih, siap siklus baru", Color3.fromRGB(60,200,80))
                     break
                 end
-                _mutLog("⏳ Tunggu pet keluar mesin ("..stillPet..") "..clearWait.."s...", Color3.fromRGB(255,200,60))
                 task.wait(2); clearWait = clearWait + 2
-            end
-            local finalPet = getMtsMachinePet()
-            if finalPet then
-                _mutLog("⚠ Pet masih di mesin setelah 30s ("..finalPet.."), lanjut paksa", Color3.fromRGB(255,140,60))
             end
             if not _mutRunning then return false end
         end
