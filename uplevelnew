@@ -1,4 +1,4 @@
--- uplevelnew v8.404 — pause mutasi saat gift aktif, lanjut setelah gift selesai
+-- uplevelnew v8.405 — getMtsPets: exclude lineup auto lvl/trade (ZenxSupportUuids dll)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.404"
+local VERSION = "v8.405"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7130,19 +7130,21 @@ local function getMtsPets()
     local out={}
     local c = _kgContainer
     -- build set UUID yang dilindungi: _mutPool (lineup MTS) + _activeUuids (di kebun)
+    -- v8.405: tambah _G.ZenxSupportUuids + ZenxSupportKunci + __ZenxSupProtect (lineup auto lvl/trade)
     local protected = {}
-    if _mutPool then
-        for _, pool in pairs(_mutPool) do
-            for uuid in pairs(pool) do
-                local u = tostring(uuid):gsub("[{}]","")
-                protected[u] = true; protected["{"..u.."}"] = true
-            end
-        end
-    end
-    for uuid in pairs(_activeUuids or {}) do
+    local function _prot(uuid)
         local u = tostring(uuid):gsub("[{}]","")
         protected[u] = true; protected["{"..u.."}"] = true
     end
+    if _mutPool then
+        for _, pool in pairs(_mutPool) do
+            for uuid in pairs(pool) do _prot(uuid) end
+        end
+    end
+    for uuid in pairs(_activeUuids or {}) do _prot(uuid) end
+    for uuid in pairs(_G.ZenxSupportUuids or {}) do _prot(uuid) end
+    for uuid in pairs(_G.ZenxSupportKunci or {}) do _prot(uuid) end
+    for uuid in pairs(_G.__ZenxSupProtect or {}) do _prot(uuid) end
     -- scan backpack + character (konsisten sama petsLolos di TRADE tab)
     local scan = {}
     local bp = plr:FindFirstChild("Backpack")
