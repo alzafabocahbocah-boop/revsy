@@ -1,4 +1,4 @@
--- uplevelnew v8.363 — tampilkan uuid+kg+tipe per pet setelah Pilih Tim diklik
+-- uplevelnew v8.364 — pool detail permanen di label, tidak ditimpa loop
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.363"
+local VERSION = "v8.364"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6375,35 +6375,73 @@ local function _mutBuildLineupText(def)
     return table.concat(lines, "\n")
 end
 
+-- bangun teks detail dari _mutPool[sesi] untuk ditampilkan permanen
+local function _mutBuildPoolDetail(sesi)
+    local pool = _mutPool and _mutPool[sesi]
+    if not pool or not next(pool) then return nil end
+    local c2 = _kgContainer
+    local lines = {}
+    for uuid, tipe in pairs(pool) do
+        local kg = 0
+        if c2 then
+            local key = tostring(uuid)
+            if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+            local e = c2[key]
+            if type(e)=="table" and e.PetData then
+                local bw = tonumber(e.PetData.BaseWeight) or 0
+                local lv = tonumber(e.PetData.Level) or 0
+                kg = bw*(lv+10)/10
+            end
+        end
+        local shortUuid = tostring(uuid):gsub("[{}]",""):sub(1,8)
+        lines[#lines+1] = string.format("%s [%s] %.1fkg", tipe, shortUuid, kg)
+    end
+    table.sort(lines)
+    return table.concat(lines, "\n")
+end
+
 -- update lineup info tiap 3s saat tab aktif
 task.spawn(function()
     while true do
         task.wait(3)
         pcall(function()
             if not mtsContent.Visible then return end
+            -- selalu tampilkan pool detail kalau ada, baru fallback ke lineup equip / status
+            local s1Detail = _mutBuildPoolDetail(1)
+            local s2Detail = _mutBuildPoolDetail(2)
             if not _mutRunning then
-                mutLineupS1Lbl.Text = "(mesin tidak jalan)"
-                mutLineupS1Lbl.TextColor3 = C.textMute
-                mutLineupS2Lbl.Text = "(mesin tidak jalan)"
-                mutLineupS2Lbl.TextColor3 = C.textMute
+                if s1Detail then
+                    mutLineupS1Lbl.Text = s1Detail
+                    mutLineupS1Lbl.TextColor3 = Color3.fromRGB(78,214,204)
+                else
+                    mutLineupS1Lbl.Text = "(belum pilih tim)"
+                    mutLineupS1Lbl.TextColor3 = C.textMute
+                end
+                if s2Detail then
+                    mutLineupS2Lbl.Text = s2Detail
+                    mutLineupS2Lbl.TextColor3 = Color3.fromRGB(180,120,255)
+                else
+                    mutLineupS2Lbl.Text = "(belum pilih tim)"
+                    mutLineupS2Lbl.TextColor3 = C.textMute
+                end
                 return
             end
-            -- sesi 1
+            -- mesin jalan: tampilkan pool detail + status equip di fase aktif
             local fase = tostring(_mtsFaseNow or "")
             if fase:find("Mimic") or fase:find("Golem") then
-                mutLineupS1Lbl.Text = _mutBuildLineupText(MTS_LINEUP_DEF)
+                mutLineupS1Lbl.Text = s1Detail or _mutBuildLineupText(MTS_LINEUP_DEF)
                 mutLineupS1Lbl.TextColor3 = Color3.fromRGB(78,214,204)
-                mutLineupS2Lbl.Text = "(belum fase ini)"
+                mutLineupS2Lbl.Text = s2Detail and ("(standby)\n"..s2Detail) or "(belum fase ini)"
                 mutLineupS2Lbl.TextColor3 = C.textMute
             elseif fase:find("Gremlin") then
-                mutLineupS1Lbl.Text = "(sudah lewat)"
+                mutLineupS1Lbl.Text = s1Detail and ("(selesai)\n"..s1Detail) or "(sudah lewat)"
                 mutLineupS1Lbl.TextColor3 = C.textMute
-                mutLineupS2Lbl.Text = _mutBuildLineupText(SESI2_MUT_DEF)
+                mutLineupS2Lbl.Text = s2Detail or _mutBuildLineupText(SESI2_MUT_DEF)
                 mutLineupS2Lbl.TextColor3 = Color3.fromRGB(180,120,255)
             else
-                mutLineupS1Lbl.Text = _mutBuildLineupText(MTS_LINEUP_DEF)
+                mutLineupS1Lbl.Text = s1Detail or _mutBuildLineupText(MTS_LINEUP_DEF)
                 mutLineupS1Lbl.TextColor3 = C.textDim
-                mutLineupS2Lbl.Text = _mutBuildLineupText(SESI2_MUT_DEF)
+                mutLineupS2Lbl.Text = s2Detail or _mutBuildLineupText(SESI2_MUT_DEF)
                 mutLineupS2Lbl.TextColor3 = C.textDim
             end
         end)
