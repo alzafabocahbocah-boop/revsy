@@ -1,4 +1,4 @@
--- uplevelnew v8.347 — fix swap lineup: verifikasi _activeUuids, retry 3x kalau belum masuk
+-- uplevelnew v8.348 — MTS enforce lineup: keluarkan pet asing + re-equip yang hilang selama nunggu timer
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.347"
+local VERSION = "v8.348"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6180,6 +6180,7 @@ end
 local function _mutSwapLineup(def, label, fase)
     _mutLog("👕 Swap → "..label, Color3.fromRGB(180,180,80))
     _mutSetFase(fase or label)
+    _mutCurrentDef = def  -- simpan def aktif untuk enforce
     -- retry equip sampai 3x kalau gagal
     local swapOk = false
     for attempt = 1, 3 do
@@ -6203,6 +6204,26 @@ local function _mutSwapLineup(def, label, fase)
     end
 end
 
+-- helper: enforce lineup MTS + re-equip yang hilang
+local function _mutEnforceLineup(def)
+    if not def then return end
+    pcall(function()
+        -- 1. unequip pet asing (bukan dari def)
+        if type(enforceEquip) == "function" then
+            enforceEquip(def)
+        end
+        -- 2. re-equip pet dari _activeUuids yang hilang dari kebun
+        for uuid in pairs(_activeUuids or {}) do
+            if not modelByUuid[uuid] then
+                pcall(function() unequipPet(uuid) end); task.wait(0.1)
+                pcall(function() equipPet(uuid) end); task.wait(0.1)
+            end
+        end
+    end)
+end
+
+local _mutCurrentDef = nil  -- def lineup yang sedang aktif di MTS
+
 local function _mutWaitDone()
     -- poll getMtsMachineTimer() langsung (tidak pakai timerLbl agar tidak stale)
     local lastLog = -1
@@ -6213,13 +6234,15 @@ local function _mutWaitDone()
             _mutLog("✓ Mesin SIAP!", Color3.fromRGB(60,200,80))
             return
         end
-        -- log tiap menit (atau pertama kali)
+        -- log tiap menit
         local menit = math.floor(secs/60)
         if menit ~= lastLog then
             lastLog = menit
             _mutLog(string.format("⏳ Mesin running... sisa %d:%02d", menit, secs%60),
                 Color3.fromRGB(255,200,60))
         end
+        -- enforce lineup: keluarkan pet asing, re-equip yang hilang
+        _mutEnforceLineup(_mutCurrentDef)
         task.wait(3)
     end
 end
@@ -6393,6 +6416,8 @@ local function _loopMutasi()
                     _mutLog("⏳ tunggu pet keluar mesin... ("..pet..")", Color3.fromRGB(255,200,60))
                 end
             end
+            -- enforce lineup selama nunggu (keluarkan asing, re-equip yang hilang)
+            _mutEnforceLineup(_mutCurrentDef)
             task.wait(3)
         end
         if _mutRunning then
