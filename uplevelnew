@@ -1,4 +1,4 @@
--- uplevelnew v8.394 — fix tunggu Gremlin masuk kebun: pakai modelByUuid bukan WS scan by name
+-- uplevelnew v8.395 — mtsGiftOne: log detail kenapa gift gagal (equip/giftRE/return false)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.394"
+local VERSION = "v8.395"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7390,17 +7390,20 @@ local function _loopGift()
                     end
                     local kgVal = math.floor((p.age or 0)*10+0.5)/10
                     local logTxt = p.fullName.." "..kgVal.."kg → "..tNm.." ("..gifted+1 .."/"..#pets..")"
-                    local ok = pcall(mtsGiftOne, tPlr2, p)
-                    if ok then
+                    -- v8.395: pcall return ok=true kalau tidak ada Lua error; ret=return value dari mtsGiftOne
+                    local ok, ret = pcall(mtsGiftOne, tPlr2, p)
+                    local gifted_ok = ok and ret == true
+                    if gifted_ok then
                         mtsAddGiftLog("✓ "..logTxt, C.accent)
                         gifted = gifted + 1
                         if _mtsInvCache[tNm] then
                             _mtsInvCache[tNm].age500 = (_mtsInvCache[tNm].age500 or 0) + 1
                             _mtsInvCache[tNm].total  = (_mtsInvCache[tNm].total  or 0) + 1
                         end
-                    else
-                        mtsAddGiftLog("✗ ERR "..logTxt, Color3.fromRGB(255,100,80))
+                    elseif not ok then
+                        mtsAddGiftLog("✗ ERR Lua "..logTxt..": "..tostring(ret):sub(1,50), Color3.fromRGB(255,100,80))
                     end
+                    -- kalau ok=true tapi ret=false → detail sudah di-log di dalam mtsGiftOne
                     local delay = tonumber(mtsDelayBox.Text) or 0.5
                     task.wait(math.max(0.3, delay))
                 end
@@ -7465,7 +7468,8 @@ end)
 local function mtsGiftOne(targetPlayer, petEntry)
     -- petEntry = {uuid, tool=Tool object}
     local char=plr.Character; local hum=char and char:FindFirstChildOfClass("Humanoid")
-    if not (hum and targetPlayer and petEntry and petEntry.tool) then return false end
+    if not hum then mtsAddGiftLog("✗ gift skip: hum nil", Color3.fromRGB(255,80,80)); return false end
+    if not (targetPlayer and petEntry and petEntry.tool) then mtsAddGiftLog("✗ gift skip: target/entry nil", Color3.fromRGB(255,80,80)); return false end
     local petTool=petEntry.tool
     -- v8.322: unfav dulu sebelum gift (pet favorite tidak bisa di-gift)
     pcall(function()
@@ -7474,10 +7478,28 @@ local function mtsGiftOne(targetPlayer, petEntry)
         if fRE then fRE:FireServer(petTool); task.wait(0.2) end
     end)
     pcall(function()hum:EquipTool(petTool)end); task.wait(0.3)
-    if petTool.Parent~=char then pcall(function()hum:EquipTool(petTool)end); task.wait(0.3) end
+    if petTool.Parent~=char then
+        pcall(function()hum:EquipTool(petTool)end); task.wait(0.3)
+        if petTool.Parent~=char then
+            mtsAddGiftLog("✗ gift equip gagal: "..tostring(petTool.Name):sub(1,20).." (parent="..tostring(petTool.Parent)..")", Color3.fromRGB(255,140,60))
+            return false
+        end
+    end
+    -- v8.395: log state giftRE sebelum fire
+    if not MtsGift.giftRE then
+        mtsAddGiftLog("✗ gift gagal: giftRE nil (PetGiftingService tidak ditemukan)", Color3.fromRGB(255,80,80))
+    end
     if MtsGift.pgs and MtsGift.pgs.GivePet then pcall(function()MtsGift.pgs.GivePet(targetPlayer)end); task.wait(0.3) end
-    if petTool.Parent and MtsGift.giftRE then pcall(function()MtsGift.giftRE:FireServer("GivePet",targetPlayer,fmtUUID(petEntry.uuid))end); task.wait(0.3) end
-    return not (petTool.Parent~=nil and petTool.Parent==char)
+    if petTool.Parent and MtsGift.giftRE then
+        local ok5,e5=pcall(function()MtsGift.giftRE:FireServer("GivePet",targetPlayer,fmtUUID(petEntry.uuid))end)
+        if not ok5 then mtsAddGiftLog("✗ giftRE:FireServer error: "..tostring(e5):sub(1,60), Color3.fromRGB(255,80,80)) end
+        task.wait(0.3)
+    end
+    local success = not (petTool.Parent~=nil and petTool.Parent==char)
+    if not success then
+        mtsAddGiftLog("✗ gift return false: pet masih di char setelah fire (inv penuh/reject?)", Color3.fromRGB(255,140,60))
+    end
+    return success
 end
 
 -- getMtsPets sudah didefinisikan di atas (sebelum _loopGift)
