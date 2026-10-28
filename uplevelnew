@@ -1,4 +1,4 @@
--- uplevelnew v8.342 — fix _mutWaitDone: poll getMtsMachineTimer langsung, tidak pakai timerLbl (bisa stale)
+-- uplevelnew v8.343 — fix: tunggu timer mesin muncul dulu sebelum _mutWaitDone (delay setelah StartMachine)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.342"
+local VERSION = "v8.343"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6240,6 +6240,18 @@ local function _mutDoSiklus(skipSubmit)
 
     -- sesi 1: equip Mimic+Golem selama mesin running
     _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳")
+
+    -- tunggu timer mesin muncul dulu (delay setelah StartMachine ~2-3 detik)
+    task.wait(3)
+    -- pastikan timer benar-benar ada sebelum mulai poll
+    local timerCheck = 0
+    while _mutRunning and timerCheck < 10 do
+        local t = getMtsMachineTimer()
+        local s = _mutParseTimer(t or "")
+        if s and s > 0 then break end
+        _mutLog("⏳ tunggu timer mesin muncul...", Color3.fromRGB(255,200,60))
+        task.wait(2); timerCheck = timerCheck + 1
+    end
 
     -- tunggu mesin SIAP
     _mutWaitDone()
