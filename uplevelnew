@@ -1,4 +1,4 @@
--- uplevelnew v8.397 — forward declare mtsGiftOne (fix "attempt to call a nil value")
+-- uplevelnew v8.398 — fix giftRE: cari RemoteEvent GivePet bukan ModuleScript PetGiftingService
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.397"
+local VERSION = "v8.398"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7459,8 +7459,21 @@ _G.ZenxMtsSetFase = function(fase) _mtsFaseNow = tostring(fase) end
 local MtsGift={}
 pcall(function()
     local GE=gameEvents; local RS2=game:GetService("ReplicatedStorage")
-    MtsGift.giftRE=GE and GE:FindFirstChild("PetGiftingService")
-    if not MtsGift.giftRE then MtsGift.giftRE=RS2:FindFirstChild("PetGiftingService",true) end
+    -- v8.398: cari RemoteEvent GivePet di dalam folder PetGiftingService, bukan ModuleScript-nya
+    local function findGiftRE()
+        local pgs=GE and GE:FindFirstChild("PetGiftingService")
+        if pgs and pgs:FindFirstChild("GivePet") then return pgs:FindFirstChild("GivePet") end
+        local pgs2=RS2:FindFirstChild("PetGiftingService",true)
+        if pgs2 and pgs2:FindFirstChild("GivePet") then return pgs2:FindFirstChild("GivePet") end
+        -- fallback: scan GameEvents langsung
+        if GE then
+            for _,v in ipairs(GE:GetDescendants()) do
+                if v:IsA("RemoteEvent") and (v.Name=="GivePet" or v.Name=="GiftPet") then return v end
+            end
+        end
+        return nil
+    end
+    MtsGift.giftRE=findGiftRE()
     local mods=RS2:FindFirstChild("Modules")
     local gm=mods and mods:FindFirstChild("PetGiftingInputService")
     if gm then local ok,mod=pcall(require,gm); if ok then MtsGift.pgs=mod end end
@@ -7494,7 +7507,8 @@ mtsGiftOne = function(targetPlayer, petEntry)
     if petTool.Parent and MtsGift.giftRE then
         -- v8.396: inline fmtUUID agar tidak bergantung scope (fix "attempt to call a nil value")
         local function _fmt(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.."}" end; return s end
-        local ok5,e5=pcall(function()MtsGift.giftRE:FireServer("GivePet",targetPlayer,_fmt(petEntry.uuid))end)
+        -- v8.398: giftRE sudah RemoteEvent GivePet langsung, tidak perlu prefix "GivePet"
+        local ok5,e5=pcall(function()MtsGift.giftRE:FireServer(targetPlayer,_fmt(petEntry.uuid))end)
         if not ok5 then mtsAddGiftLog("✗ giftRE:FireServer error: "..tostring(e5):sub(1,60), Color3.fromRGB(255,80,80)) end
         task.wait(0.3)
     end
