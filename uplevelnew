@@ -1,4 +1,4 @@
--- uplevelnew v8.336 — gift paralel: assign UUID dulu per target, lalu gift barengan semua thread
+-- uplevelnew v8.337 — fix siklus gagal: cek timer dulu sebelum retry, jangan interrupt mesin running
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.336"
+local VERSION = "v8.337"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6348,8 +6348,17 @@ local function _loopMutasi()
         _mutLog(string.format("━━━ Siklus %d ━━━", siklus), Color3.fromRGB(100,100,200))
         local ok = _mutDoSiklus(false)
         if not ok then
-            _mutLog("⚠ Siklus gagal, retry 3s...", Color3.fromRGB(255,140,60))
-            task.wait(3)
+            _mutLog("⚠ Siklus gagal, cek mesin dulu...", Color3.fromRGB(255,140,60))
+            -- cek apakah mesin masih running — kalau iya tunggu dulu jangan langsung retry
+            local txt = getMtsMachineTimer()
+            local secs = _mutParseTimer(txt or "")
+            if secs and secs > 0 then
+                _mutLog(string.format("⏳ Mesin masih running %d:%02d, tunggu dulu...",
+                    math.floor(secs/60), secs%60), Color3.fromRGB(255,200,60))
+                _mutWaitDone()
+            else
+                task.wait(3)
+            end
         else
             task.wait(1)
         end
