@@ -1,4 +1,4 @@
--- uplevelnew v8.318 — tombol REJOIN kecil di title bar
+-- uplevelnew v8.323 — 1 tombol START: 2 loop paralel terpisah (loop mutasi mesin + loop gift)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.318"
+local VERSION = "v8.323"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2547,6 +2547,7 @@ if not _G.__ZenxFpsTrack then
         fpsLbl.TextColor3 = Color3.fromRGB(120, 255, 140); fpsLbl.BorderSizePixel = 0
         fpsLbl.Text = "FPS --"
         Instance.new("UICorner", fpsLbl).CornerRadius = UDim.new(0, 8)
+        _G.ZenxFpsLbl = fpsLbl  -- v8.320: expose supaya mutasi bisa ubah warna header
         -- v8.294: label countdown rejoin di bawah FPS
         local rjCountLbl = Instance.new("TextLabel", g)
         rjCountLbl.Size = UDim2.new(0, 120, 0, 28)
@@ -2577,10 +2578,22 @@ if not _G.__ZenxFpsTrack then
             task.wait(1); _G.__ZenxFps = cnt; cnt = 0
             if fpsLbl then
                 local f = _G.__ZenxFps or 0
-                fpsLbl.Text = "FPS " .. f .. (f <= 5 and " (putih)" or "")
-                fpsLbl.TextColor3 = (f <= 5) and Color3.fromRGB(255, 90, 90)
-                    or (f <= 20) and Color3.fromRGB(255, 210, 90)
-                    or Color3.fromRGB(120, 255, 140)
+                -- v8.320: mode MUTASI → background putih, text hitam
+                if _G.ZenxMutRunning then
+                    fpsLbl.Text = "⚙ MUTASI " .. f
+                    fpsLbl.BackgroundColor3 = Color3.fromRGB(240, 240, 255)
+                    fpsLbl.BackgroundTransparency = 0
+                    fpsLbl.TextColor3 = (f <= 5) and Color3.fromRGB(200, 0, 0)
+                        or (f <= 20) and Color3.fromRGB(160, 80, 0)
+                        or Color3.fromRGB(60, 30, 160)
+                else
+                    fpsLbl.Text = "FPS " .. f
+                    fpsLbl.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+                    fpsLbl.BackgroundTransparency = 0.25
+                    fpsLbl.TextColor3 = (f <= 5) and Color3.fromRGB(255, 90, 90)
+                        or (f <= 20) and Color3.fromRGB(255, 210, 90)
+                        or Color3.fromRGB(120, 255, 140)
+                end
             end
         end
     end)
@@ -5808,25 +5821,340 @@ local mtsDelayBox=mk("TextBox",{Size=UDim2.new(0.3,0,0.7,0),Position=UDim2.new(0
     BackgroundTransparency=1,Text="0.5",Font=FONT_B,TextSize=13,TextColor3=C.text,
     TextXAlignment=Enum.TextXAlignment.Right,Parent=mtsDelayRow})
 
--- ---- STATUS + TOMBOL ----
-mtsHdr("• AKSI",8)
-local mtsStatLbl=mk("TextLabel",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,
-    Text="—",Font=FONT_B,TextSize=11,TextColor3=C.textMute,
-    TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=9,Parent=mtsScroll})
+-- ---- MUTATION MACHINE INFO ----
+mtsHdr("• MUTATION MACHINE",8)
+local mtsMachineBox=mk("Frame",{Size=UDim2.new(1,0,0,68),BackgroundColor3=C.card,
+    BorderSizePixel=0,LayoutOrder=9,Parent=mtsScroll}); corner(mtsMachineBox,10); stroke(mtsMachineBox,C.border,1)
+mk("UIPadding",{PaddingTop=UDim.new(0,8),PaddingBottom=UDim.new(0,8),
+    PaddingLeft=UDim.new(0,12),PaddingRight=UDim.new(0,12),Parent=mtsMachineBox})
+mk("UIListLayout",{Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder,Parent=mtsMachineBox})
+-- baris 1: timer + fase
+local mtsRow1=mk("Frame",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,LayoutOrder=1,Parent=mtsMachineBox})
+local mtsTimerLbl=lbl(mtsRow1,"⏱ —",12,C.text); mtsTimerLbl.Font=FONT_B
+mtsTimerLbl.Position=UDim2.new(0,0,0,0); mtsTimerLbl.Size=UDim2.new(0.55,0,1,0)
+local mtsFaseLbl=lbl(mtsRow1,"—",11,C.textMute); mtsFaseLbl.Font=FONT_B
+mtsFaseLbl.Position=UDim2.new(0.55,0,0,0); mtsFaseLbl.Size=UDim2.new(0.45,0,1,0)
+mtsFaseLbl.TextXAlignment=Enum.TextXAlignment.Right
+-- baris 2: pet di dalam mesin
+local mtsRow2=mk("Frame",{Size=UDim2.new(1,0,0,18),BackgroundTransparency=1,LayoutOrder=2,Parent=mtsMachineBox})
+local mtsPetLbl=lbl(mtsRow2,"🐾 pet: —",11,C.textDim); mtsPetLbl.Font=FONT_B
+mtsPetLbl.Position=UDim2.new(0,0,0,0); mtsPetLbl.Size=UDim2.new(1,0,1,0)
+
+-- helper: baca nama pet dari PetModelLocation
+local function getMtsMachinePet()
+    local ok,pml=pcall(function() return game.Workspace.NPCS.PetMutationMachine.PetModelLocation end)
+    if ok and pml then
+        for _,c in ipairs(pml:GetChildren()) do
+            if c:IsA("Model") then return c.Name end
+        end
+    end
+    return nil
+end
+
+-- helper: parse timer label
+local function getMtsMachineTimer()
+    local ok,lbl2=pcall(function()
+        return game.Workspace.NPCS.PetMutationMachine.Model.Part.BillboardPart.BillboardGui.TimerTextLabel
+    end)
+    return (ok and lbl2) and lbl2.Text or nil
+end
+
+-- update info mesin tiap 2s
+local _mtsFaseNow = "—"
+task.spawn(function()
+    while true do
+        task.wait(2)
+        pcall(function()
+            if not mtsContent.Visible then return end
+            local timerTxt = getMtsMachineTimer() or "—"
+            local petNama  = getMtsMachinePet()
+            -- timer display
+            local m,s = timerTxt:match("^(%d+):(%d+)$")
+            if m and s then
+                mtsTimerLbl.Text = "⏱ " .. timerTxt
+                mtsTimerLbl.TextColor3 = Color3.fromRGB(255,200,60)
+            elseif timerTxt:upper():find("SIAP") or timerTxt:upper():find("READY") then
+                mtsTimerLbl.Text = "⏱ SIAP ✓"
+                mtsTimerLbl.TextColor3 = Color3.fromRGB(60,200,80)
+            else
+                mtsTimerLbl.Text = "⏱ " .. timerTxt
+                mtsTimerLbl.TextColor3 = C.textMute
+            end
+            -- fase
+            mtsFaseLbl.Text = _mtsFaseNow
+            mtsFaseLbl.TextColor3 = (_mtsFaseNow:find("Gremlin")) and Color3.fromRGB(180,120,255)
+                or (_mtsFaseNow:find("Mimic") or _mtsFaseNow:find("Golem")) and Color3.fromRGB(78,214,204)
+                or C.textMute
+            -- pet di dalam
+            if petNama then
+                mtsPetLbl.Text = "🐾 pet: " .. petNama
+                mtsPetLbl.TextColor3 = C.text
+            else
+                mtsPetLbl.Text = "🐾 pet: (kosong)"
+                mtsPetLbl.TextColor3 = C.textMute
+            end
+        end)
+    end
+end)
+
+-- ---- AUTO MUTASI MACHINE (embedded v8.320) ----
+-- helpers: timer, PP, swap lineup, wait done, doSiklus
+
+local function _mutParseTimer(txt)
+    if not txt then return nil end
+    local m,s=txt:match("^(%d+):(%d+)$")
+    return (m and s) and (tonumber(m)*60+tonumber(s)) or nil
+end
+
+local function _mutGetTimerLbl()
+    local ok,t=pcall(function()
+        return game.Workspace.NPCS.PetMutationMachine
+            .Model.Part.BillboardPart.BillboardGui.TimerTextLabel
+    end)
+    return (ok and t and t:IsA("TextLabel")) and t or nil
+end
+
+local function _mutGetPP()
+    local ok,part=pcall(function()
+        return game.Workspace.NPCS.PetMutationMachine.Model.ProxPromptPart
+    end)
+    if ok and part then
+        return part:FindFirstChildOfClass("ProximityPrompt")
+    end
+    return nil
+end
+
+local SESI2_MUT_DEF = { {nama="Gremlin", jml=2} }
+local DELAY_MUT_PP  = 0.6
+local DELAY_MUT_STEP= 0.6
+local _mutRunning   = false
+
+local function _mutLog(txt, col)
+    -- dipanggil sebelum mtsAddLog didefinisikan, jadi pakai _G late-bind
+    pcall(function()
+        if type(mtsAddLog)=="function" then mtsAddLog(txt, col)
+        elseif type(_G.ZenxMtsAddLog)=="function" then _G.ZenxMtsAddLog(txt, col)
+        end
+    end)
+    print("[Mutasi] "..txt)
+end
+
+local function _mutSetFase(fase)
+    _mtsFaseNow = tostring(fase)
+end
+
+local function _mutSwapLineup(def, label, fase)
+    _mutLog("👕 Swap → "..label, Color3.fromRGB(180,180,80))
+    _mutSetFase(fase or label)
+    if type(unequipAll)=="function" then pcall(unequipAll) end
+    task.wait(1.5)
+    if type(equipSesi)=="function" then pcall(equipSesi, 99, def) end
+    task.wait(1.0)
+    _mutLog("✓ Lineup aktif: "..label, Color3.fromRGB(78,214,204))
+end
+
+local function _mutWaitDone()
+    local timerLbl = _mutGetTimerLbl()
+    if not timerLbl then
+        _mutLog("⚠ timer label tidak ada, tunggu 5s...", Color3.fromRGB(255,140,60))
+        task.wait(5); return
+    end
+    local secs = _mutParseTimer(timerLbl.Text)
+    if not secs or secs <= 0 then
+        _mutLog("✓ Mesin sudah SIAP", Color3.fromRGB(60,200,80)); return
+    end
+    _mutLog(string.format("⏳ Mesin running... sisa %d:%02d", math.floor(secs/60), secs%60),
+        Color3.fromRGB(255,200,60))
+    local done = false
+    local conn
+    conn = timerLbl:GetPropertyChangedSignal("Text"):Connect(function()
+        if not _mutRunning then done=true; pcall(function() conn:Disconnect() end); return end
+        local s2 = _mutParseTimer(timerLbl.Text)
+        if not s2 or s2 <= 0 then
+            done = true
+            pcall(function() conn:Disconnect() end)
+        elseif s2 % 60 == 0 then
+            _mutLog(string.format("⏳ sisa %d:%02d", math.floor(s2/60), s2%60),
+                Color3.fromRGB(255,200,60))
+        end
+    end)
+    while not done and _mutRunning do
+        task.wait(2)
+        local s3 = _mutParseTimer(timerLbl.Text)
+        if not s3 or s3 <= 0 then
+            done = true
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+    if done then _mutLog("✓ Mesin SIAP!", Color3.fromRGB(60,200,80)) end
+end
+
+local function _mutDoSiklus(skipSubmit)
+    local RE_ok, RE_mut = pcall(function()
+        return game:GetService("ReplicatedStorage").GameEvents.PetMutationMachineService_RE
+    end)
+    if not RE_ok then _mutLog("✗ RE tidak ditemukan", Color3.fromRGB(255,80,80)); return false end
+
+    if not skipSubmit then
+        local pp = _mutGetPP()
+        if not pp then
+            _mutLog("✗ PP Mutation Machine tidak ditemukan!", Color3.fromRGB(255,80,80)); return false
+        end
+        _mutLog("[1/3] fireproximityprompt...", C.textDim)
+        local ok1 = pcall(fireproximityprompt, pp)
+        if not ok1 then _mutLog("✗ fireproximityprompt gagal", Color3.fromRGB(255,80,80)); return false end
+        task.wait(DELAY_MUT_PP)
+
+        _mutLog("[2/3] SubmitHeldPet...", C.textDim)
+        local ok2,e2 = pcall(function() RE_mut:FireServer("SubmitHeldPet") end)
+        if not ok2 then _mutLog("✗ SubmitHeldPet: "..tostring(e2), Color3.fromRGB(255,80,80)); return false end
+        task.wait(DELAY_MUT_STEP)
+
+        _mutLog("[3/3] StartMachine...", C.textDim)
+        local ok3,e3 = pcall(function() RE_mut:FireServer("StartMachine") end)
+        if not ok3 then _mutLog("✗ StartMachine: "..tostring(e3), Color3.fromRGB(255,80,80)); return false end
+        task.wait(DELAY_MUT_STEP)
+
+        local petNm = getMtsMachinePet() or "?"
+        _mutLog("✓ Pet masuk mesin: "..petNm, Color3.fromRGB(78,214,204))
+    end
+
+    -- sesi 1: equip Mimic+Golem selama mesin running
+    _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳")
+
+    -- tunggu mesin SIAP
+    _mutWaitDone()
+    if not _mutRunning then return false end
+    task.wait(0.5)
+
+    -- sesi 2: equip 2 Gremlin sebelum claim
+    _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰")
+    task.wait(1.0)
+
+    -- claim
+    _mutLog("🎁 ClaimMutatedPet...", Color3.fromRGB(200,140,255))
+    _mutSetFase("Claim...")
+    local ok4,e4 = pcall(function() RE_mut:FireServer("ClaimMutatedPet") end)
+    if not ok4 then _mutLog("✗ Claim: "..tostring(e4), Color3.fromRGB(255,80,80)); return false end
+    task.wait(DELAY_MUT_STEP)
+
+    _mutLog("✓ Claim selesai!", Color3.fromRGB(60,200,80))
+    _mutSetFase("—")
+    return true
+end
+
+-- ---- STATUS + TOMBOL (v8.323: 1 tombol, 2 loop terpisah) ----
+mtsHdr("• AKSI",10)
+-- status row: mutasi | gift
+local mtsStatRow=mk("Frame",{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,
+    BorderSizePixel=0,LayoutOrder=11,Parent=mtsScroll})
+mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,
+    Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder,Parent=mtsStatRow})
+local mutStatLbl=mk("TextLabel",{Size=UDim2.new(0.5,-3,1,0),BackgroundColor3=C.card,
+    Text="⚙ mesin: —",Font=FONT_B,TextSize=10,TextColor3=C.textMute,
+    TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=1,Parent=mtsStatRow})
+corner(mutStatLbl,6); mk("UIPadding",{PaddingLeft=UDim.new(0,8),Parent=mutStatLbl})
+local mtsStatLbl=mk("TextLabel",{Size=UDim2.new(0.5,-3,1,0),BackgroundColor3=C.card,
+    Text="🎁 gift: —",Font=FONT_B,TextSize=10,TextColor3=C.textMute,
+    TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=2,Parent=mtsStatRow})
+corner(mtsStatLbl,6); mk("UIPadding",{PaddingLeft=UDim.new(0,8),Parent=mtsStatLbl})
+
 local _mtsRunning=false
-local mtsStartBtn=mk("TextButton",{Size=UDim2.new(1,0,0,42),BackgroundColor3=Color3.fromRGB(34,197,94),
+local _mutRunning=false
+
+local mtsStartBtn=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=Color3.fromRGB(34,197,94),
     Text="▶  START AUTO MTS",Font=FONT_B,TextSize=14,TextColor3=Color3.new(0,0,0),
-    LayoutOrder=10,Parent=mtsScroll}); corner(mtsStartBtn,10)
-local mtsStopBtn=mk("TextButton",{Size=UDim2.new(1,0,0,42),BackgroundColor3=Color3.fromRGB(220,50,50),
+    LayoutOrder=12,Parent=mtsScroll}); corner(mtsStartBtn,10)
+local mtsStopBtn=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=Color3.fromRGB(220,50,50),
     Text="■  STOP",Font=FONT_B,TextSize=14,TextColor3=Color3.new(1,1,1),
-    Visible=false,LayoutOrder=11,Parent=mtsScroll}); corner(mtsStopBtn,10)
+    Visible=false,LayoutOrder=13,Parent=mtsScroll}); corner(mtsStopBtn,10)
+
+-- loop MUTASI MESIN (terpisah)
+local function _loopMutasi()
+    _mutRunning = true; _G.ZenxMutRunning = true
+    mutStatLbl.Text="⚙ mesin: start..."; mutStatLbl.TextColor3=Color3.fromRGB(180,120,255)
+    -- kalau mesin sedang running, ikut dari tengah
+    local timerNow = getMtsMachineTimer()
+    local secsNow  = _mutParseTimer(timerNow or "")
+    if secsNow and secsNow > 0 then
+        _mutLog("🔁 Mesin running! Ikut dari Fase 1...", Color3.fromRGB(255,200,60))
+        _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳")
+        _mutWaitDone()
+        if _mutRunning then
+            task.wait(0.5)
+            _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰")
+            task.wait(1.0)
+            pcall(function()
+                local RE_c=game:GetService("ReplicatedStorage").GameEvents.PetMutationMachineService_RE
+                RE_c:FireServer("ClaimMutatedPet")
+            end)
+            _mutLog("✓ Claim siklus awal selesai", Color3.fromRGB(60,200,80))
+            _mutSetFase("—"); task.wait(1)
+        end
+    end
+    local siklus = 0
+    while _mutRunning do
+        siklus = siklus + 1
+        mutStatLbl.Text="⚙ mesin: siklus "..siklus
+        _mutLog(string.format("━━━ Siklus %d ━━━", siklus), Color3.fromRGB(100,100,200))
+        local ok = _mutDoSiklus(false)
+        if not ok then
+            _mutLog("⚠ Siklus gagal, retry 3s...", Color3.fromRGB(255,140,60))
+            task.wait(3)
+        else
+            task.wait(1)
+        end
+    end
+    _G.ZenxMutRunning = false
+    mutStatLbl.Text="⚙ mesin: berhenti"; mutStatLbl.TextColor3=C.textMute
+    _mutSetFase("—")
+end
+
+-- loop GIFT (terpisah)
+local function _loopGift()
+    _mtsRunning = true; _G.ZenxMtsState.autoStart=true
+    mtsStatLbl.Text="🎁 gift: start..."; mtsStatLbl.TextColor3=C.accent
+    local idx=1
+    while _mtsRunning do
+        local pets=getMtsPets()
+        if #pets==0 then
+            mtsStatLbl.Text="🎁 gift: selesai"; mtsStatLbl.TextColor3=Color3.fromRGB(60,200,80)
+            _mtsRunning=false; break
+        end
+        local tgtList={}; for nm in pairs(_mtsTargets) do tgtList[#tgtList+1]=nm end
+        if #tgtList==0 then
+            mtsStatLbl.Text="🎁 gift: gak ada target"
+            _mtsRunning=false; break
+        end
+        local tgtNm=tgtList[((idx-1)%#tgtList)+1]; idx=idx+1
+        local tPlr=game:GetService("Players"):FindFirstChild(tgtNm)
+        if not tPlr then
+            mtsStatLbl.Text="🎁 skip "..tgtNm.." (offline)"
+            mtsAddGiftLog("✗ skip "..tgtNm.." (offline)", C.textMute)
+        else
+            local p=pets[1]
+            local kgVal=math.floor((p.age or 0)*10+0.5)/10
+            local logTxt=p.fullName.." "..tostring(kgVal).."kg ["..tostring(p.uuid):sub(1,8).."]  → "..tgtNm
+            mtsStatLbl.Text="🎁 gift → "..tgtNm.." | sisa "..(#pets-1)
+            local ok=pcall(mtsGiftOne,tPlr,p)
+            if ok then mtsAddGiftLog("✓ "..logTxt, C.accent)
+            else mtsAddGiftLog("✗ ERR "..logTxt, Color3.fromRGB(255,100,80)) end
+        end
+        local delay=tonumber(mtsDelayBox.Text) or 0.5
+        task.wait(math.max(0.3, delay))
+    end
+    _G.ZenxMtsState.autoStart=false
+    if not _mtsRunning then
+        mtsStatLbl.Text="🎁 gift: —"; mtsStatLbl.TextColor3=C.textMute
+    end
+end
 
 -- ---- LOG BOX ----
-mtsHdr("• LOG GIFT",12)
+mtsHdr("• LOG MUTASI",14)
 local mtsLogScroll=mk("ScrollingFrame",{Size=UDim2.new(1,0,0,180),BackgroundColor3=C.card,
     BorderSizePixel=0,ScrollBarThickness=4,ScrollBarImageColor3=Color3.fromRGB(80,80,80),
     CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,
-    ScrollingDirection=Enum.ScrollingDirection.Y,LayoutOrder=13,Parent=mtsScroll})
+    ScrollingDirection=Enum.ScrollingDirection.Y,LayoutOrder=15,Parent=mtsScroll})
 corner(mtsLogScroll,8); stroke(mtsLogScroll,C.border,1)
 mk("UIPadding",{PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),
     PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8),Parent=mtsLogScroll})
@@ -5838,12 +6166,14 @@ local function mtsAddLog(txt, col)
         Text=txt,Font=FONT_B,TextSize=10,TextColor3=col or C.textDim,
         TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd,
         LayoutOrder=_mtsLogIdx,Parent=mtsLogScroll})
-    -- auto scroll ke bawah
     task.defer(function()
         pcall(function() mtsLogScroll.CanvasPosition=Vector2.new(0,mtsLogScroll.AbsoluteCanvasSize.Y) end)
     end)
     return row
 end
+-- v8.319: expose ke _G supaya auto_mutasi.lua bisa log ke sini + update fase
+_G.ZenxMtsAddLog = function(txt, col) pcall(mtsAddLog, txt, col) end
+_G.ZenxMtsSetFase = function(fase) _mtsFaseNow = tostring(fase) end
 
 -- ---- GIFT SYSTEM (sama kayak TRADE tab) ----
 local MtsGift={}
@@ -5861,10 +6191,16 @@ local function mtsGiftOne(targetPlayer, petEntry)
     local char=plr.Character; local hum=char and char:FindFirstChildOfClass("Humanoid")
     if not (hum and targetPlayer and petEntry and petEntry.tool) then return false end
     local petTool=petEntry.tool
-    pcall(function()hum:EquipTool(petTool)end); task.wait(0.2)
-    if petTool.Parent~=char then pcall(function()hum:EquipTool(petTool)end); task.wait(0.2) end
-    if MtsGift.pgs and MtsGift.pgs.GivePet then pcall(function()MtsGift.pgs.GivePet(targetPlayer)end); task.wait(0.25) end
-    if petTool.Parent and MtsGift.giftRE then pcall(function()MtsGift.giftRE:FireServer("GivePet",targetPlayer,fmtUUID(petEntry.uuid))end); task.wait(0.25) end
+    -- v8.322: unfav dulu sebelum gift (pet favorite tidak bisa di-gift)
+    pcall(function()
+        local fRE=game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+            and game:GetService("ReplicatedStorage").GameEvents:FindFirstChild("Favorite_Item")
+        if fRE then fRE:FireServer(petTool); task.wait(0.2) end
+    end)
+    pcall(function()hum:EquipTool(petTool)end); task.wait(0.3)
+    if petTool.Parent~=char then pcall(function()hum:EquipTool(petTool)end); task.wait(0.3) end
+    if MtsGift.pgs and MtsGift.pgs.GivePet then pcall(function()MtsGift.pgs.GivePet(targetPlayer)end); task.wait(0.3) end
+    if petTool.Parent and MtsGift.giftRE then pcall(function()MtsGift.giftRE:FireServer("GivePet",targetPlayer,fmtUUID(petEntry.uuid))end); task.wait(0.3) end
     return not (petTool.Parent~=nil and petTool.Parent==char)
 end
 
@@ -5876,11 +6212,10 @@ local function getMtsPets()
         if t:IsA("Tool") then
             local uuid=t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
             if uuid then
-                local age=0
-                if _kgContainer and _kgContainer[tostring(uuid)] then
-                    local e=_kgContainer[tostring(uuid)]
-                    age=tonumber((type(e)=="table" and e.PetData and e.PetData.Level) or 0) or 0
-                end
+                -- v8.321: pakai getAgeFromContainer (pakai fmtUUID) supaya key match container
+                local age = getAgeFromContainer(tostring(uuid))
+                -- kalau container belum load / uuid tidak ada, skip pet ini (jangan anggap age=0)
+                if age == nil then age = 500 end  -- default skip kalau data tidak ditemukan
                 if age < 500 then
                     out[#out+1]={uuid=tostring(uuid), tool=t, age=age,
                         fullName=tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name or "")}
@@ -5921,84 +6256,59 @@ task.spawn(function()
     end
 end)
 
-local function startMts()
-    if _mtsRunning then return end
+mtsStartBtn.MouseButton1Click:Connect(function()
+    if _mtsRunning or _mutRunning then return end
     local targets={}; for nm in pairs(_mtsTargets) do targets[#targets+1]=nm end
-    if #targets==0 then mtsStatLbl.Text="⚠ pilih target dulu!"; mtsStatLbl.TextColor3=Color3.fromRGB(255,120,80); return end
-    -- v8.313: pause AUTO LVL kalau sedang running
-    if running and not stopRequested then
-        stopRequested=true
-        if setSw then pcall(setSw,false) end
+    if #targets==0 then
+        mtsStatLbl.Text="🎁 ⚠ pilih target dulu!"; mtsStatLbl.TextColor3=Color3.fromRGB(255,120,80); return
     end
-    -- v8.314: unequip semua lalu equip 7 Mimic + 1 Golem untuk MTS
-    mtsStatLbl.Text="⟳ ganti lineup..."; mtsStatLbl.TextColor3=C.textDim
-    task.spawn(function()
-        if unequipAll then pcall(unequipAll) end
-        task.wait(1.5)
-        if equipSesi then pcall(equipSesi,99,MTS_LINEUP_DEF) end
-        task.wait(1)
-    end)
-    task.wait(3)  -- tunggu equip selesai sebelum mulai gifting
-    _mtsRunning=true; _G.ZenxMtsState.autoStart=true
+    -- pause AUTO LVL
+    if running and not stopRequested then
+        stopRequested=true; if setSw then pcall(setSw,false) end
+    end
     mtsStartBtn.Visible=false; mtsStopBtn.Visible=true
-    mtsStatLbl.TextColor3=C.accent
+    -- spawn 2 loop terpisah
+    task.spawn(_loopMutasi)
+    task.spawn(_loopGift)
+    -- pantau keduanya, kalau keduanya berhenti → balik tombol
     task.spawn(function()
-        local idx=1  -- round-robin index
-        while _mtsRunning do
-            local pets=getMtsPets()
-            if #pets==0 then
-                mtsStatLbl.Text="✓ selesai — tidak ada pet age<500"; mtsStatLbl.TextColor3=Color3.fromRGB(60,200,80)
-                _mtsRunning=false; mtsStartBtn.Visible=true; mtsStopBtn.Visible=false; break
-            end
-            -- rebuild target list (bisa berubah)
-            local tgtList={}; for nm in pairs(_mtsTargets) do tgtList[#tgtList+1]=nm end
-            if #tgtList==0 then
-                mtsStatLbl.Text="⚠ gak ada target"; _mtsRunning=false
-                mtsStartBtn.Visible=true; mtsStopBtn.Visible=false; break
-            end
-            -- round-robin: kirim 1 pet ke target[idx]
-            local tgtNm=tgtList[((idx-1)%#tgtList)+1]
-            idx=idx+1
-            local tPlr=game:GetService("Players"):FindFirstChild(tgtNm)
-            if not tPlr then
-                mtsStatLbl.Text="skip "..tgtNm.." (offline)"
-                mtsAddLog("✗ skip "..tgtNm.." (offline)", C.textMute)
-            else
-                local p=pets[1]
-                -- format kg: age / 10 dibulatkan (1 decimal)
-                local kgVal=math.floor((p.age or 0)*10+0.5)/10
-                local kgStr=tostring(kgVal).."kg"
-                local uuidShort=tostring(p.uuid):sub(1,8)
-                local logTxt=p.fullName.." "..kgStr.." ["..uuidShort.."]  → "..tgtNm
-                mtsStatLbl.Text="gift → "..tgtNm.." | sisa "..(#pets-1)
-                local ok=pcall(mtsGiftOne,tPlr,p)
-                if ok then
-                    mtsAddLog("✓ "..logTxt, C.accent)
-                else
-                    mtsStatLbl.Text="ERR gift ke "..tgtNm
-                    mtsAddLog("✗ ERR "..logTxt, Color3.fromRGB(255,100,80))
-                end
-            end
-            local delay=tonumber(mtsDelayBox.Text) or 0.5
-            task.wait(math.max(0.3, delay))
-        end
-        if _mtsRunning then
-            _mtsRunning=false; _G.ZenxMtsState.autoStart=false
-            mtsStartBtn.Visible=true; mtsStopBtn.Visible=false
-            mtsStatLbl.Text="—"
-        end
+        while _mtsRunning or _mutRunning do task.wait(1) end
+        mtsStartBtn.Visible=true; mtsStopBtn.Visible=false
     end)
-end
-
-mtsStartBtn.MouseButton1Click:Connect(startMts)
+end)
 
 mtsStopBtn.MouseButton1Click:Connect(function()
-    _mtsRunning=false; _G.ZenxMtsState.autoStart=false
+    _mtsRunning=false; _mutRunning=false
+    _G.ZenxMtsState.autoStart=false; _G.ZenxMutRunning=false
     mtsStartBtn.Visible=true; mtsStopBtn.Visible=false
-    mtsStatLbl.Text="dihentikan"; mtsStatLbl.TextColor3=C.textMute
+    mtsStatLbl.Text="🎁 gift: —"; mtsStatLbl.TextColor3=C.textMute
+    mutStatLbl.Text="⚙ mesin: —"; mutStatLbl.TextColor3=C.textMute
+    _mutSetFase("—")
 end)
 
 -- ---- DEBUG: scan ProximityPrompt di workspace ----
+-- ---- LOG GIFT (terpisah dari log mutasi) ----
+mtsHdr("• LOG GIFT",16)
+local mtsGiftLogScroll=mk("ScrollingFrame",{Size=UDim2.new(1,0,0,140),BackgroundColor3=C.card,
+    BorderSizePixel=0,ScrollBarThickness=4,ScrollBarImageColor3=Color3.fromRGB(80,80,80),
+    CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,
+    ScrollingDirection=Enum.ScrollingDirection.Y,LayoutOrder=17,Parent=mtsScroll})
+corner(mtsGiftLogScroll,8); stroke(mtsGiftLogScroll,C.border,1)
+mk("UIPadding",{PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),
+    PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8),Parent=mtsGiftLogScroll})
+mk("UIListLayout",{Padding=UDim.new(0,2),SortOrder=Enum.SortOrder.LayoutOrder,Parent=mtsGiftLogScroll})
+local _mtsGiftLogIdx=0
+local function mtsAddGiftLog(txt, col)
+    _mtsGiftLogIdx=_mtsGiftLogIdx+1
+    mk("TextLabel",{Size=UDim2.new(1,0,0,16),BackgroundTransparency=1,
+        Text=txt,Font=FONT_B,TextSize=10,TextColor3=col or C.textDim,
+        TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd,
+        LayoutOrder=_mtsGiftLogIdx,Parent=mtsGiftLogScroll})
+    task.defer(function()
+        pcall(function() mtsGiftLogScroll.CanvasPosition=Vector2.new(0,mtsGiftLogScroll.AbsoluteCanvasSize.Y) end)
+    end)
+end
+
 local mtsDbgBtn=mk("TextButton",{Size=UDim2.new(1,0,0,32),BackgroundColor3=C.card,
     Text="🔍 Debug: scan PP di workspace",Font=FONT_B,TextSize=11,TextColor3=C.textDim,
     LayoutOrder=20,Parent=mtsScroll}); corner(mtsDbgBtn,8); stroke(mtsDbgBtn,C.border,1)
