@@ -1,4 +1,4 @@
--- uplevelnew v8.362 — fix SESI2_MUT_DEF nil: pindahkan ke global scope atas
+-- uplevelnew v8.363 — tampilkan uuid+kg+tipe per pet setelah Pilih Tim diklik
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.362"
+local VERSION = "v8.363"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6280,27 +6280,61 @@ local function _mutPickTim(sesi, def, statusLbl)
         statusLbl.Text = "tidak ada tipe cocok"
         statusLbl.TextColor3 = Color3.fromRGB(255,80,80)
     end
+    -- return teks detail untuk ditampilkan di lineup label
+    local detailLines = {}
+    local c2 = _kgContainer
+    for uuid, tipe in pairs(_mutPool[sesi]) do
+        local kg = 0
+        if c2 then
+            local key = tostring(uuid)
+            if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+            local e = c2[key]
+            if type(e)=="table" and e.PetData then
+                local bw = tonumber(e.PetData.BaseWeight) or 0
+                local lv = tonumber(e.PetData.Level) or 0
+                kg = bw*(lv+10)/10
+            end
+        end
+        local shortUuid = tostring(uuid):gsub("[{}]",""):sub(1,8)
+        detailLines[#detailLines+1] = string.format("%s [%s] %.1fkg", tipe, shortUuid, kg)
+    end
+    table.sort(detailLines)
+    return table.concat(detailLines, "\n")
 end
 
 mutPickS1Btn.MouseButton1Click:Connect(function()
     mutPickS1Status.Text = "scanning..."; mutPickS1Status.TextColor3 = Color3.fromRGB(255,200,60)
     task.spawn(function()
-        local ok, err = pcall(_mutPickTim, 1, MTS_LINEUP_DEF, mutPickS1Status)
-        if not ok then
-            mutPickS1Status.Text = "error: "..tostring(err):sub(1,40)
+        local ok, detailOrErr = pcall(_mutPickTim, 1, MTS_LINEUP_DEF, mutPickS1Status)
+        if ok then
+            -- tampilkan detail uuid+kg+tipe di label bawah tombol
+            if type(detailOrErr) == "string" and #detailOrErr > 0 then
+                mutLineupS1Lbl.Text = detailOrErr
+                mutLineupS1Lbl.TextColor3 = Color3.fromRGB(78,214,204)
+                mutLineupS1Lbl.Size = UDim2.new(1,0,0, math.max(28, select(2,detailOrErr:gsub("\n",""))*13+13))
+            end
+        else
+            mutPickS1Status.Text = "error: "..tostring(detailOrErr):sub(1,40)
             mutPickS1Status.TextColor3 = Color3.fromRGB(255,80,80)
-            warn("[MTS] _mutPickTim S1 error:", err)
+            warn("[MTS] _mutPickTim S1 error:", detailOrErr)
         end
     end)
 end)
 mutPickS2Btn.MouseButton1Click:Connect(function()
     mutPickS2Status.Text = "scanning..."; mutPickS2Status.TextColor3 = Color3.fromRGB(255,200,60)
     task.spawn(function()
-        local ok, err = pcall(_mutPickTim, 2, SESI2_MUT_DEF, mutPickS2Status)
-        if not ok then
-            mutPickS2Status.Text = "error: "..tostring(err):sub(1,40)
+        local ok, detailOrErr = pcall(_mutPickTim, 2, SESI2_MUT_DEF, mutPickS2Status)
+        if ok then
+            -- tampilkan detail uuid+kg+tipe di label bawah tombol
+            if type(detailOrErr) == "string" and #detailOrErr > 0 then
+                mutLineupS2Lbl.Text = detailOrErr
+                mutLineupS2Lbl.TextColor3 = Color3.fromRGB(180,120,255)
+                mutLineupS2Lbl.Size = UDim2.new(1,0,0, math.max(28, select(2,detailOrErr:gsub("\n",""))*13+13))
+            end
+        else
+            mutPickS2Status.Text = "error: "..tostring(detailOrErr):sub(1,40)
             mutPickS2Status.TextColor3 = Color3.fromRGB(255,80,80)
-            warn("[MTS] _mutPickTim S2 error:", err)
+            warn("[MTS] _mutPickTim S2 error:", detailOrErr)
         end
     end)
 end)
