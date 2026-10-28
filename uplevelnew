@@ -1,4 +1,4 @@
--- uplevelnew v8.372 — equip pet age-500 ke tangan sebelum SubmitHeldPet
+-- uplevelnew v8.373 — submit hanya pet age-500 yang bukan bagian pool MTS S1/S2
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.372"
+local VERSION = "v8.373"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6743,37 +6743,39 @@ local function _mutDoSiklus(skipSubmit)
         end
 
         -- equip 1 pet age 500 ke tangan sebelum SubmitHeldPet
-        -- prioritas: dari pool S1; fallback: pet age 500 di backpack
-        local pool1 = _mutPool and _mutPool[1]
-        local submitUuid = nil
-        if pool1 then for u in pairs(pool1) do submitUuid = u; break end end
-        if submitUuid then
-            _mutLog("🐾 Equip pool S1 → submit: "..tostring(submitUuid):sub(1,20), Color3.fromRGB(120,180,120))
-            local _equipPet = _G.ZenxEquipPet or equipPet
-            if type(_equipPet)=="function" then
-                pcall(_equipPet, submitUuid)
-                task.wait(1.5)
+        -- syarat: age=500, BUKAN bagian dari pool MTS S1 maupun S2 (pool = "working pets")
+        do
+            -- bangun set UUID yang "dilindungi" (jangan disubmit ke mesin)
+            local protected = {}
+            if _mutPool then
+                for _, p in pairs(_mutPool) do
+                    for u in pairs(p) do protected[tostring(u)] = true end
+                end
             end
-        else
-            -- fallback: cari pet age 500 di backpack
-            _mutLog("⚠ Pool S1 kosong — cari pet age 500 di backpack...", Color3.fromRGB(255,180,60))
-            pcall(function()
-                local bp = plr:FindFirstChild("Backpack")
-                local c2 = _kgContainer
-                if bp and c2 then
-                    for _,t in ipairs(bp:GetChildren()) do
-                        if t:IsA("Tool") then
-                            local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
-                            if uuid then
-                                local key = tostring(uuid)
-                                if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+            local bp = plr:FindFirstChild("Backpack")
+            local c2 = _kgContainer
+            local found = false
+            if bp and c2 then
+                for _,t in ipairs(bp:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
+                        if uuid then
+                            local ustr = tostring(uuid)
+                            -- strip kurung kurawal untuk cek protected
+                            local ustrClean = ustr:gsub("[{}]","")
+                            local ustrBrack = "{"..ustrClean.."}"
+                            if not protected[ustrClean] and not protected[ustrBrack] then
+                                local key = ustrBrack
                                 local e = c2[key]
                                 local lv = e and e.PetData and tonumber(e.PetData.Level) or 0
                                 if lv >= 500 then
-                                    _mutLog("🐾 Equip age-500: "..tostring(uuid):sub(1,20), Color3.fromRGB(120,180,120))
+                                    local nm = tostring(t:GetAttribute("PetType") or t.Name or ""):sub(1,30)
+                                    _mutLog("🐾 Equip ke tangan → submit: "..nm.." ("..ustrClean:sub(1,8)..")", Color3.fromRGB(120,180,120))
                                     local _equipPet = _G.ZenxEquipPet or equipPet
                                     if type(_equipPet)=="function" then
-                                        pcall(_equipPet, tostring(uuid)); task.wait(1.5)
+                                        pcall(_equipPet, ustr)
+                                        task.wait(1.5)
+                                        found = true
                                     end
                                     break
                                 end
@@ -6781,7 +6783,11 @@ local function _mutDoSiklus(skipSubmit)
                         end
                     end
                 end
-            end)
+            end
+            if not found then
+                _mutLog("⚠ Tidak ada pet age-500 bebas di backpack untuk submit!", Color3.fromRGB(255,80,80))
+                return false
+            end
         end
 
         local pp = _mutGetPP()
