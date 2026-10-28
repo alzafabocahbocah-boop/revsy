@@ -1,4 +1,4 @@
--- uplevelnew v8.379 — fix stuck "tunggu pet keluar mesin": auto claim kalau timer 0 tapi pet masih di mesin
+-- uplevelnew v8.380 — getMtsPets: skip pet lineup/kebun (_mutPool+_activeUuids), scan Character juga
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.379"
+local VERSION = "v8.380"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7067,33 +7067,52 @@ end
 -- scan pet age<500 di backpack
 local function getMtsPets()
     local out={}
-    local bp=plr:FindFirstChild("Backpack"); if not bp then return out end
-    local c = _kgContainer  -- baca langsung dari container, tidak lewat getAgeFromContainer
-    for _,t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") then
-            local uuid=t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
-            if uuid then
-                local age = nil  -- nil = belum ketemu
-                -- 1) coba dari container (paling akurat)
+    local c = _kgContainer
+    -- build set UUID yang dilindungi: _mutPool (lineup MTS) + _activeUuids (di kebun)
+    local protected = {}
+    if _mutPool then
+        for _, pool in pairs(_mutPool) do
+            for uuid in pairs(pool) do
+                local u = tostring(uuid):gsub("[{}]","")
+                protected[u] = true; protected["{"..u.."}"] = true
+            end
+        end
+    end
+    for uuid in pairs(_activeUuids or {}) do
+        local u = tostring(uuid):gsub("[{}]","")
+        protected[u] = true; protected["{"..u.."}"] = true
+    end
+    -- scan backpack + character (konsisten sama petsLolos di TRADE tab)
+    local scan = {}
+    local bp = plr:FindFirstChild("Backpack")
+    if bp then for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
+    if plr.Character then for _,t in ipairs(plr.Character:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
+    for _,t in ipairs(scan) do
+        local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
+        if uuid then
+            local uStr = tostring(uuid):gsub("[{}]","")
+            -- skip pet lineup MTS / pet di kebun
+            if not protected[uStr] and not protected["{"..uStr.."}"] then
+                local age = nil
+                -- 1) dari container (paling akurat)
                 if c then
-                    local key = tostring(uuid)
-                    if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+                    local key = "{"..uStr.."}"
                     local e = c[key]
                     if type(e)=="table" and e.PetData then
                         age = tonumber(e.PetData.Level)
                     end
                 end
-                -- 2) fallback: atribut langsung di Tool
+                -- 2) fallback atribut Tool
                 if age == nil then
                     age = tonumber(t:GetAttribute("Level"))
                         or tonumber(t:GetAttribute("Age"))
                         or tonumber(t:GetAttribute("age"))
                         or tonumber(t:GetAttribute("level"))
                 end
-                -- 3) masih nil: asumsikan pet bahan (belum di-index container), include dengan age=0
+                -- 3) masih nil: asumsikan bahan biasa, include age=0
                 if age == nil then age = 0 end
                 if age < 500 then
-                    out[#out+1]={uuid=tostring(uuid), tool=t, age=age,
+                    out[#out+1] = {uuid=tostring(uuid), tool=t, age=age,
                         fullName=tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name or "")}
                 end
             end
