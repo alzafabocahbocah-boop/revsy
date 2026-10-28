@@ -1,4 +1,4 @@
--- uplevelnew v8.323 — 1 tombol START: 2 loop paralel terpisah (loop mutasi mesin + loop gift)
+-- uplevelnew v8.324 — fix timer display: fallback rekursif cari TimerTextLabel
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.323"
+local VERSION = "v8.324"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5851,12 +5851,32 @@ local function getMtsMachinePet()
     return nil
 end
 
--- helper: parse timer label
+-- helper: parse timer label (cari TimerTextLabel secara rekursif)
 local function getMtsMachineTimer()
+    -- coba path hardcode dulu
     local ok,lbl2=pcall(function()
         return game.Workspace.NPCS.PetMutationMachine.Model.Part.BillboardPart.BillboardGui.TimerTextLabel
     end)
-    return (ok and lbl2) and lbl2.Text or nil
+    if ok and lbl2 then return lbl2.Text end
+    -- fallback: cari rekursif di dalam PetMutationMachine
+    local ok2,found=pcall(function()
+        local machine=game.Workspace.NPCS.PetMutationMachine
+        if not machine then return nil end
+        -- cari semua TextLabel bernama TimerTextLabel
+        local function findTimer(parent, depth)
+            if depth > 8 then return nil end
+            for _,child in ipairs(parent:GetChildren()) do
+                if child:IsA("TextLabel") and child.Name == "TimerTextLabel" then
+                    return child
+                end
+                local res = findTimer(child, depth+1)
+                if res then return res end
+            end
+        end
+        return findTimer(machine, 0)
+    end)
+    if ok2 and found then return found.Text end
+    return nil
 end
 
 -- update info mesin tiap 2s
