@@ -1,4 +1,4 @@
--- uplevelnew v8.376 — enforce lineup jalan di background loop terpisah (task.spawn), bukan blocking di _mutWaitDone
+-- uplevelnew v8.377 — fix _mtsGetInvCount: pakai pd.Level (bukan pd.Age) + retry 2x + fresh RS, ikutin pola up6kg
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.376"
+local VERSION = "v8.377"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5870,22 +5870,34 @@ _mtsLoadMaxInv()
 local _mtsInvCache = {}
 
 -- scan inventory target: return {total=N, age500=N} (age500 = pet age<500, yg bisa diterima)
+-- ikutin pola bahanAge40Lain di up6kg: fresh RS setiap kali + retry 2x + pd.Level (bukan pd.Age)
 local function _mtsGetInvCount(playerObj)
-    local ok, res = pcall(function()
-        local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-        te = te and te:FindFirstChild("TradeEvents")
-        local vi = te and te:FindFirstChild("ViewInventory")
-        if not vi then return nil end
-        return vi:InvokeServer(playerObj)
-    end)
-    if not ok or type(res) ~= "table" then return nil end
+    if not playerObj then return nil end
+    -- pastikan player object, bukan string
+    local pobj = (typeof(playerObj)=="Instance") and playerObj
+        or game:GetService("Players"):FindFirstChild(tostring(playerObj))
+    if not pobj then return nil end
+    local RS = game:GetService("ReplicatedStorage")
+    local te = RS:FindFirstChild("GameEvents"); te = te and te:FindFirstChild("TradeEvents")
+    local vi = te and te:FindFirstChild("ViewInventory")
+    if not vi then return nil end
+    local list
+    for att = 1, 2 do
+        local res = table.pack(pcall(function() return vi:InvokeServer(pobj) end))
+        if res[1] then
+            for k = 2, res.n do if type(res[k]) == "table" then list = res[k]; break end end
+        end
+        if list then break end
+        if att < 2 then task.wait(4) end
+    end
+    if not list then return nil end
     local total, age500 = 0, 0
-    for _, item in pairs(res) do
-        if type(item) == "table" and tostring(item.type) == "Pet" then
+    for _, item in pairs(list) do
+        if type(item) == "table" and tostring(item.type) == "Pet" and type(item.data) == "table" then
             total = total + 1
-            local pd = (type(item.data)=="table") and (item.data.PetData or {}) or {}
-            local age = tonumber(pd.Age) or tonumber(pd.age) or 999
-            if age < 500 then age500 = age500 + 1 end
+            local pd = item.data.PetData or {}
+            local lvl = tonumber(pd.Level) or 0  -- Level bukan Age (sama kayak up6kg)
+            if lvl < 500 then age500 = age500 + 1 end
         end
     end
     return {total=total, age500=age500}
