@@ -1,4 +1,4 @@
--- uplevelnew v8.353 — fix swapLineup: sesiNum=1 (bukan 99), debug log, clear _activeUuids sebelum equip
+-- uplevelnew v8.354 — getMtsPets: baca _kgContainer langsung, tidak lewat getAgeFromContainer
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.353"
+local VERSION = "v8.354"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6499,24 +6499,24 @@ local function _loopMutasi()
     _mutSetFase("—")
 end
 
--- scan pet age<500 di backpack (forward decl supaya bisa dipanggil di _loopGift)
+-- scan pet age<500 di backpack
 local function getMtsPets()
     local out={}
     local bp=plr:FindFirstChild("Backpack"); if not bp then return out end
-    if type(getAgeFromContainer) ~= "function" then
-        warn("[UPLVL-DBG] getMtsPets: getAgeFromContainer is "..type(getAgeFromContainer))
-        return out
-    end
+    local c = _kgContainer  -- baca langsung dari container, tidak lewat getAgeFromContainer
     for _,t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
             local uuid=t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
             if uuid then
-                local ok, age = pcall(getAgeFromContainer, tostring(uuid))
-                if not ok then
-                    warn("[UPLVL-DBG] getMtsPets: getAgeFromContainer error: "..tostring(age))
-                    age = 500
+                local age = 500  -- default: skip
+                if c then
+                    local key = tostring(uuid)
+                    if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+                    local e = c[key]
+                    if type(e)=="table" and e.PetData then
+                        age = tonumber(e.PetData.Level) or 500
+                    end
                 end
-                if age == nil then age = 500 end
                 if age < 500 then
                     out[#out+1]={uuid=tostring(uuid), tool=t, age=age,
                         fullName=tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name or "")}
