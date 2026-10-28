@@ -1,4 +1,4 @@
--- uplevelnew v8.341 — tampilkan "age500/total" di row target (misal 48/70)
+-- uplevelnew v8.342 — fix _mutWaitDone: poll getMtsMachineTimer langsung, tidak pakai timerLbl (bisa stale)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.341"
+local VERSION = "v8.342"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6188,59 +6188,24 @@ local function _mutSwapLineup(def, label, fase)
 end
 
 local function _mutWaitDone()
-    -- retry dapat timer label maksimal 30x (30 detik), jangan langsung skip
-    local timerLbl = _mutGetTimerLbl()
-    if not timerLbl then
-        _mutLog("⏳ cari timer label...", Color3.fromRGB(255,200,60))
-        for _=1,30 do
-            if not _mutRunning then return end
-            task.wait(1)
-            timerLbl = _mutGetTimerLbl()
-            if timerLbl then break end
+    -- poll getMtsMachineTimer() langsung (tidak pakai timerLbl agar tidak stale)
+    local lastLog = -1
+    while _mutRunning do
+        local txt = getMtsMachineTimer()
+        local secs = _mutParseTimer(txt or "")
+        if not secs or secs <= 0 then
+            _mutLog("✓ Mesin SIAP!", Color3.fromRGB(60,200,80))
+            return
         end
-    end
-    if not timerLbl then
-        _mutLog("⚠ timer label tidak ditemukan, pakai getMtsMachineTimer fallback", Color3.fromRGB(255,140,60))
-        -- fallback: poll via getMtsMachineTimer sampai SIAP
-        while _mutRunning do
-            local txt = getMtsMachineTimer()
-            local secs = _mutParseTimer(txt or "")
-            if not secs or secs <= 0 then
-                _mutLog("✓ Mesin SIAP (fallback poll)", Color3.fromRGB(60,200,80)); return
-            end
-            _mutLog(string.format("⏳ sisa %d:%02d (fallback)", math.floor(secs/60), secs%60), Color3.fromRGB(255,200,60))
-            task.wait(5)
-        end
-        return
-    end
-    local secs = _mutParseTimer(timerLbl.Text)
-    if not secs or secs <= 0 then
-        _mutLog("✓ Mesin sudah SIAP", Color3.fromRGB(60,200,80)); return
-    end
-    _mutLog(string.format("⏳ Mesin running... sisa %d:%02d", math.floor(secs/60), secs%60),
-        Color3.fromRGB(255,200,60))
-    local done = false
-    local conn
-    conn = timerLbl:GetPropertyChangedSignal("Text"):Connect(function()
-        if not _mutRunning then done=true; pcall(function() conn:Disconnect() end); return end
-        local s2 = _mutParseTimer(timerLbl.Text)
-        if not s2 or s2 <= 0 then
-            done = true
-            pcall(function() conn:Disconnect() end)
-        elseif s2 % 60 == 0 then
-            _mutLog(string.format("⏳ sisa %d:%02d", math.floor(s2/60), s2%60),
+        -- log tiap menit (atau pertama kali)
+        local menit = math.floor(secs/60)
+        if menit ~= lastLog then
+            lastLog = menit
+            _mutLog(string.format("⏳ Mesin running... sisa %d:%02d", menit, secs%60),
                 Color3.fromRGB(255,200,60))
         end
-    end)
-    while not done and _mutRunning do
-        task.wait(2)
-        local s3 = _mutParseTimer(timerLbl.Text)
-        if not s3 or s3 <= 0 then
-            done = true
-            pcall(function() conn:Disconnect() end)
-        end
+        task.wait(3)
     end
-    if done then _mutLog("✓ Mesin SIAP!", Color3.fromRGB(60,200,80)) end
 end
 
 local function _mutDoSiklus(skipSubmit)
