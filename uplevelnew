@@ -1,4 +1,4 @@
--- uplevelnew v8.369 — debug: extend clearWait 30s + log masuk sesi 2
+-- uplevelnew v8.370 — auto MTS resume setelah rejoin: simpan autoStart ke file
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.369"
+local VERSION = "v8.370"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5786,6 +5786,8 @@ local mtsRefreshBtn=mk("TextButton",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C
 -- persist targets + autostart via _G + writefile (survive rejoin)
 local MTS_SAVE_FILE = "zenx_mts_targets.txt"
 
+local MTS_AUTOSTART_FILE = "zenx_mts_autostart.txt"
+
 local function _mtsSave()
     -- simpan ke _G dan file executor
     pcall(function()
@@ -5794,6 +5796,13 @@ local function _mtsSave()
         local s=table.concat(parts,",")
         if writefile then writefile(MTS_SAVE_FILE, s) end
     end)
+end
+
+local function _mtsSaveAutoStart(val)
+    pcall(function()
+        if writefile then writefile(MTS_AUTOSTART_FILE, val and "1" or "0") end
+    end)
+    if type(_G.ZenxMtsState) == "table" then _G.ZenxMtsState.autoStart = val end
 end
 
 local function _mtsLoad()
@@ -5815,6 +5824,17 @@ end
 if type(_G.ZenxMtsState) ~= "table" then _G.ZenxMtsState = {targets={}, autoStart=false} end
 -- restore targets dari file kalau _G kosong (habis rejoin)
 if next(_G.ZenxMtsState.targets) == nil then _mtsLoad() end
+-- restore autoStart dari file (survive rejoin server baru — _G reset)
+if not _G.ZenxMtsState.autoStart then
+    pcall(function()
+        if readfile and isfile and isfile(MTS_AUTOSTART_FILE) then
+            local ok,s = pcall(readfile, MTS_AUTOSTART_FILE)
+            if ok and s and s:find("1") then
+                _G.ZenxMtsState.autoStart = true
+            end
+        end
+    end)
+end
 local _mtsTargets = _G.ZenxMtsState.targets  -- {nama=true}
 
 -- max inventory per target (bisa diatur manual, default 500)
@@ -6969,7 +6989,7 @@ end
 
 -- loop GIFT (terpisah) — proporsional: yang paling kosong dapat lebih banyak
 local function _loopGift()
-    _mtsRunning = true; _G.ZenxMtsState.autoStart=true
+    _mtsRunning = true; _mtsSaveAutoStart(true)
     mtsStatLbl.Text="🎁 gift: start..."; mtsStatLbl.TextColor3=C.accent
 
     -- scan semua target online, return sorted list [{nm, score, plr}] (score = age<500, makin kecil makin prioritas)
@@ -7200,7 +7220,7 @@ local function _loopGift()
         -- re-scan setiap putaran supaya distribusi selalu fresh
         _mtsInvCache = {}
     end
-    _G.ZenxMtsState.autoStart=false
+    _mtsSaveAutoStart(false)
     if not _mtsRunning then
         mtsStatLbl.Text="🎁 gift: —"; mtsStatLbl.TextColor3=C.textMute
     end
@@ -7316,7 +7336,7 @@ end)
 
 mtsStopBtn.MouseButton1Click:Connect(function()
     _mtsRunning=false; _mutRunning=false
-    _G.ZenxMtsState.autoStart=false; _G.ZenxMutRunning=false
+    _mtsSaveAutoStart(false); _G.ZenxMutRunning=false
     mtsStartBtn.Visible=true; mtsStopBtn.Visible=false
     mtsStatLbl.Text="🎁 gift: —"; mtsStatLbl.TextColor3=C.textMute
     mutStatLbl.Text="⚙ mesin: —"; mutStatLbl.TextColor3=C.textMute
