@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.563 — blokir freeform stack: semua Roblox dipindah ke fullscreen otomatis tiap 10s
+-- zenx_worker v9.564 — delta: notifikasi "versi baru di temukan update apk"
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.563"
+local VERSION = "9.564"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5174,9 +5174,18 @@ local function run(cfg)
                     vNow = out:match("versionName=([%w%.%-]+)") or ""
                 end
                 if vNow ~= "" and vNow ~= target then
-                    info(("[delta] versi baru di GitHub: v%s (sekarang v%s) -> auto-update"):format(target, vNow))
+                    -- v9.564: notifikasi prominent "versi baru di temukan update apk"
+                    ok(("⬆️  VERSI BARU DI TEMUKAN — UPDATE APK (v%s -> v%s)"):format(vNow, target))
+                    pcall(function()
+                        notify("⬆️ ZENX: Versi Baru Di Temukan",
+                            ("Update APK Delta: v%s -> v%s — sedang auto-update..."):format(vNow, target))
+                    end)
                     pcall(function() update_delta_ke(cfg, target) end)
-                    info("[delta] auto-update selesai -> client bakal rejoin fresh")
+                    ok("[delta] ✅ auto-update APK selesai -> client bakal rejoin fresh")
+                    pcall(function()
+                        notify("✅ ZENX: Update APK Selesai",
+                            ("Delta v%s berhasil di-update -> client rejoin"):format(target))
+                    end)
                     SUDAH_GRID = false; GRID_CACHE = nil
                 end
             end
