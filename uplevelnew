@@ -1,4 +1,4 @@
--- uplevelnew v8.374 — hold pet via hum:EquipTool sebelum SubmitHeldPet (bukan equipPet ke kebun)
+-- uplevelnew v8.375 — fix infinite loop crash: _mutWaitDone cek pet+timer, min wait per siklus
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.374"
+local VERSION = "v8.375"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6685,13 +6685,28 @@ local _mutCurrentSesi = 1   -- sesiNum yang sedang aktif (untuk enforce)
 local function _mutWaitDone()
     -- poll getMtsMachineTimer() langsung (tidak pakai timerLbl agar tidak stale)
     local lastLog = -1
+    local nilStreak = 0  -- hitung berapa kali timer nil berturut-turut
     while _mutRunning do
         local txt = getMtsMachineTimer()
         local secs = _mutParseTimer(txt or "")
         if not secs or secs <= 0 then
-            _mutLog("✓ Mesin SIAP!", Color3.fromRGB(60,200,80))
-            return
+            -- timer nil/0: cek apakah pet masih di mesin
+            local stillPet = getMtsMachinePet()
+            if stillPet then
+                -- timer gagal dibaca tapi pet masih ada → tunggu, jangan return dulu
+                nilStreak = nilStreak + 1
+                if nilStreak == 1 or nilStreak % 5 == 0 then
+                    _mutLog("⏳ Timer nil tapi pet masih di mesin ("..stillPet.."), tunggu...", Color3.fromRGB(255,200,60))
+                end
+                task.wait(3)
+                continue  -- jangan return
+            else
+                -- benar-benar kosong
+                _mutLog("✓ Mesin SIAP!", Color3.fromRGB(60,200,80))
+                return
+            end
         end
+        nilStreak = 0
         -- log tiap menit
         local menit = math.floor(secs/60)
         if menit ~= lastLog then
@@ -6719,11 +6734,15 @@ local function _mutDoSiklus(skipSubmit)
             local timerExist = getMtsMachineTimer()
             local secsExist  = _mutParseTimer(timerExist or "")
             if secsExist and secsExist > 0 then
-                _mutLog("⏳ Mesin masih running ("..existingPet.."), tunggu selesai...", Color3.fromRGB(255,200,60))
+                _mutLog("⏳ Mesin masih running ("..existingPet..") "..secsExist.."s, tunggu selesai...", Color3.fromRGB(255,200,60))
                 _mutWaitDone()
                 if not _mutRunning then return false end
+            elseif getMtsMachinePet() then
+                -- timer nil tapi pet masih ada — sudah selesai, langsung claim
+                _mutLog("ℹ Mesin selesai ("..existingPet.."), langsung claim...", Color3.fromRGB(200,140,255))
             else
-                _mutLog("ℹ Mesin sudah selesai ("..existingPet.."), langsung claim...", Color3.fromRGB(200,140,255))
+                -- tidak ada pet, lanjut langsung
+                existingPet = nil
             end
             -- claim pet yang ada di mesin sebelum mulai siklus baru
             _mutLog("🎁 Claim sisa mesin sebelumnya...", Color3.fromRGB(200,140,255))
@@ -7005,11 +7024,14 @@ local function _loopMutasi()
                     math.floor(secs/60), secs%60), Color3.fromRGB(255,200,60))
                 _mutWaitDone()
             else
-                task.wait(3)
+                -- minimum wait 5s agar tidak spam crash
+                task.wait(5)
             end
         else
             task.wait(1)
         end
+        -- safety: minimum 1 frame yield tiap iterasi biar tidak infinite spin
+        task.wait(0)
     end
     _G.ZenxMutRunning = false
     mutStatLbl.Text="⚙ mesin: berhenti"; mutStatLbl.TextColor3=C.textMute
