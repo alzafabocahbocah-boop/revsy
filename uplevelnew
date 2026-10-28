@@ -1,4 +1,4 @@
--- uplevelnew v8.400 — MtsGift: samakan lookup giftRE + FireServer args dengan GiftSys Trade
+-- uplevelnew v8.401 — mtsGiftOne: pause _isTransisi selama gift agar enforce tidak konflik
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.400"
+local VERSION = "v8.401"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7473,6 +7473,9 @@ mtsGiftOne = function(targetPlayer, petEntry)
     if not hum then mtsAddGiftLog("✗ gift skip: hum nil", Color3.fromRGB(255,80,80)); return false end
     if not (targetPlayer and petEntry and petEntry.tool) then mtsAddGiftLog("✗ gift skip: target/entry nil", Color3.fromRGB(255,80,80)); return false end
     local petTool=petEntry.tool
+    -- v8.401: pause _mutEnforceLineup selama gift (equip pet gift bisa konflik dengan enforce)
+    local wasTransisi=_isTransisi; _isTransisi=true
+    local function _cleanup() _isTransisi=wasTransisi end
     -- v8.322: unfav dulu sebelum gift (pet favorite tidak bisa di-gift)
     pcall(function()
         local fRE=game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
@@ -7484,26 +7487,25 @@ mtsGiftOne = function(targetPlayer, petEntry)
         pcall(function()hum:EquipTool(petTool)end); task.wait(0.3)
         if petTool.Parent~=char then
             mtsAddGiftLog("✗ gift equip gagal: "..tostring(petTool.Name):sub(1,20).." (parent="..tostring(petTool.Parent)..")", Color3.fromRGB(255,140,60))
-            return false
+            _cleanup(); return false
         end
     end
-    -- v8.395: log state giftRE sebelum fire
     if not MtsGift.giftRE then
         mtsAddGiftLog("✗ gift gagal: giftRE nil (PetGiftingService tidak ditemukan)", Color3.fromRGB(255,80,80))
+        _cleanup(); return false
     end
     if MtsGift.pgs and MtsGift.pgs.GivePet then pcall(function()MtsGift.pgs.GivePet(targetPlayer)end); task.wait(0.3) end
     if petTool.Parent and MtsGift.giftRE then
-        -- v8.396: inline fmtUUID agar tidak bergantung scope (fix "attempt to call a nil value")
         local function _fmt(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.."}" end; return s end
-        -- v8.400: sama persis GiftSys Trade: FireServer("GivePet", targetPlayer, uuid)
         local ok5,e5=pcall(function()MtsGift.giftRE:FireServer("GivePet",targetPlayer,_fmt(petEntry.uuid))end)
         if not ok5 then mtsAddGiftLog("✗ giftRE:FireServer error: "..tostring(e5):sub(1,60), Color3.fromRGB(255,80,80)) end
-        task.wait(0.3)
+        task.wait(0.4)
     end
     local success = not (petTool.Parent~=nil and petTool.Parent==char)
     if not success then
         mtsAddGiftLog("✗ gift return false: pet masih di char setelah fire (inv penuh/reject?)", Color3.fromRGB(255,140,60))
     end
+    _cleanup()
     return success
 end
 
