@@ -1,4 +1,4 @@
--- uplevelnew v8.358 — fix Pilih Tim: pakai listPetsAll() + task.spawn, tidak hang
+-- uplevelnew v8.359 — fix _activeUuids=0: verifikasi lineup pakai modelByUuid + tipe scan
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.358"
+local VERSION = "v8.359"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6405,6 +6405,7 @@ local function _mutSwapLineup(def, label, fase, sesiNum)
     _mutLog("👕 Swap → "..label, Color3.fromRGB(180,180,80))
     _mutSetFase(fase or label)
     _mutCurrentDef = def
+    _mutCurrentSesi = sesiNum
 
     -- step 1: unequip semua
     if type(unequipAll)=="function" then pcall(unequipAll) end
@@ -6427,7 +6428,7 @@ local function _mutSwapLineup(def, label, fase, sesiNum)
                 task.wait(0.12)
             end
         end
-        -- tandai _activeUuids
+        -- tandai _activeUuids (best-effort, bisa beda closure setelah re-execute)
         for uuid in pairs(pool) do
             if _activeUuids then _activeUuids[uuid] = true end
         end
@@ -6440,19 +6441,42 @@ local function _mutSwapLineup(def, label, fase, sesiNum)
         end
     end
 
-    local activeCount = 0
-    for _ in pairs(_activeUuids or {}) do activeCount = activeCount + 1 end
-    _mutLog("🔍 _activeUuids setelah equip: "..activeCount, Color3.fromRGB(180,180,80))
+    -- build set tipe yang diharapkan dari def (untuk verifikasi berbasis modelByUuid)
+    local needTipe = {}
+    for _, d in ipairs(def) do needTipe[d.nama] = true end
 
-    -- step 4: verifikasi — tunggu sampai model masuk kebun
+    -- helper: hitung pet di kebun yang cocok (via modelByUuid — tidak bergantung _activeUuids)
+    local function countInGarden()
+        local cnt = 0
+        pcall(function()
+            for uuid, mdl in pairs(modelByUuid) do
+                if mdl and mdl.Parent then
+                    local tipe = nil
+                    if pool[uuid] then
+                        tipe = pool[uuid]  -- pool path: tipe tersimpan di pool
+                    else
+                        -- fallback path: cari tipe dari _kgContainer
+                        local bracket = uuid
+                        if bracket:sub(1,1) ~= "{" then bracket = "{"..uuid.."}" end
+                        local entry = _kgContainer and _kgContainer[bracket]
+                        if entry then tipe = entry.PetType end
+                    end
+                    if tipe and needTipe[tipe] then cnt = cnt + 1 end
+                end
+            end
+        end)
+        return cnt
+    end
+
+    local firstCheck = countInGarden()
+    _mutLog("🔍 Cek kebun setelah equip: "..firstCheck.." pet cocok (via modelByUuid)", Color3.fromRGB(180,180,80))
+
+    -- step 4: verifikasi — tunggu sampai model masuk kebun (max 12s)
     local swapOk = false
-    for waitTick = 1, 10 do
+    for waitTick = 1, 12 do
         task.wait(1)
-        local inGarden = 0
-        for uuid in pairs(_activeUuids or {}) do
-            if modelByUuid[uuid] then inGarden = inGarden + 1 end
-        end
-        _mutLog("🔍 tick "..waitTick..": "..inGarden.." di kebun / "..activeCount.." active", Color3.fromRGB(150,150,80))
+        local inGarden = countInGarden()
+        _mutLog("🔍 tick "..waitTick..": "..inGarden.." pet cocok di kebun", Color3.fromRGB(150,150,80))
         if inGarden > 0 then
             _mutLog("✓ Lineup aktif: "..label.." ("..inGarden.." pet di kebun)", Color3.fromRGB(78,214,204))
             swapOk = true; break
@@ -6460,7 +6484,8 @@ local function _mutSwapLineup(def, label, fase, sesiNum)
     end
 
     if not swapOk then
-        _mutLog("⚠ Lineup gagal masuk setelah 10s: "..label, Color3.fromRGB(255,80,80))
+        _mutLog("⚠ Lineup tidak terdeteksi setelah 12s: "..label.." — lanjut saja", Color3.fromRGB(255,140,60))
+        -- lanjut walau tidak terdeteksi — mungkin modelByUuid belum sync, tapi pet sudah equip
     end
 end
 
@@ -6470,17 +6495,34 @@ local function _mutEnforceLineup(def)
     if not def then return end
     -- skip kalau sedang dalam proses swap/equip (hindari konflik dengan _mutSwapLineup)
     if _isTransisi then return end
+    if not _mutCurrentDef then return end
     pcall(function()
-        -- re-equip pet dari _activeUuids yang hilang dari kebun
-        for uuid in pairs(_activeUuids or {}) do
-            if not modelByUuid[uuid] then
-                pcall(function() equipPet(uuid) end); task.wait(0.15)
+        local sesiNum = _mutCurrentSesi or 1
+        local pool = (_mutPool and _mutPool[sesiNum]) or {}
+        local poolCount = 0
+        for _ in pairs(pool) do poolCount = poolCount + 1 end
+        if poolCount > 0 then
+            for uuid in pairs(pool) do
+                if not modelByUuid[uuid] then
+                    if type(equipPet)=="function" then
+                        pcall(function() equipPet(uuid) end); task.wait(0.15)
+                    end
+                end
+            end
+        else
+            for uuid in pairs(_activeUuids or {}) do
+                if not modelByUuid[uuid] then
+                    if type(equipPet)=="function" then
+                        pcall(function() equipPet(uuid) end); task.wait(0.15)
+                    end
+                end
             end
         end
     end)
 end
 
-local _mutCurrentDef = nil  -- def lineup yang sedang aktif di MTS
+local _mutCurrentDef = nil   -- def lineup yang sedang aktif di MTS
+local _mutCurrentSesi = 1   -- sesiNum yang sedang aktif (untuk enforce)
 
 local function _mutWaitDone()
     -- poll getMtsMachineTimer() langsung (tidak pakai timerLbl agar tidak stale)
@@ -6517,6 +6559,15 @@ local function _mutDoSiklus(skipSubmit)
         if existingPet then
             _mutLog("⏳ Mesin masih ada pet ("..existingPet.."), tunggu selesai...", Color3.fromRGB(255,200,60))
             _mutWaitDone()
+            if not _mutRunning then return false end
+            -- tunggu konfirmasi pet benar-benar hilang dari mesin (max 15s setelah timer habis)
+            local clearWait = 0
+            while _mutRunning and clearWait < 15 do
+                local stillPet = getMtsMachinePet()
+                if not stillPet then break end
+                _mutLog("⏳ Tunggu pet keluar mesin ("..stillPet..")...", Color3.fromRGB(255,200,60))
+                task.wait(2); clearWait = clearWait + 2
+            end
             if not _mutRunning then return false end
         end
 
