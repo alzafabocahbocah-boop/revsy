@@ -1,4 +1,4 @@
--- uplevelnew v8.331 — gift prioritas target age<500 paling sedikit (scan ViewInventory dulu)
+-- uplevelnew v8.332 — gift proporsional: yang paling kosong dapat lebih banyak
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.331"
+local VERSION = "v8.332"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6306,66 +6306,138 @@ local function _loopMutasi()
     _mutSetFase("—")
 end
 
--- loop GIFT (terpisah)
+-- loop GIFT (terpisah) — proporsional: yang paling kosong dapat lebih banyak
 local function _loopGift()
     _mtsRunning = true; _G.ZenxMtsState.autoStart=true
     mtsStatLbl.Text="🎁 gift: start..."; mtsStatLbl.TextColor3=C.accent
 
-    -- pilih target: scan inv dulu, prioritas age500 paling sedikit
-    local function pickBestTarget()
-        local bestNm, bestScore = nil, math.huge
+    -- scan semua target online, return sorted list [{nm, score, plr}] (score = age<500, makin kecil makin prioritas)
+    local function scanAllTargets()
         local Players2 = game:GetService("Players")
+        local list = {}
         for nm in pairs(_mtsTargets) do
             local tPlr = Players2:FindFirstChild(nm)
             if tPlr then
-                -- pakai cache kalau ada, kalau tidak scan sekarang
                 local data = _mtsInvCache[nm]
                 if not data then
-                    mtsStatLbl.Text="🎁 scan inv "..nm.."..."
+                    mtsStatLbl.Text="🎁 scan "..nm.."..."
                     data = _mtsGetInvCount(tPlr)
                     if data then _mtsInvCache[nm] = data end
                 end
                 local score = data and data.age500 or 999
-                mtsAddGiftLog("📊 "..nm..": "..score.." pet age<500", Color3.fromRGB(180,180,80))
-                if score < bestScore then bestScore=score; bestNm=nm end
+                list[#list+1] = {nm=nm, score=score, plr=tPlr}
             end
         end
-        return bestNm, bestScore
+        -- sort: score terkecil (paling kosong) di depan
+        table.sort(list, function(a,b) return a.score < b.score end)
+        return list
+    end
+
+    -- hitung jatah gift per target dari total pet yang tersedia
+    -- contoh: target=[40,50,60], total=30pet
+    --   weight terbalik: 1/40=0.025, 1/50=0.020, 1/60=0.017 → sum=0.062
+    --   jatah: t1=30*0.025/0.062≈12, t2=30*0.020/0.062≈10, t3=30*0.017/0.062≈8
+    -- kalau total pet < jumlah target → fokus ke yang paling kosong saja
+    local function calcJatah(targets, totalPet)
+        if #targets == 0 then return {} end
+        -- kalau pet < target count, gift 1 per target dari yang paling kosong
+        if totalPet <= #targets then
+            local jatah = {}
+            for i=1,math.min(totalPet,#targets) do
+                jatah[targets[i].nm] = 1
+            end
+            return jatah
+        end
+        -- hitung weight terbalik (makin sedikit age500 → makin besar weight)
+        local weights = {}
+        local sumW = 0
+        for _,t in ipairs(targets) do
+            -- tambah 1 biar tidak div/0 kalau score=0
+            local w = 1 / (t.score + 1)
+            weights[t.nm] = w
+            sumW = sumW + w
+        end
+        local jatah = {}
+        local assigned = 0
+        for i,t in ipairs(targets) do
+            local raw = (weights[t.nm] / sumW) * totalPet
+            local n = (i == #targets) and (totalPet - assigned) or math.floor(raw)
+            n = math.max(0, n)
+            jatah[t.nm] = n
+            assigned = assigned + n
+        end
+        return jatah
     end
 
     while _mtsRunning do
-        local pets=getMtsPets()
-        if #pets==0 then
+        local pets = getMtsPets()
+        if #pets == 0 then
             mtsStatLbl.Text="🎁 gift: selesai"; mtsStatLbl.TextColor3=Color3.fromRGB(60,200,80)
             _mtsRunning=false; break
         end
         local tgtList={}; for nm in pairs(_mtsTargets) do tgtList[#tgtList+1]=nm end
         if #tgtList==0 then
-            mtsStatLbl.Text="🎁 gift: gak ada target"
-            _mtsRunning=false; break
+            mtsStatLbl.Text="🎁 gift: gak ada target"; _mtsRunning=false; break
         end
-        -- tiap 5 gift, re-scan untuk update prioritas
-        local tgtNm, _ = pickBestTarget()
-        if not tgtNm then
+
+        -- scan & hitung jatah
+        local targets = scanAllTargets()
+        if #targets == 0 then
             mtsStatLbl.Text="🎁 semua target offline, tunggu 5s..."
-            task.wait(5); _mtsInvCache={}; -- reset cache biar re-scan
+            task.wait(5); _mtsInvCache={}; continue
         end
-        local tPlr=game:GetService("Players"):FindFirstChild(tgtNm or "")
-        if not tPlr then
-            mtsStatLbl.Text="🎁 skip "..tostring(tgtNm).." (offline)"
-            mtsAddGiftLog("✗ skip "..(tgtNm or "?").." (offline)", C.textMute)
-            _mtsInvCache[tgtNm or ""] = nil  -- hapus cache biar re-scan
-        else
-            local p=pets[1]
-            local kgVal=math.floor((p.age or 0)*10+0.5)/10
-            local logTxt=p.fullName.." "..tostring(kgVal).."kg ["..tostring(p.uuid):sub(1,8).."]  → "..tgtNm
-            mtsStatLbl.Text="🎁 gift → "..tgtNm.." | sisa "..(#pets-1)
-            local ok=pcall(mtsGiftOne,tPlr,p)
-            if ok then mtsAddGiftLog("✓ "..logTxt, C.accent)
-            else mtsAddGiftLog("✗ ERR "..logTxt, Color3.fromRGB(255,100,80)) end
+
+        local totalPet = #getMtsPets()
+        local jatah = calcJatah(targets, totalPet)
+
+        -- log rencana distribusi
+        local planParts = {}
+        for _,t in ipairs(targets) do
+            planParts[#planParts+1] = t.nm:sub(1,8).."="..tostring(jatah[t.nm] or 0)
         end
-        local delay=tonumber(mtsDelayBox.Text) or 0.5
-        task.wait(math.max(0.3, delay))
+        mtsAddGiftLog("📋 distribusi: "..table.concat(planParts," | "), Color3.fromRGB(180,180,80))
+
+        -- gift sesuai jatah, per target berurutan dari yang paling kosong
+        for _,t in ipairs(targets) do
+            if not _mtsRunning then break end
+            local quota = jatah[t.nm] or 0
+            if quota <= 0 then continue end
+            local gifted = 0
+            while _mtsRunning and gifted < quota do
+                local curPets = getMtsPets()
+                if #curPets == 0 then
+                    mtsStatLbl.Text="🎁 gift: selesai"; mtsStatLbl.TextColor3=Color3.fromRGB(60,200,80)
+                    _mtsRunning=false; break
+                end
+                -- re-check target masih online
+                local tPlr2 = game:GetService("Players"):FindFirstChild(t.nm)
+                if not tPlr2 then
+                    mtsAddGiftLog("✗ "..t.nm.." offline, skip sisa jatah", C.textMute)
+                    _mtsInvCache[t.nm]=nil; break
+                end
+                local p = curPets[1]
+                local kgVal = math.floor((p.age or 0)*10+0.5)/10
+                local logTxt = p.fullName.." "..kgVal.."kg → "..t.nm.." ("..gifted+1 .."/"..quota..")"
+                mtsStatLbl.Text="🎁 "..t.nm.." | "..gifted+1 .."/"..quota.." | sisa "..(#curPets-1).." pet"
+                local ok = pcall(mtsGiftOne, tPlr2, p)
+                if ok then
+                    mtsAddGiftLog("✓ "..logTxt, C.accent)
+                    gifted = gifted + 1
+                    -- update cache lokal (tambah 1 ke age500 target)
+                    if _mtsInvCache[t.nm] then
+                        _mtsInvCache[t.nm].age500 = (_mtsInvCache[t.nm].age500 or 0) + 1
+                        _mtsInvCache[t.nm].total  = (_mtsInvCache[t.nm].total  or 0) + 1
+                    end
+                else
+                    mtsAddGiftLog("✗ ERR "..logTxt, Color3.fromRGB(255,100,80))
+                end
+                local delay = tonumber(mtsDelayBox.Text) or 0.5
+                task.wait(math.max(0.3, delay))
+            end
+        end
+
+        -- re-scan setiap putaran supaya distribusi selalu fresh
+        _mtsInvCache = {}
     end
     _G.ZenxMtsState.autoStart=false
     if not _mtsRunning then
