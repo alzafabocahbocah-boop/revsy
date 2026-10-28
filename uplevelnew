@@ -1,4 +1,4 @@
--- uplevelnew v8.316 — rejoin kick delay 50s kalau AUTO MTS on (default 40s)
+-- uplevelnew v8.317 — debug scan ProximityPrompt di tab AUTO MTS
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.316"
+local VERSION = "v8.317"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5970,6 +5970,51 @@ mtsStopBtn.MouseButton1Click:Connect(function()
     _mtsRunning=false; _G.ZenxMtsState.autoStart=false
     mtsStartBtn.Visible=true; mtsStopBtn.Visible=false
     mtsStatLbl.Text="dihentikan"; mtsStatLbl.TextColor3=C.textMute
+end)
+
+-- ---- DEBUG: scan ProximityPrompt di workspace ----
+local mtsDbgBtn=mk("TextButton",{Size=UDim2.new(1,0,0,32),BackgroundColor3=C.card,
+    Text="🔍 Debug: scan PP di workspace",Font=FONT_B,TextSize=11,TextColor3=C.textDim,
+    LayoutOrder=20,Parent=mtsScroll}); corner(mtsDbgBtn,8); stroke(mtsDbgBtn,C.border,1)
+mtsDbgBtn.MouseButton1Click:Connect(function()
+    mtsDbgBtn.Text="scanning..."; mtsDbgBtn.TextColor3=C.textDim
+    local results={}
+    local char=plr and plr.Character
+    local hrp=char and char:FindFirstChild("HumanoidRootPart")
+    local function scanObj(obj, depth)
+        if depth>6 then return end
+        local ok,pp=pcall(function() return obj:FindFirstChildOfClass("ProximityPrompt") end)
+        if ok and pp then
+            local dist=999
+            if hrp then
+                local p=obj:IsA("BasePart") and obj or (obj:IsA("Model") and obj.PrimaryPart)
+                if p then
+                    local ok2,d=pcall(function() return (hrp.Position-p.Position).Magnitude end)
+                    if ok2 then dist=math.floor(d) end
+                end
+            end
+            local path=obj.Name
+            local par=obj.Parent
+            for _=1,3 do if par and par~=game.Workspace then path=par.Name.."/"..path; par=par.Parent else break end end
+            results[#results+1]=string.format("[%dm] %s | ActionText=%s ObjectText=%s",
+                dist, path, tostring(pp.ActionText), tostring(pp.ObjectText))
+        end
+        for _,c in ipairs(obj:GetChildren()) do
+            pcall(scanObj,c,depth+1)
+        end
+    end
+    pcall(scanObj,game.Workspace,0)
+    table.sort(results,function(a,b)
+        local da=tonumber(a:match("^%[(%d+)m%]")) or 999
+        local db=tonumber(b:match("^%[(%d+)m%]")) or 999
+        return da<db
+    end)
+    -- tampilkan di log
+    mtsAddLog("=== SCAN PP ===", C.accent)
+    for _,r in ipairs(results) do mtsAddLog(r, C.textDim) end
+    if #results==0 then mtsAddLog("(tidak ada PP ditemukan)", C.textMute) end
+    mtsDbgBtn.Text="🔍 Debug: scan PP di workspace"
+    mtsDbgBtn.TextColor3=C.textDim
 end)
 
 -- auto-start setelah rejoin kalau sebelumnya lagi jalan
