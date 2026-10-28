@@ -1,4 +1,4 @@
--- uplevelnew v8.392 — fix mtsAddGiftLog forward declare (log gift kosong + gift tidak jalan)
+-- uplevelnew v8.393 — gift error handler: tampil error di log gift + warn
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.392"
+local VERSION = "v8.393"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -394,7 +394,7 @@ do
     end)
 end
 
--- ── MODAL INFO uplevelnew v8.392 (compact height) ──
+-- ── MODAL INFO uplevelnew v8.393 (compact height) ──
 do
     local function mkModalLvl(title, accentCol)
         local ov = Instance.new("Frame"); ov.Size = UDim2.new(1,0,1,0); ov.BackgroundColor3 = Color3.fromRGB(0,0,0); ov.BackgroundTransparency = 0.35; ov.BorderSizePixel = 0; ov.Visible = false; ov.ZIndex = 20; ov.Parent = gui
@@ -7523,7 +7523,16 @@ mtsStartBtn.MouseButton1Click:Connect(function()
     mtsStartBtn.Visible=false; mtsStopBtn.Visible=true
     -- spawn 2 loop terpisah
     task.spawn(_loopMutasi)
-    task.spawn(_loopGift)
+    task.spawn(function()
+        local ok, err = pcall(_loopGift)
+        if not ok then
+            local msg = "💥 GIFT ERROR: "..tostring(err)
+            warn(msg)
+            pcall(function() mtsAddGiftLog(msg, Color3.fromRGB(255,80,80)) end)
+            pcall(function() mtsStatLbl.Text="💥 gift error — cek log"; mtsStatLbl.TextColor3=Color3.fromRGB(255,80,80) end)
+            _mtsRunning = false
+        end
+    end)
     -- pantau keduanya, kalau keduanya berhenti → balik tombol
     task.spawn(function()
         while _mtsRunning or _mutState.running do task.wait(1) end
