@@ -1,4 +1,4 @@
--- uplevelnew v8.337 — fix siklus gagal: cek timer dulu sebelum retry, jangan interrupt mesin running
+-- uplevelnew v8.338 — fix claim: tunggu Gremlin beneran masuk kebun sebelum ClaimMutatedPet
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.337"
+local VERSION = "v8.338"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6278,7 +6278,50 @@ local function _mutDoSiklus(skipSubmit)
 
     -- sesi 2: equip 2 Gremlin sebelum claim
     _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰")
-    task.wait(1.0)
+
+    -- tunggu Gremlin beneran masuk kebun (cek model di workspace)
+    local gremlinTarget = SESI2_MUT_DEF[1] and SESI2_MUT_DEF[1].jml or 2
+    local waited = 0
+    while _mutRunning and waited < 15 do
+        local cnt = 0
+        pcall(function()
+            -- scan workspace: model yang namanya UUID (format {...}) = pet di kebun
+            local WS = game:GetService("Workspace")
+            for _,d in ipairs(WS:GetDescendants()) do
+                if d:IsA("Model") and tostring(d.Name):sub(1,1)=="{" then
+                    -- cek apakah ini Gremlin via attribute atau nama tool di backpack
+                    local bp = plr:FindFirstChild("Backpack")
+                    local tool = bp and bp:FindFirstChild(d.Name)
+                    local nm = ""
+                    if tool then
+                        nm = (tool:GetAttribute("PetType") or tool.Name or ""):lower()
+                    else
+                        -- cek char juga
+                        local ch = plr.Character
+                        local ct = ch and ch:FindFirstChild(d.Name)
+                        nm = ct and (ct:GetAttribute("PetType") or ct.Name or ""):lower() or ""
+                    end
+                    if nm:find("gremlin") then cnt = cnt + 1 end
+                end
+            end
+        end)
+        if cnt >= gremlinTarget then
+            _mutLog("✓ Gremlin di kebun: "..cnt.."/"..gremlinTarget, Color3.fromRGB(78,214,204))
+            break
+        end
+        _mutLog("⏳ tunggu Gremlin masuk kebun... ("..cnt.."/"..gremlinTarget..")", Color3.fromRGB(255,200,60))
+        task.wait(1)
+        waited = waited + 1
+    end
+    if waited >= 15 then
+        _mutLog("⚠ Gremlin timeout, lanjut claim anyway", Color3.fromRGB(255,140,60))
+    end
+    -- countdown 3s sebelum claim
+    for i=3,1,-1 do
+        if not _mutRunning then return false end
+        _mutLog("🎰 Claim dalam "..i.."s...", Color3.fromRGB(180,120,255))
+        task.wait(1)
+    end
 
     -- claim
     _mutLog("🎁 ClaimMutatedPet...", Color3.fromRGB(200,140,255))
@@ -6332,7 +6375,32 @@ local function _loopMutasi()
         if _mutRunning then
             task.wait(0.5)
             _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰")
-            task.wait(1.0)
+            -- tunggu Gremlin masuk kebun sebelum claim
+            local gWaited = 0
+            while _mutRunning and gWaited < 15 do
+                local gCnt = 0
+                pcall(function()
+                    for _,d in ipairs(game.Workspace:GetDescendants()) do
+                        if d:IsA("Model") and tostring(d.Name):sub(1,1)=="{" then
+                            local bp=plr:FindFirstChild("Backpack")
+                            local tool=bp and bp:FindFirstChild(d.Name)
+                            local nm=(tool and (tool:GetAttribute("PetType") or tool.Name) or ""):lower()
+                            if nm:find("gremlin") then gCnt=gCnt+1 end
+                        end
+                    end
+                end)
+                if gCnt >= 2 then
+                    _mutLog("✓ Gremlin di kebun: "..gCnt.."/2", Color3.fromRGB(78,214,204)); break
+                end
+                _mutLog("⏳ tunggu Gremlin... ("..gCnt.."/2)", Color3.fromRGB(255,200,60))
+                task.wait(1); gWaited=gWaited+1
+            end
+            if gWaited >= 15 then _mutLog("⚠ Gremlin timeout, lanjut claim", Color3.fromRGB(255,140,60)) end
+            for i=3,1,-1 do
+                if not _mutRunning then break end
+                _mutLog("🎰 Claim dalam "..i.."s...", Color3.fromRGB(180,120,255))
+                task.wait(1)
+            end
             pcall(function()
                 local RE_c=game:GetService("ReplicatedStorage").GameEvents.PetMutationMachineService_RE
                 RE_c:FireServer("ClaimMutatedPet")
