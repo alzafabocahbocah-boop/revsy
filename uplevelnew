@@ -1,4 +1,4 @@
--- uplevelnew v8.364 — pool detail permanen di label, tidak ditimpa loop
+-- uplevelnew v8.365 — fix modelByUuid nil di MTS: share via _G.ZenxModelByUuid
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.364"
+local VERSION = "v8.365"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2689,7 +2689,8 @@ local function _startEngine()
 -- ===================== PET MANAGEMENT =====================
 -- modelByUuid: track model pet yang sedang di-equip di workspace (seperti uplevel asli)
 -- Hanya model di workspace yang perlu di-unequip. Container includes backpack = jangan loop semua.
-local modelByUuid = {}
+if type(_G.ZenxModelByUuid) ~= "table" then _G.ZenxModelByUuid = {} end
+local modelByUuid = _G.ZenxModelByUuid  -- share ke MTS scope via _G
 local function isPetModel(m) return m:IsA("Model") and tostring(m.Name):sub(1,1) == "{" end
 local function regModel(m) if isPetModel(m) then modelByUuid[m.Name]=m end end
 pcall(function() for _,d in ipairs(workspace:GetDescendants()) do regModel(d) end end)
@@ -6562,11 +6563,12 @@ local function _mutSwapLineup(def, label, fase, sesiNum)
     local needTipe = {}
     for _, d in ipairs(def) do needTipe[d.nama] = true end
 
-    -- helper: hitung pet di kebun yang cocok (via modelByUuid — tidak bergantung _activeUuids)
+    -- helper: hitung pet di kebun yang cocok (via _G.ZenxModelByUuid — tidak bergantung _activeUuids)
     local function countInGarden()
         local cnt = 0
         pcall(function()
-            for uuid, mdl in pairs(modelByUuid) do
+            local mbu = _G.ZenxModelByUuid or {}
+            for uuid, mdl in pairs(mbu) do
                 if mdl and mdl.Parent then
                     local tipe = nil
                     if pool[uuid] then
@@ -6618,9 +6620,10 @@ local function _mutEnforceLineup(def)
         local pool = (_mutPool and _mutPool[sesiNum]) or {}
         local poolCount = 0
         for _ in pairs(pool) do poolCount = poolCount + 1 end
+        local mbu = _G.ZenxModelByUuid or {}
         if poolCount > 0 then
             for uuid in pairs(pool) do
-                if not modelByUuid[uuid] then
+                if not mbu[uuid] then
                     if type(equipPet)=="function" then
                         pcall(function() equipPet(uuid) end); task.wait(0.15)
                     end
@@ -6628,7 +6631,7 @@ local function _mutEnforceLineup(def)
             end
         else
             for uuid in pairs(_activeUuids or {}) do
-                if not modelByUuid[uuid] then
+                if not mbu[uuid] then
                     if type(equipPet)=="function" then
                         pcall(function() equipPet(uuid) end); task.wait(0.15)
                     end
