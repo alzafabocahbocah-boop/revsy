@@ -1,4 +1,4 @@
--- uplevelnew v8.371 — fix: claim sisa mesin sebelum siklus baru (bukan tunggu pet keluar sendiri)
+-- uplevelnew v8.372 — equip pet age-500 ke tangan sebelum SubmitHeldPet
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.371"
+local VERSION = "v8.372"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6740,6 +6740,48 @@ local function _mutDoSiklus(skipSubmit)
                 task.wait(2); clearWait = clearWait + 2
             end
             if not _mutRunning then return false end
+        end
+
+        -- equip 1 pet age 500 ke tangan sebelum SubmitHeldPet
+        -- prioritas: dari pool S1; fallback: pet age 500 di backpack
+        local pool1 = _mutPool and _mutPool[1]
+        local submitUuid = nil
+        if pool1 then for u in pairs(pool1) do submitUuid = u; break end end
+        if submitUuid then
+            _mutLog("🐾 Equip pool S1 → submit: "..tostring(submitUuid):sub(1,20), Color3.fromRGB(120,180,120))
+            local _equipPet = _G.ZenxEquipPet or equipPet
+            if type(_equipPet)=="function" then
+                pcall(_equipPet, submitUuid)
+                task.wait(1.5)
+            end
+        else
+            -- fallback: cari pet age 500 di backpack
+            _mutLog("⚠ Pool S1 kosong — cari pet age 500 di backpack...", Color3.fromRGB(255,180,60))
+            pcall(function()
+                local bp = plr:FindFirstChild("Backpack")
+                local c2 = _kgContainer
+                if bp and c2 then
+                    for _,t in ipairs(bp:GetChildren()) do
+                        if t:IsA("Tool") then
+                            local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
+                            if uuid then
+                                local key = tostring(uuid)
+                                if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+                                local e = c2[key]
+                                local lv = e and e.PetData and tonumber(e.PetData.Level) or 0
+                                if lv >= 500 then
+                                    _mutLog("🐾 Equip age-500: "..tostring(uuid):sub(1,20), Color3.fromRGB(120,180,120))
+                                    local _equipPet = _G.ZenxEquipPet or equipPet
+                                    if type(_equipPet)=="function" then
+                                        pcall(_equipPet, tostring(uuid)); task.wait(1.5)
+                                    end
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
         end
 
         local pp = _mutGetPP()
