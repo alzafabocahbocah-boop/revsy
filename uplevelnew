@@ -1,4 +1,4 @@
--- uplevelnew v8.393 — gift error handler: tampil error di log gift + warn
+-- uplevelnew v8.394 — fix tunggu Gremlin masuk kebun: pakai modelByUuid bukan WS scan by name
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.393"
+local VERSION = "v8.394"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -394,7 +394,7 @@ do
     end)
 end
 
--- ── MODAL INFO uplevelnew v8.393 (compact height) ──
+-- ── MODAL INFO uplevelnew v8.394 (compact height) ──
 do
     local function mkModalLvl(title, accentCol)
         local ov = Instance.new("Frame"); ov.Size = UDim2.new(1,0,1,0); ov.BackgroundColor3 = Color3.fromRGB(0,0,0); ov.BackgroundTransparency = 0.35; ov.BorderSizePixel = 0; ov.Visible = false; ov.ZIndex = 20; ov.Parent = gui
@@ -6912,30 +6912,39 @@ local function _mutDoSiklus(skipSubmit)
     -- sesi 2: equip 2 Gremlin sebelum claim
     _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰", 2)
 
-    -- tunggu Gremlin beneran masuk kebun (cek model di workspace)
+    -- tunggu Gremlin beneran masuk kebun (via modelByUuid — sudah track model workspace)
     local gremlinTarget = SESI2_MUT_DEF[1] and SESI2_MUT_DEF[1].jml or 2
     local waited = 0
     while _mutState.running and waited < 15 do
         local cnt = 0
         pcall(function()
-            -- scan workspace: model yang namanya UUID (format {...}) = pet di kebun
-            local WS = game:GetService("Workspace")
-            for _,d in ipairs(WS:GetDescendants()) do
-                if d:IsA("Model") and tostring(d.Name):sub(1,1)=="{" then
-                    -- cek apakah ini Gremlin via attribute atau nama tool di backpack
-                    local bp = plr:FindFirstChild("Backpack")
-                    local tool = bp and bp:FindFirstChild(d.Name)
-                    local nm = ""
-                    if tool then
-                        nm = (tool:GetAttribute("PetType") or tool.Name or ""):lower()
-                    else
-                        -- cek char juga
-                        local ch = plr.Character
-                        local ct = ch and ch:FindFirstChild(d.Name)
-                        nm = ct and (ct:GetAttribute("PetType") or ct.Name or ""):lower() or ""
+            local mbu = _G.ZenxModelByUuid or {}
+            for uuid, model in pairs(mbu) do
+                -- cek tipe dari RC container atau tool attribute
+                local tipe = ""
+                local bp = plr:FindFirstChild("Backpack")
+                if bp then
+                    for _, t in ipairs(bp:GetChildren()) do
+                        local tuuid = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                        if tuuid and tostring(tuuid) == tostring(uuid) then
+                            tipe = (t:GetAttribute("PetType") or t:GetAttribute("f") or t.Name or ""):lower()
+                            break
+                        end
                     end
-                    if nm:find("gremlin") then cnt = cnt + 1 end
                 end
+                if tipe == "" then
+                    -- fallback: cek model name (uuid) di RC
+                    local ok2, rc = pcall(function()
+                        local RC = require(RS:WaitForChild("RCFramework",3))
+                        local d = RC.new("ActivePetsService_Replicator"):GetData(plr.Name)
+                        local inv = d and rawget(rawget(rawget(rawget(d,"Table") or {},"PlayerPetData") or {},plr.Name) or {},"PetInventory") or {}
+                        local data = rawget(inv,"Data") or {}
+                        local entry = data["{"..tostring(uuid).."}"]
+                        return entry and tostring(entry.PetType or ""):lower() or ""
+                    end)
+                    if ok2 then tipe = rc or "" end
+                end
+                if tipe:find("gremlin") then cnt = cnt + 1 end
             end
         end)
         if cnt >= gremlinTarget then
