@@ -1,4 +1,4 @@
--- uplevelnew v8.403 — Copy All: ganti GuiService:SetClipboard → _cp() (executor clipboard)
+-- uplevelnew v8.404 — pause mutasi saat gift aktif, lanjut setelah gift selesai
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.403"
+local VERSION = "v8.404"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6994,6 +6994,7 @@ local mtsStatLbl=mk("TextLabel",{Size=UDim2.new(0.5,-3,1,0),BackgroundColor3=C.c
 corner(mtsStatLbl,6); mk("UIPadding",{PaddingLeft=UDim.new(0,8),Parent=mtsStatLbl})
 
 local _mtsRunning=false
+local _mtsGiftActive=false  -- v8.404: true saat _loopGift sedang gift (pause mutasi)
 -- _mutState sudah dideklarasikan di atas (baris ~6540) via tabel, tidak perlu re-declare.
 
 local mtsStartBtn=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=Color3.fromRGB(34,197,94),
@@ -7088,6 +7089,14 @@ local function _loopMutasi()
     end
     local siklus = 0
     while _mutState.running do
+        -- v8.404: pause mutasi saat gift sedang berlangsung
+        if _mtsGiftActive then
+            _mutLog("⏸ gift aktif — mutasi pause tunggu gift selesai...", Color3.fromRGB(255,200,60))
+            mutStatLbl.Text="⏸ tunggu gift selesai..."; mutStatLbl.TextColor3=Color3.fromRGB(255,200,60)
+            while _mutState.running and _mtsGiftActive do task.wait(0.5) end
+            if not _mutState.running then break end
+            _mutLog("▶ gift selesai — mutasi lanjut", Color3.fromRGB(78,214,204))
+        end
         siklus = siklus + 1
         mutStatLbl.Text="⚙ mesin: siklus "..siklus
         _mutLog(string.format("━━━ Siklus %d ━━━", siklus), Color3.fromRGB(100,100,200))
@@ -7362,6 +7371,7 @@ local function _loopGift()
         end
 
         -- gift paralel — tiap target jalan di thread sendiri
+        _mtsGiftActive = true  -- v8.404: pause mutasi selama gift berlangsung
         local threads = {}
         local doneCount = 0
         local totalThreads = 0
@@ -7419,6 +7429,7 @@ local function _loopGift()
             mtsStatLbl.Text="🎁 gift paralel... sisa "..#remain.." pet"
             task.wait(0.5)
         end
+        _mtsGiftActive = false  -- v8.404: gift selesai, mutasi boleh lanjut
 
         -- re-scan setiap putaran supaya distribusi selalu fresh
         _mtsInvCache = {}
