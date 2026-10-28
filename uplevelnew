@@ -1,4 +1,4 @@
--- uplevelnew v8.326 — fix _mutWaitDone: retry cari timer label, jangan skip kalau nil
+-- uplevelnew v8.327 — persist MTS targets ke file executor, survive rejoin
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.326"
+local VERSION = "v8.327"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5774,8 +5774,38 @@ local mtsRefreshBtn=mk("TextButton",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C
     Text="🔄  Refresh List Player",Font=FONT_B,TextSize=12,TextColor3=C.textDim,
     LayoutOrder=5,Parent=mtsScroll}); corner(mtsRefreshBtn,8); stroke(mtsRefreshBtn,C.border,1)
 
--- persist targets + autostart via _G (survive re-execute/rejoin)
+-- persist targets + autostart via _G + writefile (survive rejoin)
+local MTS_SAVE_FILE = "zenx_mts_targets.txt"
+
+local function _mtsSave()
+    -- simpan ke _G dan file executor
+    pcall(function()
+        local parts={}
+        for nm in pairs(_G.ZenxMtsState.targets) do parts[#parts+1]=nm end
+        local s=table.concat(parts,",")
+        if writefile then writefile(MTS_SAVE_FILE, s) end
+    end)
+end
+
+local function _mtsLoad()
+    -- load dari file executor kalau _G masih kosong
+    pcall(function()
+        if readfile then
+            local ok,s=pcall(readfile, MTS_SAVE_FILE)
+            if ok and s and s~="" then
+                for nm in s:gmatch("[^,]+") do
+                    if nm and nm~="" then
+                        _G.ZenxMtsState.targets[nm]=true
+                    end
+                end
+            end
+        end
+    end)
+end
+
 if type(_G.ZenxMtsState) ~= "table" then _G.ZenxMtsState = {targets={}, autoStart=false} end
+-- restore targets dari file kalau _G kosong (habis rejoin)
+if next(_G.ZenxMtsState.targets) == nil then _mtsLoad() end
 local _mtsTargets = _G.ZenxMtsState.targets  -- {nama=true}
 
 local function buildMtsPlayerList()
@@ -5798,6 +5828,7 @@ local function buildMtsPlayerList()
             local pName=p.Name
             row.MouseButton1Click:Connect(function()
                 _mtsTargets[pName] = not _mtsTargets[pName] or nil
+                _mtsSave()  -- persist ke file supaya survive rejoin
                 buildMtsPlayerList()
                 -- update stat target count
                 local n=0; for _ in pairs(_mtsTargets) do n=n+1 end
