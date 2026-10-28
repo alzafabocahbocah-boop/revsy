@@ -1,4 +1,4 @@
--- uplevelnew v8.355 — tab MTS: panel lineup mesin (sesi 1 & 2) — nama, UUID pendek, kg
+-- uplevelnew v8.356 — MTS: tombol auto-pilih tim S1/S2 (kg terbesar), persist _G+file survives rejoin
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.355"
+local VERSION = "v8.356"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6126,14 +6126,148 @@ local mutLineupS1Lbl=lbl(mutLineupBox,"—",9,C.textMute)
 mutLineupS1Lbl.Size=UDim2.new(1,0,0,28); mutLineupS1Lbl.LayoutOrder=2
 mutLineupS1Lbl.TextWrapped=true; mutLineupS1Lbl.TextXAlignment=Enum.TextXAlignment.Left
 
+-- tombol pilih tim sesi 1
+local mutPickS1Row=mk("Frame",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,LayoutOrder=2,Parent=mutLineupBox})
+local mutPickS1Btn=mk("TextButton",{Size=UDim2.new(0,110,1,0),Position=UDim2.new(0,0,0,0),
+    BackgroundColor3=Color3.fromRGB(20,60,40),Text="🎯 Pilih Tim S1",
+    Font=FONT_B,TextSize=9,TextColor3=Color3.fromRGB(78,214,204),
+    BorderSizePixel=0,AutoButtonColor=true,Parent=mutPickS1Row}); corner(mutPickS1Btn,4)
+local mutPickS1Status=lbl(mutPickS1Row,"—",9,C.textMute)
+mutPickS1Status.Position=UDim2.new(0,116,0,0); mutPickS1Status.Size=UDim2.new(1,-116,1,0)
+mutPickS1Status.TextXAlignment=Enum.TextXAlignment.Left
+
+local mutLineupS1Lbl=lbl(mutLineupBox,"—",9,C.textMute)
+mutLineupS1Lbl.Size=UDim2.new(1,0,0,28); mutLineupS1Lbl.LayoutOrder=3
+mutLineupS1Lbl.TextWrapped=true; mutLineupS1Lbl.TextXAlignment=Enum.TextXAlignment.Left
+
 local mutLineupS2Hdr=lbl(mutLineupBox,"Sesi 2 (Gremlin):",10,Color3.fromRGB(180,120,255))
-mutLineupS2Hdr.Font=FONT_B; mutLineupS2Hdr.Size=UDim2.new(1,0,0,14); mutLineupS2Hdr.LayoutOrder=3
+mutLineupS2Hdr.Font=FONT_B; mutLineupS2Hdr.Size=UDim2.new(1,0,0,14); mutLineupS2Hdr.LayoutOrder=4
+
+-- tombol pilih tim sesi 2
+local mutPickS2Row=mk("Frame",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,LayoutOrder=5,Parent=mutLineupBox})
+local mutPickS2Btn=mk("TextButton",{Size=UDim2.new(0,110,1,0),Position=UDim2.new(0,0,0,0),
+    BackgroundColor3=Color3.fromRGB(40,20,60),Text="🎯 Pilih Tim S2",
+    Font=FONT_B,TextSize=9,TextColor3=Color3.fromRGB(180,120,255),
+    BorderSizePixel=0,AutoButtonColor=true,Parent=mutPickS2Row}); corner(mutPickS2Btn,4)
+local mutPickS2Status=lbl(mutPickS2Row,"—",9,C.textMute)
+mutPickS2Status.Position=UDim2.new(0,116,0,0); mutPickS2Status.Size=UDim2.new(1,-116,1,0)
+mutPickS2Status.TextXAlignment=Enum.TextXAlignment.Left
+
 local mutLineupS2Lbl=lbl(mutLineupBox,"—",9,C.textMute)
-mutLineupS2Lbl.Size=UDim2.new(1,0,0,28); mutLineupS2Lbl.LayoutOrder=4
+mutLineupS2Lbl.Size=UDim2.new(1,0,0,28); mutLineupS2Lbl.LayoutOrder=6
 mutLineupS2Lbl.TextWrapped=true; mutLineupS2Lbl.TextXAlignment=Enum.TextXAlignment.Left
 
 -- resize box otomatis
 mutLineupBox.AutomaticSize=Enum.AutomaticSize.Y
+
+-- ===== MTS POOL PERSIST =====
+-- simpan UUID tim MTS via _G + file, survive rejoin
+local _mutPoolFile = "zenx_mts_pool_"..(plr.Name or "x")..".txt"
+-- format: sesi|tipe|uuid  (1 baris per entry)
+if type(_G.MTS_POOL) ~= "table" then _G.MTS_POOL = {[1]={}, [2]={}} end
+local _mutPool = _G.MTS_POOL  -- {[1]={[uuid]=tipe,...}, [2]={[uuid]=tipe,...}}
+
+local function _mutPoolSave()
+    pcall(function()
+        if not writefile then return end
+        local lines = {"#mtspool1"}
+        for sesi=1,2 do
+            for uuid,tipe in pairs(_mutPool[sesi]) do
+                lines[#lines+1] = sesi.."|"..tipe.."|"..tostring(uuid)
+            end
+        end
+        writefile(_mutPoolFile, table.concat(lines,"\n"))
+    end)
+end
+
+local function _mutPoolLoad()
+    pcall(function()
+        if not (isfile and isfile(_mutPoolFile) and readfile) then return end
+        local data = readfile(_mutPoolFile)
+        if not tostring(data):match("^#mtspool1") then return end
+        for line in tostring(data):gmatch("[^\n]+") do
+            local sesi,tipe,uuid = line:match("^(%d+)|(.+)|(.+)$")
+            if sesi and tipe and uuid then
+                sesi = tonumber(sesi)
+                if sesi and _mutPool[sesi] then
+                    _mutPool[sesi][uuid] = tipe
+                end
+            end
+        end
+    end)
+end
+
+-- load saat startup kalau pool kosong (rejoin)
+if not next(_mutPool[1]) and not next(_mutPool[2]) then _mutPoolLoad() end
+
+-- helper: scan pet di kebun sekarang, filter sesuai def, simpan ke pool
+local function _mutPickTim(sesi, def, statusLbl)
+    local c = _kgContainer
+    if not c then statusLbl.Text = "container nil!"; return end
+
+    -- hitung total slot yang dibutuhkan per tipe
+    local needPerTipe = {}  -- {[tipe]=jumlah}
+    for _,d in ipairs(def) do needPerTipe[d.nama] = (needPerTipe[d.nama] or 0) + d.jml end
+
+    -- kumpulkan semua pet dari container, hitung kg, kelompokkan per tipe
+    -- {[tipe] = {{uuid=..., kg=...}, ...}}
+    local byTipe = {}
+    for rawKey, e in pairs(c) do
+        if type(e)=="table" then
+            local rawTipe = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+            local tipe = rawTipe
+            for _,p in ipairs(MUTATION_PREFIXES) do
+                if tipe:sub(1,#p)==p then tipe=tipe:sub(#p+1); break end
+            end
+            if needPerTipe[tipe] then
+                local pd = e.PetData or {}
+                local bw = tonumber(pd.BaseWeight) or 0
+                local lv = tonumber(pd.Level) or 0
+                local kg = bw * (lv + 10) / 10
+                -- normalisasi key: pastikan ada kurung kurawal
+                local key = tostring(rawKey)
+                if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+                if not byTipe[tipe] then byTipe[tipe] = {} end
+                byTipe[tipe][#byTipe[tipe]+1] = {uuid=key, kg=kg}
+            end
+        end
+    end
+
+    -- bersihkan pool sesi ini dulu
+    for k in pairs(_mutPool[sesi]) do _mutPool[sesi][k] = nil end
+
+    local totalFound = 0
+    for tipe, need in pairs(needPerTipe) do
+        local list = byTipe[tipe] or {}
+        -- sort kg descending → ambil teratas sebanyak `need`
+        table.sort(list, function(a,b) return a.kg > b.kg end)
+        local taken = 0
+        for _, entry in ipairs(list) do
+            if taken >= need then break end
+            _mutPool[sesi][entry.uuid] = tipe
+            taken = taken + 1
+            totalFound = totalFound + 1
+        end
+    end
+
+    _mutPoolSave()
+    if totalFound > 0 then
+        statusLbl.Text = totalFound.." pet dipilih (kg terbesar)"
+        statusLbl.TextColor3 = Color3.fromRGB(60,200,80)
+    else
+        statusLbl.Text = "tidak ada pet cocok di container"
+        statusLbl.TextColor3 = Color3.fromRGB(255,80,80)
+    end
+end
+
+mutPickS1Btn.MouseButton1Click:Connect(function()
+    mutPickS1Status.Text = "scanning..."; mutPickS1Status.TextColor3 = Color3.fromRGB(255,200,60)
+    _mutPickTim(1, MTS_LINEUP_DEF, mutPickS1Status)
+end)
+mutPickS2Btn.MouseButton1Click:Connect(function()
+    mutPickS2Status.Text = "scanning..."; mutPickS2Status.TextColor3 = Color3.fromRGB(255,200,60)
+    _mutPickTim(2, SESI2_MUT_DEF, mutPickS2Status)
+end)
 
 -- fungsi build teks lineup dari _activeUuids + _kgContainer
 local function _mutBuildLineupText(def)
@@ -6271,31 +6405,55 @@ local function _mutSetFase(fase)
     _mtsFaseNow = tostring(fase)
 end
 
-local function _mutSwapLineup(def, label, fase)
+-- _mutSwapLineup: swap lineup MTS
+-- sesiNum: 1=Sesi1 (Mimic+Golem), 2=Sesi2 (Gremlin)
+-- Jika _mutPool[sesiNum] ada isi → equip UUID langsung (PASS 1 by UUID)
+-- Jika pool kosong → fallback ke equipSesi auto-pick (PASS 2 by type)
+local function _mutSwapLineup(def, label, fase, sesiNum)
+    sesiNum = sesiNum or 1
     _mutLog("👕 Swap → "..label, Color3.fromRGB(180,180,80))
     _mutSetFase(fase or label)
-    _mutCurrentDef = def  -- simpan def aktif untuk enforce
+    _mutCurrentDef = def
 
     -- step 1: unequip semua
     if type(unequipAll)=="function" then pcall(unequipAll) end
     task.wait(2)
 
-    -- step 2: equip lineup baru — pakai equipSesi dengan sesiNum=1
-    -- (sesiNum=99 pool kosong, PASS2 cari dari container — seharusnya ok)
-    -- clear _activeUuids dulu supaya verifikasi bersih
+    -- step 2: clear _activeUuids
     for k in pairs(_activeUuids or {}) do _activeUuids[k] = nil end
-    if type(equipSesi)=="function" then
-        local ok, err = pcall(equipSesi, 1, def)
-        if not ok then _mutLog("⚠ equipSesi error: "..tostring(err), Color3.fromRGB(255,80,80)) end
-    end
-    -- equipSesi sudah punya retry internal (tunggu 1.5s + re-equip yang hilang)
 
-    -- debug: berapa yang masuk _activeUuids
+    -- step 3: cek pool — kalau ada UUID tersimpan, equip langsung
+    local pool = (_mutPool and _mutPool[sesiNum]) or {}
+    local poolCount = 0
+    for _ in pairs(pool) do poolCount = poolCount + 1 end
+
+    if poolCount > 0 then
+        _mutLog("🎯 Pool S"..sesiNum..": "..poolCount.." UUID → equip langsung", Color3.fromRGB(78,214,204))
+        -- equip tiap UUID dari pool
+        for uuid in pairs(pool) do
+            if type(equipPet)=="function" then
+                pcall(equipPet, uuid)
+                task.wait(0.12)
+            end
+        end
+        -- tandai _activeUuids
+        for uuid in pairs(pool) do
+            if _activeUuids then _activeUuids[uuid] = true end
+        end
+    else
+        -- fallback: equipSesi auto-pick
+        _mutLog("⚠ Pool S"..sesiNum.." kosong — auto-pick dari container", Color3.fromRGB(255,180,60))
+        if type(equipSesi)=="function" then
+            local ok, err = pcall(equipSesi, 1, def)
+            if not ok then _mutLog("⚠ equipSesi error: "..tostring(err), Color3.fromRGB(255,80,80)) end
+        end
+    end
+
     local activeCount = 0
     for _ in pairs(_activeUuids or {}) do activeCount = activeCount + 1 end
     _mutLog("🔍 _activeUuids setelah equip: "..activeCount, Color3.fromRGB(180,180,80))
 
-    -- step 3: verifikasi — tunggu sampai model benar-benar masuk kebun (cek modelByUuid)
+    -- step 4: verifikasi — tunggu sampai model masuk kebun
     local swapOk = false
     for waitTick = 1, 10 do
         task.wait(1)
@@ -6395,7 +6553,7 @@ local function _mutDoSiklus(skipSubmit)
     end
 
     -- sesi 1: equip Mimic+Golem selama mesin running
-    _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳")
+    _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳", 1)
 
     -- tunggu timer mesin muncul dulu (delay setelah StartMachine ~2-3 detik)
     task.wait(3)
@@ -6415,7 +6573,7 @@ local function _mutDoSiklus(skipSubmit)
     task.wait(0.5)
 
     -- sesi 2: equip 2 Gremlin sebelum claim
-    _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰")
+    _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰", 2)
 
     -- tunggu Gremlin beneran masuk kebun (cek model di workspace)
     local gremlinTarget = SESI2_MUT_DEF[1] and SESI2_MUT_DEF[1].jml or 2
@@ -6508,7 +6666,7 @@ local function _loopMutasi()
     local secsNow  = _mutParseTimer(timerNow or "")
     if secsNow and secsNow > 0 then
         _mutLog("🔁 Mesin running! Ikut dari Fase 1...", Color3.fromRGB(255,200,60))
-        _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳")
+        _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳", 1)
         -- tunggu sampai pet keluar dari mesin (bukan hanya timer = 0)
         local lastLogMenit = -1
         while _mutRunning do
@@ -6531,7 +6689,7 @@ local function _loopMutasi()
         end
         if _mutRunning then
             task.wait(0.5)
-            _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰")
+            _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰", 2)
             -- tunggu Gremlin masuk kebun sebelum claim
             local gWaited = 0
             while _mutRunning and gWaited < 15 do
