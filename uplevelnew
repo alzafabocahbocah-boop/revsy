@@ -1,4 +1,4 @@
--- uplevelnew v8.348 — MTS enforce lineup: keluarkan pet asing + re-equip yang hilang selama nunggu timer
+-- uplevelnew v8.349 — fix getMtsPets: pindah sebelum _loopGift supaya tidak nil saat dipanggil
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.348"
+local VERSION = "v8.349"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6484,6 +6484,26 @@ local function _loopMutasi()
     _mutSetFase("—")
 end
 
+-- scan pet age<500 di backpack (forward decl supaya bisa dipanggil di _loopGift)
+local function getMtsPets()
+    local out={}
+    local bp=plr:FindFirstChild("Backpack"); if not bp then return out end
+    for _,t in ipairs(bp:GetChildren()) do
+        if t:IsA("Tool") then
+            local uuid=t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
+            if uuid then
+                local age = getAgeFromContainer(tostring(uuid))
+                if age == nil then age = 500 end
+                if age < 500 then
+                    out[#out+1]={uuid=tostring(uuid), tool=t, age=age,
+                        fullName=tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name or "")}
+                end
+            end
+        end
+    end
+    return out
+end
+
 -- loop GIFT (terpisah) — proporsional: yang paling kosong dapat lebih banyak
 local function _loopGift()
     _mtsRunning = true; _G.ZenxMtsState.autoStart=true
@@ -6778,27 +6798,7 @@ local function mtsGiftOne(targetPlayer, petEntry)
     return not (petTool.Parent~=nil and petTool.Parent==char)
 end
 
--- scan pet age<500 di backpack
-local function getMtsPets()
-    local out={}
-    local bp=plr:FindFirstChild("Backpack"); if not bp then return out end
-    for _,t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") then
-            local uuid=t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
-            if uuid then
-                -- v8.321: pakai getAgeFromContainer (pakai fmtUUID) supaya key match container
-                local age = getAgeFromContainer(tostring(uuid))
-                -- kalau container belum load / uuid tidak ada, skip pet ini (jangan anggap age=0)
-                if age == nil then age = 500 end  -- default skip kalau data tidak ditemukan
-                if age < 500 then
-                    out[#out+1]={uuid=tostring(uuid), tool=t, age=age,
-                        fullName=tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name or "")}
-                end
-            end
-        end
-    end
-    return out
-end
+-- getMtsPets sudah didefinisikan di atas (sebelum _loopGift)
 
 -- update stat kotak
 local function updateMtsStat()
