@@ -1,4 +1,4 @@
--- uplevelnew v8.351 — fix swap lineup: verifikasi modelByUuid + enforce skip saat _isTransisi
+-- uplevelnew v8.353 — fix swapLineup: sesiNum=1 (bukan 99), debug log, clear _activeUuids sebelum equip
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.351"
+local VERSION = "v8.353"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6184,14 +6184,24 @@ local function _mutSwapLineup(def, label, fase)
 
     -- step 1: unequip semua
     if type(unequipAll)=="function" then pcall(unequipAll) end
-    task.wait(1.5)
+    task.wait(2)
 
-    -- step 2: equip lineup baru
-    if type(equipSesi)=="function" then pcall(equipSesi, 99, def) end
+    -- step 2: equip lineup baru — pakai equipSesi dengan sesiNum=1
+    -- (sesiNum=99 pool kosong, PASS2 cari dari container — seharusnya ok)
+    -- clear _activeUuids dulu supaya verifikasi bersih
+    for k in pairs(_activeUuids or {}) do _activeUuids[k] = nil end
+    if type(equipSesi)=="function" then
+        local ok, err = pcall(equipSesi, 1, def)
+        if not ok then _mutLog("⚠ equipSesi error: "..tostring(err), Color3.fromRGB(255,80,80)) end
+    end
     -- equipSesi sudah punya retry internal (tunggu 1.5s + re-equip yang hilang)
 
+    -- debug: berapa yang masuk _activeUuids
+    local activeCount = 0
+    for _ in pairs(_activeUuids or {}) do activeCount = activeCount + 1 end
+    _mutLog("🔍 _activeUuids setelah equip: "..activeCount, Color3.fromRGB(180,180,80))
+
     -- step 3: verifikasi — tunggu sampai model benar-benar masuk kebun (cek modelByUuid)
-    -- sama seperti cara auto lvl verifikasi: tunggu max 10s
     local swapOk = false
     for waitTick = 1, 10 do
         task.wait(1)
@@ -6199,6 +6209,7 @@ local function _mutSwapLineup(def, label, fase)
         for uuid in pairs(_activeUuids or {}) do
             if modelByUuid[uuid] then inGarden = inGarden + 1 end
         end
+        _mutLog("🔍 tick "..waitTick..": "..inGarden.." di kebun / "..activeCount.." active", Color3.fromRGB(150,150,80))
         if inGarden > 0 then
             _mutLog("✓ Lineup aktif: "..label.." ("..inGarden.." pet di kebun)", Color3.fromRGB(78,214,204))
             swapOk = true; break
@@ -6206,33 +6217,21 @@ local function _mutSwapLineup(def, label, fase)
     end
 
     if not swapOk then
-        -- cek _activeUuids ada isi atau tidak
-        local activeCount = 0
-        for _ in pairs(_activeUuids or {}) do activeCount = activeCount + 1 end
-        if activeCount > 0 then
-            -- equip sudah dipanggil tapi model belum muncul — server mungkin lambat
-            _mutLog("⚠ Lineup equip ok tapi model belum di kebun, lanjut dulu: "..label, Color3.fromRGB(255,200,60))
-        else
-            _mutLog("⚠ Lineup gagal masuk setelah 10s: "..label, Color3.fromRGB(255,80,80))
-        end
+        _mutLog("⚠ Lineup gagal masuk setelah 10s: "..label, Color3.fromRGB(255,80,80))
     end
 end
 
--- helper: enforce lineup MTS + re-equip yang hilang
+-- helper: enforce lineup MTS — re-equip pet MTS yang hilang dari kebun
+-- TIDAK pakai enforceEquip (itu untuk auto lvl, bisa unequip pet auto lvl yang tidak seharusnya)
 local function _mutEnforceLineup(def)
     if not def then return end
     -- skip kalau sedang dalam proses swap/equip (hindari konflik dengan _mutSwapLineup)
     if _isTransisi then return end
     pcall(function()
-        -- 1. unequip pet asing (bukan dari def)
-        if type(enforceEquip) == "function" then
-            enforceEquip(def)
-        end
-        -- 2. re-equip pet dari _activeUuids yang hilang dari kebun
+        -- re-equip pet dari _activeUuids yang hilang dari kebun
         for uuid in pairs(_activeUuids or {}) do
             if not modelByUuid[uuid] then
-                pcall(function() unequipPet(uuid) end); task.wait(0.1)
-                pcall(function() equipPet(uuid) end); task.wait(0.1)
+                pcall(function() equipPet(uuid) end); task.wait(0.15)
             end
         end
     end)
