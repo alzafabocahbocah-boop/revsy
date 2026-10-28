@@ -1,4 +1,4 @@
--- uplevelnew v8.357 — fix TARGET PLAYER: total pet (age<500/total) tidak terpotong
+-- uplevelnew v8.358 — fix Pilih Tim: pakai listPetsAll() + task.spawn, tidak hang
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.357"
+local VERSION = "v8.358"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6203,34 +6203,24 @@ if not next(_mutPool[1]) and not next(_mutPool[2]) then _mutPoolLoad() end
 
 -- helper: scan pet di kebun sekarang, filter sesuai def, simpan ke pool
 local function _mutPickTim(sesi, def, statusLbl)
-    local c = _kgContainer
-    if not c then statusLbl.Text = "container nil!"; return end
-
     -- hitung total slot yang dibutuhkan per tipe
-    local needPerTipe = {}  -- {[tipe]=jumlah}
+    local needPerTipe = {}
     for _,d in ipairs(def) do needPerTipe[d.nama] = (needPerTipe[d.nama] or 0) + d.jml end
 
-    -- kumpulkan semua pet dari container, hitung kg, kelompokkan per tipe
-    -- {[tipe] = {{uuid=..., kg=...}, ...}}
+    -- pakai listPetsAll() — sudah terbukti bisa baca container (256 entries ok di log)
+    local allPets = listPetsAll()
+    if #allPets == 0 then
+        statusLbl.Text = "container kosong!"; statusLbl.TextColor3 = Color3.fromRGB(255,80,80)
+        return
+    end
+
+    -- kelompokkan per tipe, filter sesuai def
     local byTipe = {}
-    for rawKey, e in pairs(c) do
-        if type(e)=="table" then
-            local rawTipe = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
-            local tipe = rawTipe
-            for _,p in ipairs(MUTATION_PREFIXES) do
-                if tipe:sub(1,#p)==p then tipe=tipe:sub(#p+1); break end
-            end
-            if needPerTipe[tipe] then
-                local pd = e.PetData or {}
-                local bw = tonumber(pd.BaseWeight) or 0
-                local lv = tonumber(pd.Level) or 0
-                local kg = bw * (lv + 10) / 10
-                -- normalisasi key: pastikan ada kurung kurawal
-                local key = tostring(rawKey)
-                if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
-                if not byTipe[tipe] then byTipe[tipe] = {} end
-                byTipe[tipe][#byTipe[tipe]+1] = {uuid=key, kg=kg}
-            end
+    for _, pet in ipairs(allPets) do
+        local tipe = pet.tipe  -- sudah di-stripMutation oleh listPetsAll
+        if needPerTipe[tipe] then
+            if not byTipe[tipe] then byTipe[tipe] = {} end
+            byTipe[tipe][#byTipe[tipe]+1] = {uuid=pet.uuid, kg=pet.kg}
         end
     end
 
@@ -6256,18 +6246,18 @@ local function _mutPickTim(sesi, def, statusLbl)
         statusLbl.Text = totalFound.." pet dipilih (kg terbesar)"
         statusLbl.TextColor3 = Color3.fromRGB(60,200,80)
     else
-        statusLbl.Text = "tidak ada pet cocok di container"
+        statusLbl.Text = "tidak ada tipe cocok"
         statusLbl.TextColor3 = Color3.fromRGB(255,80,80)
     end
 end
 
 mutPickS1Btn.MouseButton1Click:Connect(function()
     mutPickS1Status.Text = "scanning..."; mutPickS1Status.TextColor3 = Color3.fromRGB(255,200,60)
-    _mutPickTim(1, MTS_LINEUP_DEF, mutPickS1Status)
+    task.spawn(function() _mutPickTim(1, MTS_LINEUP_DEF, mutPickS1Status) end)
 end)
 mutPickS2Btn.MouseButton1Click:Connect(function()
     mutPickS2Status.Text = "scanning..."; mutPickS2Status.TextColor3 = Color3.fromRGB(255,200,60)
-    _mutPickTim(2, SESI2_MUT_DEF, mutPickS2Status)
+    task.spawn(function() _mutPickTim(2, SESI2_MUT_DEF, mutPickS2Status) end)
 end)
 
 -- fungsi build teks lineup dari _activeUuids + _kgContainer
