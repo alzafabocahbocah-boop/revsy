@@ -1,4 +1,4 @@
--- uplevelnew v8.390 — detect "transenden" (nama resmi di game)
+-- uplevelnew v8.391 — skip Gigantic/Mega/Transenden saat auto-pick bahan mesin mutasi
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.390"
+local VERSION = "v8.391"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -394,7 +394,7 @@ do
     end)
 end
 
--- ── MODAL INFO uplevelnew v8.390 (compact height) ──
+-- ── MODAL INFO uplevelnew v8.391 (compact height) ──
 do
     local function mkModalLvl(title, accentCol)
         local ov = Instance.new("Frame"); ov.Size = UDim2.new(1,0,1,0); ov.BackgroundColor3 = Color3.fromRGB(0,0,0); ov.BackgroundTransparency = 0.35; ov.BorderSizePixel = 0; ov.Visible = false; ov.ZIndex = 20; ov.Parent = gui
@@ -3166,12 +3166,19 @@ equipOneBahan = function()
     for _, p in ipairs(all) do
         local ustr = tostring(p.uuid)
         if not pooledUuids[ustr] then
-            local age = getAgeFallback(p.uuid)
-            if age < CFG.bahanMaxAge then
-                equipPet(p.uuid)
-                _bahanUuid = tostring(p.uuid)
-                addLog("Equip bahan (auto) "..tostring(p.tipe).." age="..age.." kg="..string.format("%.1f", p.kg or 0))
-                return
+            -- skip Gigantic/Mega/Transenden — jangan masuk mesin mutasi
+            local dn = (p.displayName or p.fullName or p.tipe or ""):lower()
+            local mt = p.mutationType or ""
+            if mt == "GG" or dn:find("gigantic") or dn:find("mega") or dn:find("transenden") then
+                addLog("Skip bahan size tier: "..(p.tipe or "?").." ("..dn..")")
+            else
+                local age = getAgeFallback(p.uuid)
+                if age < CFG.bahanMaxAge then
+                    equipPet(p.uuid)
+                    _bahanUuid = tostring(p.uuid)
+                    addLog("Equip bahan (auto) "..tostring(p.tipe).." age="..age.." kg="..string.format("%.1f", p.kg or 0))
+                    return
+                end
             end
         end
     end
