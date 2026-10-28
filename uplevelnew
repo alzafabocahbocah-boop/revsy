@@ -1,4 +1,4 @@
--- uplevelnew v8.325 — FPS header: tetap tampil FPS tapi bg putih saat mutasi aktif
+-- uplevelnew v8.326 — fix _mutWaitDone: retry cari timer label, jangan skip kalau nil
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.325"
+local VERSION = "v8.326"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5928,11 +5928,30 @@ local function _mutParseTimer(txt)
 end
 
 local function _mutGetTimerLbl()
+    -- coba path hardcode dulu
     local ok,t=pcall(function()
         return game.Workspace.NPCS.PetMutationMachine
             .Model.Part.BillboardPart.BillboardGui.TimerTextLabel
     end)
-    return (ok and t and t:IsA("TextLabel")) and t or nil
+    if ok and t and t:IsA("TextLabel") then return t end
+    -- fallback: cari rekursif (sama seperti getMtsMachineTimer)
+    local ok2,found=pcall(function()
+        local machine=game.Workspace.NPCS.PetMutationMachine
+        if not machine then return nil end
+        local function findTimer(parent, depth)
+            if depth > 8 then return nil end
+            for _,child in ipairs(parent:GetChildren()) do
+                if child:IsA("TextLabel") and child.Name == "TimerTextLabel" then
+                    return child
+                end
+                local res = findTimer(child, depth+1)
+                if res then return res end
+            end
+        end
+        return findTimer(machine, 0)
+    end)
+    if ok2 and found then return found end
+    return nil
 end
 
 local function _mutGetPP()
@@ -5975,10 +5994,30 @@ local function _mutSwapLineup(def, label, fase)
 end
 
 local function _mutWaitDone()
+    -- retry dapat timer label maksimal 30x (30 detik), jangan langsung skip
     local timerLbl = _mutGetTimerLbl()
     if not timerLbl then
-        _mutLog("⚠ timer label tidak ada, tunggu 5s...", Color3.fromRGB(255,140,60))
-        task.wait(5); return
+        _mutLog("⏳ cari timer label...", Color3.fromRGB(255,200,60))
+        for _=1,30 do
+            if not _mutRunning then return end
+            task.wait(1)
+            timerLbl = _mutGetTimerLbl()
+            if timerLbl then break end
+        end
+    end
+    if not timerLbl then
+        _mutLog("⚠ timer label tidak ditemukan, pakai getMtsMachineTimer fallback", Color3.fromRGB(255,140,60))
+        -- fallback: poll via getMtsMachineTimer sampai SIAP
+        while _mutRunning do
+            local txt = getMtsMachineTimer()
+            local secs = _mutParseTimer(txt or "")
+            if not secs or secs <= 0 then
+                _mutLog("✓ Mesin SIAP (fallback poll)", Color3.fromRGB(60,200,80)); return
+            end
+            _mutLog(string.format("⏳ sisa %d:%02d (fallback)", math.floor(secs/60), secs%60), Color3.fromRGB(255,200,60))
+            task.wait(5)
+        end
+        return
     end
     local secs = _mutParseTimer(timerLbl.Text)
     if not secs or secs <= 0 then
