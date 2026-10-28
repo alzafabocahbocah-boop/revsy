@@ -1,4 +1,4 @@
--- uplevelnew v8.335 — gift: naikkan semua target ke level yang sama, kena maxInv → full dulu sisa dibagi ulang
+-- uplevelnew v8.336 — gift paralel: assign UUID dulu per target, lalu gift barengan semua thread
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.335"
+local VERSION = "v8.336"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6500,53 +6500,93 @@ local function _loopGift()
             task.wait(5); _mtsInvCache={}; continue
         end
 
-        local totalPet = #getMtsPets()
-        local jatah = calcJatah(targets, totalPet)
-
-        -- log rencana distribusi
-        local planParts = {}
-        for _,t in ipairs(targets) do
-            planParts[#planParts+1] = t.nm:sub(1,8).."="..tostring(jatah[t.nm] or 0)
+        -- ambil semua pet sekarang, assign UUID ke target
+        local allPets = getMtsPets()
+        if #allPets == 0 then
+            mtsStatLbl.Text="🎁 gift: selesai"; mtsStatLbl.TextColor3=Color3.fromRGB(60,200,80)
+            _mtsRunning=false; break
         end
-        mtsAddGiftLog("📋 distribusi: "..table.concat(planParts," | "), Color3.fromRGB(180,180,80))
+        local jatah = calcJatah(targets, #allPets)
 
-        -- gift sesuai jatah, per target berurutan dari yang paling kosong
+        -- assign UUID per target (potong list allPets sesuai jatah)
+        local assigned = {}  -- {[nm] = [{uuid,tool,age,fullName}, ...]}
+        local petIdx = 1
         for _,t in ipairs(targets) do
-            if not _mtsRunning then break end
             local quota = jatah[t.nm] or 0
-            if quota <= 0 then continue end
-            local gifted = 0
-            while _mtsRunning and gifted < quota do
-                local curPets = getMtsPets()
-                if #curPets == 0 then
-                    mtsStatLbl.Text="🎁 gift: selesai"; mtsStatLbl.TextColor3=Color3.fromRGB(60,200,80)
-                    _mtsRunning=false; break
-                end
-                -- re-check target masih online
-                local tPlr2 = game:GetService("Players"):FindFirstChild(t.nm)
-                if not tPlr2 then
-                    mtsAddGiftLog("✗ "..t.nm.." offline, skip sisa jatah", C.textMute)
-                    _mtsInvCache[t.nm]=nil; break
-                end
-                local p = curPets[1]
-                local kgVal = math.floor((p.age or 0)*10+0.5)/10
-                local logTxt = p.fullName.." "..kgVal.."kg → "..t.nm.." ("..gifted+1 .."/"..quota..")"
-                mtsStatLbl.Text="🎁 "..t.nm.." | "..gifted+1 .."/"..quota.." | sisa "..(#curPets-1).." pet"
-                local ok = pcall(mtsGiftOne, tPlr2, p)
-                if ok then
-                    mtsAddGiftLog("✓ "..logTxt, C.accent)
-                    gifted = gifted + 1
-                    -- update cache lokal (tambah 1 ke age500 target)
-                    if _mtsInvCache[t.nm] then
-                        _mtsInvCache[t.nm].age500 = (_mtsInvCache[t.nm].age500 or 0) + 1
-                        _mtsInvCache[t.nm].total  = (_mtsInvCache[t.nm].total  or 0) + 1
-                    end
-                else
-                    mtsAddGiftLog("✗ ERR "..logTxt, Color3.fromRGB(255,100,80))
-                end
-                local delay = tonumber(mtsDelayBox.Text) or 0.5
-                task.wait(math.max(0.3, delay))
+            assigned[t.nm] = {}
+            for _=1,quota do
+                if petIdx > #allPets then break end
+                assigned[t.nm][#assigned[t.nm]+1] = allPets[petIdx]
+                petIdx = petIdx + 1
             end
+        end
+
+        -- log pembagian UUID per target
+        mtsAddGiftLog("━━ rencana gift ━━", Color3.fromRGB(140,140,200))
+        for _,t in ipairs(targets) do
+            local pets = assigned[t.nm] or {}
+            local uuids = {}
+            for _,p in ipairs(pets) do
+                uuids[#uuids+1] = tostring(p.uuid):sub(1,8)  -- 8 char pertama uuid
+            end
+            local line = "📦 "..t.nm.." ("..#pets.." pet): "..table.concat(uuids, ", ")
+            mtsAddGiftLog(line, Color3.fromRGB(180,220,180))
+        end
+
+        -- gift paralel — tiap target jalan di thread sendiri
+        local threads = {}
+        local doneCount = 0
+        local totalThreads = 0
+        for _,t in ipairs(targets) do
+            local pets = assigned[t.nm] or {}
+            if #pets > 0 then totalThreads = totalThreads + 1 end
+        end
+
+        for _,t in ipairs(targets) do
+            local pets = assigned[t.nm] or {}
+            if #pets == 0 then continue end
+            local tNm = t.nm
+            threads[#threads+1] = task.spawn(function()
+                local tPlr2 = game:GetService("Players"):FindFirstChild(tNm)
+                if not tPlr2 then
+                    mtsAddGiftLog("✗ "..tNm.." offline, skip", C.textMute)
+                    _mtsInvCache[tNm]=nil
+                    doneCount = doneCount + 1; return
+                end
+                local gifted = 0
+                for _,p in ipairs(pets) do
+                    if not _mtsRunning then break end
+                    -- cek tool masih ada di backpack
+                    if not (p.tool and p.tool.Parent) then
+                        mtsAddGiftLog("✗ "..tNm.." uuid "..tostring(p.uuid):sub(1,8).." hilang", C.textMute)
+                        continue
+                    end
+                    local kgVal = math.floor((p.age or 0)*10+0.5)/10
+                    local logTxt = p.fullName.." "..kgVal.."kg → "..tNm.." ("..gifted+1 .."/"..#pets..")"
+                    local ok = pcall(mtsGiftOne, tPlr2, p)
+                    if ok then
+                        mtsAddGiftLog("✓ "..logTxt, C.accent)
+                        gifted = gifted + 1
+                        if _mtsInvCache[tNm] then
+                            _mtsInvCache[tNm].age500 = (_mtsInvCache[tNm].age500 or 0) + 1
+                            _mtsInvCache[tNm].total  = (_mtsInvCache[tNm].total  or 0) + 1
+                        end
+                    else
+                        mtsAddGiftLog("✗ ERR "..logTxt, Color3.fromRGB(255,100,80))
+                    end
+                    local delay = tonumber(mtsDelayBox.Text) or 0.5
+                    task.wait(math.max(0.3, delay))
+                end
+                mtsAddGiftLog("✓ "..tNm.." selesai ("..gifted.."/"..#pets..")", Color3.fromRGB(60,200,80))
+                doneCount = doneCount + 1
+            end)
+        end
+
+        -- tunggu semua thread selesai
+        while _mtsRunning and doneCount < totalThreads do
+            local remain = getMtsPets()
+            mtsStatLbl.Text="🎁 gift paralel... sisa "..#remain.." pet"
+            task.wait(0.5)
         end
 
         -- re-scan setiap putaran supaya distribusi selalu fresh
