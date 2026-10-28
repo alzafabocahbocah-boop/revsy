@@ -1,4 +1,4 @@
--- uplevelnew v8.349 — fix getMtsPets: pindah sebelum _loopGift supaya tidak nil saat dipanggil
+-- uplevelnew v8.350 — getMtsPets: debug getAgeFromContainer nil + pcall guard
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.349"
+local VERSION = "v8.350"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6488,11 +6488,19 @@ end
 local function getMtsPets()
     local out={}
     local bp=plr:FindFirstChild("Backpack"); if not bp then return out end
+    if type(getAgeFromContainer) ~= "function" then
+        warn("[UPLVL-DBG] getMtsPets: getAgeFromContainer is "..type(getAgeFromContainer))
+        return out
+    end
     for _,t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
             local uuid=t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
             if uuid then
-                local age = getAgeFromContainer(tostring(uuid))
+                local ok, age = pcall(getAgeFromContainer, tostring(uuid))
+                if not ok then
+                    warn("[UPLVL-DBG] getMtsPets: getAgeFromContainer error: "..tostring(age))
+                    age = 500
+                end
                 if age == nil then age = 500 end
                 if age < 500 then
                     out[#out+1]={uuid=tostring(uuid), tool=t, age=age,
