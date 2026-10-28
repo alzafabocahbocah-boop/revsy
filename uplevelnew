@@ -1,4 +1,4 @@
--- uplevelnew v8.338 — fix claim: tunggu Gremlin beneran masuk kebun sebelum ClaimMutatedPet
+-- uplevelnew v8.339 — fix uncheck: hanya tombol ✕ yang uncheck target, bukan seluruh row
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.338"
+local VERSION = "v8.339"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5906,10 +5906,21 @@ local function buildMtsPlayerList()
         local invLbl=lbl(row,invTxt,9,invCol)
         invLbl.Position=UDim2.new(1,-82,0,21); invLbl.Size=UDim2.new(0,78,0,16)
         invLbl.TextXAlignment=Enum.TextXAlignment.Right
-        -- hint uncheck di bawah nama
-        local uncheckHint=lbl(row,"✕ uncheck",9,Color3.fromRGB(180,80,80))
-        uncheckHint.Position=UDim2.new(0,14,0,22); uncheckHint.Size=UDim2.new(0.45,0,0,16)
-        uncheckHint.TextXAlignment=Enum.TextXAlignment.Left
+        -- tombol uncheck (hanya klik ini yang hapus target, bukan seluruh row)
+        local pNameMax = savedNm
+        local uncheckBtn=mk("TextButton",{
+            Size=UDim2.new(0,70,0,16), Position=UDim2.new(0,14,0,22),
+            BackgroundColor3=Color3.fromRGB(80,20,20), Text="✕ uncheck",
+            Font=FONT, TextSize=9, TextColor3=Color3.fromRGB(220,80,80),
+            BorderSizePixel=0, AutoButtonColor=true, Parent=row
+        }); corner(uncheckBtn,4)
+        uncheckBtn.MouseButton1Click:Connect(function()
+            _mtsTargets[pNameMax] = nil
+            _mtsMaxInv[pNameMax] = nil
+            _mtsSaveMaxInv(); _mtsSave(); buildMtsPlayerList()
+            local n=0; for _ in pairs(_mtsTargets) do n=n+1 end
+            mtsVTgt.Text=tostring(n)
+        end)
         -- input max inventory
         local maxLblTxt = lbl(row, "max inv:", 9, C.textMute)
         maxLblTxt.Position = UDim2.new(0,14,0,42); maxLblTxt.Size = UDim2.new(0,52,0,16)
@@ -5921,7 +5932,6 @@ local function buildMtsPlayerList()
             Text=tostring(curMax), Font=FONT, TextSize=10, PlaceholderText="500",
             BorderSizePixel=0, ClearTextOnFocus=false, Parent=row
         }); corner(maxBox,4); stroke(maxBox,C.border,1)
-        local pNameMax = savedNm
         maxBox.FocusLost:Connect(function()
             local v = tonumber(maxBox.Text)
             if v and v > 0 then
@@ -5930,17 +5940,6 @@ local function buildMtsPlayerList()
             else
                 maxBox.Text = tostring(_mtsMaxInv[pNameMax] or 500)
             end
-        end)
-        -- cegah klik box nyebar ke row (uncheck)
-        maxBox.MouseButton1Down:Connect(function() end)
-        row.MouseButton1Click:Connect(function()
-            -- cek kalau fokus di textbox, jangan uncheck
-            if maxBox:IsFocused() then return end
-            _mtsTargets[pNameMax] = nil
-            _mtsMaxInv[pNameMax] = nil
-            _mtsSaveMaxInv(); _mtsSave(); buildMtsPlayerList()
-            local n=0; for _ in pairs(_mtsTargets) do n=n+1 end
-            mtsVTgt.Text=tostring(n)
         end)
         -- fetch inv count async kalau online dan belum di-cache
         if online then
