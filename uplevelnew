@@ -1,4 +1,4 @@
--- uplevelnew v8.345 — fix: cek pet di mesin dulu sebelum submit (kalau ada pet = masih proses)
+-- uplevelnew v8.346 — fix path "ikut Fase 1": tunggu pet keluar mesin dulu sebelum swap Gremlin
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.345"
+local VERSION = "v8.346"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6361,7 +6361,19 @@ local function _loopMutasi()
     if secsNow and secsNow > 0 then
         _mutLog("🔁 Mesin running! Ikut dari Fase 1...", Color3.fromRGB(255,200,60))
         _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳")
-        _mutWaitDone()
+        -- tunggu sampai pet keluar dari mesin (bukan hanya timer = 0)
+        while _mutRunning do
+            local pet = getMtsMachinePet()
+            if not pet then _mutLog("✓ Mesin kosong, siap lanjut", Color3.fromRGB(60,200,80)); break end
+            local txt = getMtsMachineTimer()
+            local secs = _mutParseTimer(txt or "")
+            if secs and secs > 0 then
+                _mutLog(string.format("⏳ Mesin running... sisa %d:%02d (%s)", math.floor(secs/60), secs%60, pet), Color3.fromRGB(255,200,60))
+            else
+                _mutLog("⏳ tunggu pet keluar mesin... ("..pet..")", Color3.fromRGB(255,200,60))
+            end
+            task.wait(3)
+        end
         if _mutRunning then
             task.wait(0.5)
             _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰")
