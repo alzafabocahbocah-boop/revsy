@@ -1,4 +1,4 @@
--- uplevelnew v8.377 — fix _mtsGetInvCount: pakai pd.Level (bukan pd.Age) + retry 2x + fresh RS, ikutin pola up6kg
+-- uplevelnew v8.378 — fix getMtsPets: fallback atribut Tool + include pet yg gak ada di container (age=0)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.377"
+local VERSION = "v8.378"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7067,15 +7067,25 @@ local function getMtsPets()
         if t:IsA("Tool") then
             local uuid=t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
             if uuid then
-                local age = 500  -- default: skip
+                local age = nil  -- nil = belum ketemu
+                -- 1) coba dari container (paling akurat)
                 if c then
                     local key = tostring(uuid)
                     if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
                     local e = c[key]
                     if type(e)=="table" and e.PetData then
-                        age = tonumber(e.PetData.Level) or 500
+                        age = tonumber(e.PetData.Level)
                     end
                 end
+                -- 2) fallback: atribut langsung di Tool
+                if age == nil then
+                    age = tonumber(t:GetAttribute("Level"))
+                        or tonumber(t:GetAttribute("Age"))
+                        or tonumber(t:GetAttribute("age"))
+                        or tonumber(t:GetAttribute("level"))
+                end
+                -- 3) masih nil: asumsikan pet bahan (belum di-index container), include dengan age=0
+                if age == nil then age = 0 end
                 if age < 500 then
                     out[#out+1]={uuid=tostring(uuid), tool=t, age=age,
                         fullName=tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name or "")}
