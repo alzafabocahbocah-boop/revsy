@@ -1,4 +1,4 @@
--- uplevelnew v8.332 — gift proporsional: yang paling kosong dapat lebih banyak
+-- uplevelnew v8.333 — gift merata: setelah gift jumlah pet semua target hampir sama
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.332"
+local VERSION = "v8.333"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6334,10 +6334,11 @@ local function _loopGift()
     end
 
     -- hitung jatah gift per target dari total pet yang tersedia
-    -- contoh: target=[40,50,60], total=30pet
-    --   weight terbalik: 1/40=0.025, 1/50=0.020, 1/60=0.017 → sum=0.062
-    --   jatah: t1=30*0.025/0.062≈12, t2=30*0.020/0.062≈10, t3=30*0.017/0.062≈8
-    -- kalau total pet < jumlah target → fokus ke yang paling kosong saja
+    -- tujuan: setelah gift, jumlah pet semua target jadi hampir sama (rata)
+    -- contoh: target=[40,50,60], total=50pet
+    --   total akhir = (40+50+60)+50 = 200, rata2 = 200/3 ≈ 67
+    --   T1 butuh 67-40=27, T2 butuh 67-50=17, T3 butuh 67-60=7
+    --   hasil: T1=27, T2=17, T3=6 (sisa ke T3)
     local function calcJatah(targets, totalPet)
         if #targets == 0 then return {} end
         -- kalau pet < target count, gift 1 per target dari yang paling kosong
@@ -6348,23 +6349,39 @@ local function _loopGift()
             end
             return jatah
         end
-        -- hitung weight terbalik (makin sedikit age500 → makin besar weight)
-        local weights = {}
-        local sumW = 0
+        -- hitung total pet sekarang + yang akan di-gift
+        local totalNow = 0
+        for _,t in ipairs(targets) do totalNow = totalNow + t.score end
+        local totalAfter = totalNow + totalPet
+        local avg = totalAfter / #targets  -- target rata-rata per orang
+
+        -- hitung kebutuhan tiap target (berapa yang perlu sampai avg)
+        local needs = {}
+        local sumNeeds = 0
         for _,t in ipairs(targets) do
-            -- tambah 1 biar tidak div/0 kalau score=0
-            local w = 1 / (t.score + 1)
-            weights[t.nm] = w
-            sumW = sumW + w
+            local need = math.max(0, avg - t.score)
+            needs[t.nm] = need
+            sumNeeds = sumNeeds + need
         end
+
         local jatah = {}
         local assigned = 0
-        for i,t in ipairs(targets) do
-            local raw = (weights[t.nm] / sumW) * totalPet
-            local n = (i == #targets) and (totalPet - assigned) or math.floor(raw)
-            n = math.max(0, n)
-            jatah[t.nm] = n
-            assigned = assigned + n
+        if sumNeeds == 0 then
+            -- semua target udah sama, bagi rata aja
+            local base = math.floor(totalPet / #targets)
+            local sisa = totalPet - base * #targets
+            for i,t in ipairs(targets) do
+                jatah[t.nm] = base + (i <= sisa and 1 or 0)
+            end
+        else
+            -- proporsional dari kebutuhan masing-masing
+            for i,t in ipairs(targets) do
+                local raw = (needs[t.nm] / sumNeeds) * totalPet
+                local n = (i == #targets) and (totalPet - assigned) or math.floor(raw)
+                n = math.max(0, n)
+                jatah[t.nm] = n
+                assigned = assigned + n
+            end
         end
         return jatah
     end
