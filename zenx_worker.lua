@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.564 — delta: notifikasi "versi baru di temukan update apk"
+-- zenx_worker v9.565 — delta: notifikasi versi sudah terbaru juga
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.564"
+local VERSION = "9.565"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5187,6 +5187,9 @@ local function run(cfg)
                             ("Delta v%s berhasil di-update -> client rejoin"):format(target))
                     end)
                     SUDAH_GRID = false; GRID_CACHE = nil
+                elseif vNow ~= "" then
+                    -- v9.565: kasih tau kalau versi sudah terbaru
+                    info(("[delta] ✅ versi sudah terbaru: v%s"):format(vNow))
                 end
             end
         end
