@@ -1,4 +1,4 @@
--- uplevelnew v8.330 — target player: tampil total pet inventory via ViewInventory
+-- uplevelnew v8.331 — gift prioritas target age<500 paling sedikit (scan ViewInventory dulu)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.330"
+local VERSION = "v8.331"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5811,20 +5811,26 @@ local _mtsTargets = _G.ZenxMtsState.targets  -- {nama=true}
 -- cache total pet inventory target {[nama]=count or "?"}
 local _mtsInvCache = {}
 
+-- scan inventory target: return {total=N, age500=N} (age500 = pet age<500, yg bisa diterima)
 local function _mtsGetInvCount(playerObj)
-    -- pakai ViewInventory:InvokeServer (sama seperti up6kg oper ele)
-    local ok, total = pcall(function()
+    local ok, res = pcall(function()
         local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
         te = te and te:FindFirstChild("TradeEvents")
         local vi = te and te:FindFirstChild("ViewInventory")
         if not vi then return nil end
-        local res = vi:InvokeServer(playerObj)
-        if type(res) ~= "table" then return nil end
-        local n = 0
-        for _ in pairs(res) do n = n + 1 end
-        return n
+        return vi:InvokeServer(playerObj)
     end)
-    return (ok and total) or nil
+    if not ok or type(res) ~= "table" then return nil end
+    local total, age500 = 0, 0
+    for _, item in pairs(res) do
+        if type(item) == "table" and tostring(item.type) == "Pet" then
+            total = total + 1
+            local pd = (type(item.data)=="table") and (item.data.PetData or {}) or {}
+            local age = tonumber(pd.Age) or tonumber(pd.age) or 999
+            if age < 500 then age500 = age500 + 1 end
+        end
+    end
+    return {total=total, age500=age500}
 end
 
 local function buildMtsPlayerList()
@@ -5859,10 +5865,18 @@ local function buildMtsPlayerList()
         selLbl.TextXAlignment=Enum.TextXAlignment.Right
         -- total pet inventory (dari cache, update async)
         local cached = _mtsInvCache[savedNm]
-        local invTxt = cached and ("🎒 "..cached.." pet") or "🎒 ..."
-        local invCol = Color3.fromRGB(180,180,80)
-        local invLbl=lbl(row,invTxt,10,invCol)
-        invLbl.Position=UDim2.new(1,-75,0,20); invLbl.Size=UDim2.new(0,70,0,18)
+        local invTxt, invCol
+        if cached then
+            invTxt = "🎒 "..cached.age500.."/<500 ("..cached.total..")"
+            -- makin sedikit age500 → makin hijau (bisa terima banyak)
+            invCol = (cached.age500 < 50) and Color3.fromRGB(60,220,80)
+                or (cached.age500 < 150) and Color3.fromRGB(200,200,60)
+                or Color3.fromRGB(220,80,80)
+        else
+            invTxt = "🎒 scan..."; invCol = C.textMute
+        end
+        local invLbl=lbl(row,invTxt,9,invCol)
+        invLbl.Position=UDim2.new(1,-80,0,22); invLbl.Size=UDim2.new(0,76,0,16)
         invLbl.TextXAlignment=Enum.TextXAlignment.Right
         -- hint uncheck di bawah nama
         local uncheckHint=lbl(row,"✕ uncheck",9,Color3.fromRGB(180,80,80))
@@ -5873,10 +5887,14 @@ local function buildMtsPlayerList()
             local pObj = game:GetService("Players"):FindFirstChild(savedNm)
             if pObj then
                 task.spawn(function()
-                    local cnt = _mtsGetInvCount(pObj)
-                    if cnt then
-                        _mtsInvCache[savedNm] = cnt
-                        pcall(function() invLbl.Text = "🎒 "..cnt.." pet"; invLbl.TextColor3=invCol end)
+                    local data = _mtsGetInvCount(pObj)
+                    if data then
+                        _mtsInvCache[savedNm] = data
+                        local txt = "🎒 "..data.age500.."/<500 ("..data.total..")"
+                        local col = (data.age500 < 50) and Color3.fromRGB(60,220,80)
+                            or (data.age500 < 150) and Color3.fromRGB(200,200,60)
+                            or Color3.fromRGB(220,80,80)
+                        pcall(function() invLbl.Text=txt; invLbl.TextColor3=col end)
                     end
                 end)
             end
@@ -6292,7 +6310,29 @@ end
 local function _loopGift()
     _mtsRunning = true; _G.ZenxMtsState.autoStart=true
     mtsStatLbl.Text="🎁 gift: start..."; mtsStatLbl.TextColor3=C.accent
-    local idx=1
+
+    -- pilih target: scan inv dulu, prioritas age500 paling sedikit
+    local function pickBestTarget()
+        local bestNm, bestScore = nil, math.huge
+        local Players2 = game:GetService("Players")
+        for nm in pairs(_mtsTargets) do
+            local tPlr = Players2:FindFirstChild(nm)
+            if tPlr then
+                -- pakai cache kalau ada, kalau tidak scan sekarang
+                local data = _mtsInvCache[nm]
+                if not data then
+                    mtsStatLbl.Text="🎁 scan inv "..nm.."..."
+                    data = _mtsGetInvCount(tPlr)
+                    if data then _mtsInvCache[nm] = data end
+                end
+                local score = data and data.age500 or 999
+                mtsAddGiftLog("📊 "..nm..": "..score.." pet age<500", Color3.fromRGB(180,180,80))
+                if score < bestScore then bestScore=score; bestNm=nm end
+            end
+        end
+        return bestNm, bestScore
+    end
+
     while _mtsRunning do
         local pets=getMtsPets()
         if #pets==0 then
@@ -6304,11 +6344,17 @@ local function _loopGift()
             mtsStatLbl.Text="🎁 gift: gak ada target"
             _mtsRunning=false; break
         end
-        local tgtNm=tgtList[((idx-1)%#tgtList)+1]; idx=idx+1
-        local tPlr=game:GetService("Players"):FindFirstChild(tgtNm)
+        -- tiap 5 gift, re-scan untuk update prioritas
+        local tgtNm, _ = pickBestTarget()
+        if not tgtNm then
+            mtsStatLbl.Text="🎁 semua target offline, tunggu 5s..."
+            task.wait(5); _mtsInvCache={}; -- reset cache biar re-scan
+        end
+        local tPlr=game:GetService("Players"):FindFirstChild(tgtNm or "")
         if not tPlr then
-            mtsStatLbl.Text="🎁 skip "..tgtNm.." (offline)"
-            mtsAddGiftLog("✗ skip "..tgtNm.." (offline)", C.textMute)
+            mtsStatLbl.Text="🎁 skip "..tostring(tgtNm).." (offline)"
+            mtsAddGiftLog("✗ skip "..(tgtNm or "?").." (offline)", C.textMute)
+            _mtsInvCache[tgtNm or ""] = nil  -- hapus cache biar re-scan
         else
             local p=pets[1]
             local kgVal=math.floor((p.age or 0)*10+0.5)/10
