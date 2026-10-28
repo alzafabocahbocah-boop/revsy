@@ -1,4 +1,4 @@
--- uplevelnew v8.368 — enforceEquip skip saat AUTO MTS running (_G.ZenxMutRunning)
+-- uplevelnew v8.369 — debug: extend clearWait 30s + log masuk sesi 2
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.368"
+local VERSION = "v8.369"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6700,11 +6700,18 @@ local function _mutDoSiklus(skipSubmit)
             if not _mutRunning then return false end
             -- tunggu konfirmasi pet benar-benar hilang dari mesin (max 15s setelah timer habis)
             local clearWait = 0
-            while _mutRunning and clearWait < 15 do
+            while _mutRunning and clearWait < 30 do
                 local stillPet = getMtsMachinePet()
-                if not stillPet then break end
-                _mutLog("⏳ Tunggu pet keluar mesin ("..stillPet..")...", Color3.fromRGB(255,200,60))
+                if not stillPet then
+                    _mutLog("✓ Pet keluar mesin, lanjut sesi 2", Color3.fromRGB(60,200,80))
+                    break
+                end
+                _mutLog("⏳ Tunggu pet keluar mesin ("..stillPet..") "..clearWait.."s...", Color3.fromRGB(255,200,60))
                 task.wait(2); clearWait = clearWait + 2
+            end
+            local finalPet = getMtsMachinePet()
+            if finalPet then
+                _mutLog("⚠ Pet masih di mesin setelah 30s ("..finalPet.."), lanjut paksa", Color3.fromRGB(255,140,60))
             end
             if not _mutRunning then return false end
         end
@@ -6751,6 +6758,7 @@ local function _mutDoSiklus(skipSubmit)
     _mutWaitDone()
     if not _mutRunning then return false end
     task.wait(0.5)
+    _mutLog("✅ Masuk Sesi 2 — swap ke Gremlin", Color3.fromRGB(60,200,80))
 
     -- sesi 2: equip 2 Gremlin sebelum claim
     _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰", 2)
