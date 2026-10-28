@@ -1,4 +1,4 @@
--- uplevelnew v8.334 — gift: distribusi proporsional ruang kosong, max inv per target bisa diatur
+-- uplevelnew v8.335 — gift: naikkan semua target ke level yang sama, kena maxInv → full dulu sisa dibagi ulang
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.334"
+local VERSION = "v8.335"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6388,46 +6388,97 @@ local function _loopGift()
     end
 
     -- hitung jatah gift per target dari total pet yang tersedia
-    -- tujuan: setelah gift, jumlah pet semua target mendekati rata-rata
-    -- pakai maxInv per target (user setting, default 500)
-    -- contoh: T1=40 max=500, T2=50 max=300, T3=60 max=400, gift=50
-    --   ruang T1=460, T2=250, T3=340 → total ruang=1050
-    --   T1=50*(460/1050)=22, T2=50*(250/1050)=12, T3=50*(340/1050)=16
+    -- tujuan: naikkan semua target ke level yang sama (hampir sama)
+    -- kalau ada yang kena maxInv → full dulu, sisa dibagi ulang ke yang belum full
     local function calcJatah(targets, totalPet)
         if #targets == 0 then return {} end
-        -- kalau pet < target count, gift 1 per target dari yang paling kosong
-        if totalPet <= #targets then
-            local jatah = {}
-            for i=1,math.min(totalPet,#targets) do
-                jatah[targets[i].nm] = 1
-            end
-            return jatah
-        end
-
-        -- hitung ruang kosong tiap target (maxInv - score)
-        local spaces = {}
-        local sumSpaces = 0
-        for _,t in ipairs(targets) do
-            local space = math.max(0, t.maxInv - t.score)
-            spaces[t.nm] = space
-            sumSpaces = sumSpaces + space
-        end
 
         local jatah = {}
-        local assigned = 0
-        if sumSpaces == 0 then
-            -- semua penuh, ga ada yang di-gift
-            for _,t in ipairs(targets) do jatah[t.nm] = 0 end
-        else
-            -- proporsional dari ruang kosong masing-masing
-            for i,t in ipairs(targets) do
-                local raw = (spaces[t.nm] / sumSpaces) * totalPet
-                local n = (i == #targets) and (totalPet - assigned) or math.floor(raw)
-                n = math.max(0, math.min(n, spaces[t.nm]))  -- jangan melebihi ruang kosong
-                jatah[t.nm] = n
-                assigned = assigned + n
+        local current = {}
+        local maxInv = {}
+        local full = {}
+        for _,t in ipairs(targets) do
+            jatah[t.nm] = 0
+            current[t.nm] = t.score
+            maxInv[t.nm] = t.maxInv
+            full[t.nm] = (t.score >= t.maxInv)
+        end
+
+        local remaining = totalPet
+        local maxIter = #targets + 2
+
+        for _=1,maxIter do
+            if remaining <= 0 then break end
+
+            -- kumpulkan target yang belum full
+            local active = {}
+            local totalCur = 0
+            for _,t in ipairs(targets) do
+                if not full[t.nm] then
+                    active[#active+1] = t
+                    totalCur = totalCur + current[t.nm]
+                end
+            end
+            if #active == 0 then break end
+
+            -- target level: naikkan semua ke rata-rata
+            local targetLevel = (totalCur + remaining) / #active
+
+            -- hitung kebutuhan tiap target aktif
+            local needs = {}
+            local sumNeeds = 0
+            local anyFull = false
+            for _,t in ipairs(active) do
+                local need = targetLevel - current[t.nm]
+                if current[t.nm] + need > maxInv[t.nm] then
+                    need = maxInv[t.nm] - current[t.nm]
+                    anyFull = true
+                end
+                need = math.max(0, need)
+                needs[t.nm] = need
+                sumNeeds = sumNeeds + need
+            end
+
+            -- kalau total kebutuhan melebihi remaining, scale down proporsional
+            if sumNeeds > remaining then
+                local scale = remaining / sumNeeds
+                local assigned = 0
+                for i,t in ipairs(active) do
+                    local n = (i==#active) and (remaining-assigned) or math.floor(needs[t.nm]*scale)
+                    n = math.max(0,n)
+                    jatah[t.nm] = jatah[t.nm] + n
+                    current[t.nm] = current[t.nm] + n
+                    assigned = assigned + n
+                end
+                remaining = 0
+            else
+                -- assign kebutuhan, tandai yang full
+                for _,t in ipairs(active) do
+                    local n = math.floor(needs[t.nm])
+                    jatah[t.nm] = jatah[t.nm] + n
+                    current[t.nm] = current[t.nm] + n
+                    remaining = remaining - n
+                    if current[t.nm] >= maxInv[t.nm] then full[t.nm] = true end
+                end
+                if not anyFull then
+                    -- tidak ada yang kena cap, kasih sisa ke yang ruangnya paling besar
+                    if remaining > 0 then
+                        table.sort(active, function(a,b)
+                            return (maxInv[a.nm]-current[a.nm]) > (maxInv[b.nm]-current[b.nm])
+                        end)
+                        for _,t in ipairs(active) do
+                            if remaining <= 0 then break end
+                            local space = maxInv[t.nm] - current[t.nm]
+                            local give = math.min(remaining, space)
+                            jatah[t.nm] = jatah[t.nm] + give
+                            remaining = remaining - give
+                        end
+                    end
+                    break
+                end
             end
         end
+
         return jatah
     end
 
