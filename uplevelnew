@@ -1,4 +1,4 @@
--- uplevelnew v8.343 — fix: tunggu timer mesin muncul dulu sebelum _mutWaitDone (delay setelah StartMachine)
+-- uplevelnew v8.344 — fix: cek mesin SIAP dulu sebelum submit pet (jangan submit kalau timer masih jalan)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.343"
+local VERSION = "v8.344"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6215,6 +6215,16 @@ local function _mutDoSiklus(skipSubmit)
     if not RE_ok then _mutLog("✗ RE tidak ditemukan", Color3.fromRGB(255,80,80)); return false end
 
     if not skipSubmit then
+        -- pastikan mesin benar-benar SIAP (timer = 0) sebelum submit
+        local preCheck = getMtsMachineTimer()
+        local preSecs  = _mutParseTimer(preCheck or "")
+        if preSecs and preSecs > 0 then
+            _mutLog(string.format("⏳ Mesin masih running %d:%02d, tunggu dulu...",
+                math.floor(preSecs/60), preSecs%60), Color3.fromRGB(255,200,60))
+            _mutWaitDone()
+            if not _mutRunning then return false end
+        end
+
         local pp = _mutGetPP()
         if not pp then
             _mutLog("✗ PP Mutation Machine tidak ditemukan!", Color3.fromRGB(255,80,80)); return false
