@@ -1,4 +1,4 @@
--- uplevelnew v8.433 — timer jalan + pet nil = langsung insert tiap 2s terus sampai masuk
+-- uplevelnew v8.434 — d=true = favorit pet (fix deteksi favorit dari attr "d")
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.433"
+local VERSION = "v8.434"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4282,12 +4282,8 @@ do
         local _inPool=false
         if uuid then local u=tostring(uuid); for _,pool in pairs(sesiPool) do for _,slots in pairs(pool) do for _,entry in pairs(slots) do if entry and (tostring(entry.uuid)==u or tostring(entry.uuid)==fmtU(u)) then _inPool=true end end end end end
         if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[tostring(uuid)] or pr[fmtU(uuid)] or _activeUuids[uuid] or _activeUuids[fmtU(uuid)] or _inPool) then return end
-        local fav=false
-        if uuid and _kgContainer then
-            local e=_kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
-            if type(e)=="table" then local pd=e.PetData; if type(pd)=="table" and (pd.IsFavorite or pd.Favorite or pd.Favorited) then fav=true end; if not fav and (e.IsFavorite or e.Favorite) then fav=true end end
-        end
-        if not fav then for _,attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr)==true then fav=true; break end end end
+        -- v8.434: d=true = pet berfavorit (dari debug attr Tool)
+        local fav = tool:GetAttribute("d") == true
         if fav then
             local ge=game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
             local fRE=ge and ge:FindFirstChild("Favorite_Item")
@@ -6873,25 +6869,11 @@ local function _mutDoSiklus(skipSubmit)
                             or tonumber(t:GetAttribute("age")) or tonumber(t:GetAttribute("level"))
                     end
                     if lv and lv >= 500 then
-                        -- v8.433: skip pet berfavorit, cek atribut + _kgContainer PetData
-                        local fav = false
-                        local favSource = ""
-                        for _,attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
-                            if t:GetAttribute(attr)==true then fav=true; favSource=attr; break end
-                        end
-                        -- cek juga dari _kgContainer PetData
-                        if not fav and c2 then
-                            local e = c2["{"..uclean.."}"] or c2[uclean]
-                            if type(e)=="table" and type(e.PetData)=="table" then
-                                if e.PetData.IsFavorite==true or e.PetData.Favorite==true or e.PetData.Favorited==true then
-                                    fav=true; favSource="PetData"
-                                end
-                            end
-                        end
-                        -- debug: log semua atribut favorit
+                        -- v8.434: d=true = pet berfavorit/dilocked (dari debug attr Tool)
+                        local fav = t:GetAttribute("d") == true
                         local nm = tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t:GetAttribute("type") or t.Name or ""):sub(1,40)
                         if fav then
-                            _mutLog("🔒 Skip (favorit/"..favSource.."): "..nm, Color3.fromRGB(180,180,180))
+                            _mutLog("🔒 Skip (favorit/d=true): "..nm, Color3.fromRGB(180,180,180))
                         else
                             _kandidat[#_kandidat+1] = {tool=t, uuid=uclean, name=nm, level=lv}
                         end
