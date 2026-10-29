@@ -1,4 +1,4 @@
--- uplevelnew v8.432 — cek pet di mesin tiap 2s selama running, retry submit kalau timeout kosong
+-- uplevelnew v8.433 — timer jalan + pet nil = langsung insert tiap 2s terus sampai masuk
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.432"
+local VERSION = "v8.433"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6768,9 +6768,9 @@ local _mutCurrentDef = nil   -- def lineup yang sedang aktif di MTS
 local _mutCurrentSesi = 1   -- sesiNum yang sedang aktif (untuk enforce)
 
 local function _mutWaitDone()
-    -- v8.432: poll tiap 2s
+    -- v8.433: poll tiap 2s
     -- return "ready"   → READY, siap claim
-    -- return "empty"   → pet nil (timer jalan maupun mati) → harus insert pet baru
+    -- return "empty"   → pet nil → caller harus insert pet baru
     -- return "stopped" → _mutState.running false
     local lastLog = -1
     local emptyCount = 0
@@ -6783,12 +6783,17 @@ local function _mutWaitDone()
         local secs = _mutParseTimer(txt or "")
         local pet = getMtsMachinePet()
         if not pet then
-            -- pet kosong (timer jalan atau mati) — konfirmasi 3x lalu insert baru
-            emptyCount = emptyCount + 1
-            local timerInfo = (secs and secs > 0) and string.format("%d:%02d", math.floor(secs/60), secs%60) or "mati"
-            _mutLog(string.format("⚠ Pet kosong di mesin, timer=%s (%d/3)...", timerInfo, emptyCount), Color3.fromRGB(255,140,60))
-            if emptyCount >= 3 then
+            if secs and secs > 0 then
+                -- timer jalan tapi pet nil = langsung return empty, insert sekarang
+                _mutLog(string.format("⚠ Timer jalan %d:%02d tapi pet kosong — insert sekarang!", math.floor(secs/60), secs%60), Color3.fromRGB(255,100,60))
                 return "empty"
+            else
+                -- timer mati + pet nil = konfirmasi 3x (mungkin transisi)
+                emptyCount = emptyCount + 1
+                _mutLog(string.format("⚠ Mesin kosong & timer mati (%d/3)...", emptyCount), Color3.fromRGB(255,140,60))
+                if emptyCount >= 3 then
+                    return "empty"
+                end
             end
         else
             emptyCount = 0
