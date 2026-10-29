@@ -1,7 +1,8 @@
--- uplevelnew v8.442 — CD watchdog: deteksi cache stale >8s (event berhenti fire)
+-- uplevelnew v8.443 — CD watchdog GUI: tampilkan event baru masuk ke cache realtime
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.443: GUI CD Watch tampilkan event baru masuk cache (READY/ON-CD) realtime per event
 -- v8.442: CD watchdog deteksi cache stale >8s (event berhenti fire = bug CD hilang)
 -- v8.441: CD watchdog GUI floating kanan atas, copy all, monitor no event per pet
 -- v8.440: CD watchdog scan 4s — no event langsung pickup (fix CD hilang bug)
@@ -153,7 +154,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.442"
+local VERSION = "v8.443"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2791,7 +2792,30 @@ do
     if pcu2 and pcu2:IsA("RemoteEvent") then
         pcu2.OnClientEvent:Connect(function(uuid, data)
             local key = tostring(uuid):gsub("[{}]","")
-            _cdCache[key] = { ready = _readyDariData(data) == true, at = tick() }
+            local rdy = _readyDariData(data) == true
+            _cdCache[key] = { ready = rdy, at = tick() }
+            -- notif ke GUI CD Watch tiap event baru masuk
+            if _cdGui then
+                local shortId = key:sub(1,8)
+                if rdy then
+                    pcall(_cdGui, shortId .. " READY ✅", Color3.fromRGB(80,255,120))
+                else
+                    -- cari sisa waktu CD terpendek
+                    local minT = math.huge
+                    if type(data) == "table" then
+                        for _, v in ipairs(data) do
+                            if type(v) == "table" and type(v.Time) == "number" then
+                                local p = tostring(v.Passive or ""):lower()
+                                if not p:find("mutation") and v.Time > 0 then
+                                    if v.Time < minT then minT = v.Time end
+                                end
+                            end
+                        end
+                    end
+                    local timerStr = minT < math.huge and string.format(" %.0fs", minT) or ""
+                    pcall(_cdGui, shortId .. " ON-CD ⏳" .. timerStr, Color3.fromRGB(255,180,60))
+                end
+            end
         end)
         addLog("SwapSkill: cooldown listener ON")
     end
