@@ -1,4 +1,4 @@
--- uplevelnew v8.425 — default max inv 85 (bukan 500)
+-- uplevelnew v8.426 — hapus tunggu Gremlin di sesi 2, langsung claim
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.425"
+local VERSION = "v8.426"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6985,52 +6985,8 @@ local function _mutDoSiklus(skipSubmit)
     -- sesi 2: equip 2 Gremlin sebelum claim
     _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰", 2)
 
-    -- tunggu Gremlin beneran masuk kebun (via modelByUuid — sudah track model workspace)
-    local gremlinTarget = SESI2_MUT_DEF[1] and SESI2_MUT_DEF[1].jml or 2
-    local waited = 0
-    while _mutState.running and waited < 15 do
-        local cnt = 0
-        pcall(function()
-            local mbu = _G.ZenxModelByUuid or {}
-            for uuid, model in pairs(mbu) do
-                -- cek tipe dari RC container atau tool attribute
-                local tipe = ""
-                local bp = plr:FindFirstChild("Backpack")
-                if bp then
-                    for _, t in ipairs(bp:GetChildren()) do
-                        local tuuid = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
-                        if tuuid and tostring(tuuid) == tostring(uuid) then
-                            tipe = (t:GetAttribute("PetType") or t:GetAttribute("f") or t.Name or ""):lower()
-                            break
-                        end
-                    end
-                end
-                if tipe == "" then
-                    -- fallback: cek model name (uuid) di RC
-                    local ok2, rc = pcall(function()
-                        local RC = require(RS:WaitForChild("RCFramework",3))
-                        local d = RC.new("ActivePetsService_Replicator"):GetData(plr.Name)
-                        local inv = d and rawget(rawget(rawget(rawget(d,"Table") or {},"PlayerPetData") or {},plr.Name) or {},"PetInventory") or {}
-                        local data = rawget(inv,"Data") or {}
-                        local entry = data["{"..tostring(uuid).."}"]
-                        return entry and tostring(entry.PetType or ""):lower() or ""
-                    end)
-                    if ok2 then tipe = rc or "" end
-                end
-                if tipe:find("gremlin") then cnt = cnt + 1 end
-            end
-        end)
-        if cnt >= gremlinTarget then
-            _mutLog("✓ Gremlin di kebun: "..cnt.."/"..gremlinTarget, Color3.fromRGB(78,214,204))
-            break
-        end
-        _mutLog("⏳ tunggu Gremlin masuk kebun... ("..cnt.."/"..gremlinTarget..")", Color3.fromRGB(255,200,60))
-        task.wait(1)
-        waited = waited + 1
-    end
-    if waited >= 15 then
-        _mutLog("⚠ Gremlin timeout, lanjut claim anyway", Color3.fromRGB(255,140,60))
-    end
+    -- v8.426: tidak perlu tunggu Gremlin, langsung lanjut claim
+    _mutLog("✓ Swap ke Gremlin selesai, langsung claim", Color3.fromRGB(78,214,204))
     -- countdown 3s sebelum claim
     for i=3,1,-1 do
         if not _mutState.running then return false end
