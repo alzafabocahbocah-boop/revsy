@@ -1,4 +1,4 @@
--- uplevelnew v8.408 — auto-cancel mut dialog: pakai firesignal+getconnections (bukan fireBtn)
+-- uplevelnew v8.409 — auto-cancel mut dialog: target frame Cancel > Buttons > Main (path tepat)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.408"
+local VERSION = "v8.409"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2409,42 +2409,48 @@ task.spawn(function()
     end
     -- v8.248: gift popup 0.6s→1s, trade window 0.12s→1s
     task.spawn(function() while true do task.wait(1); pcall(acceptAllGiftPopups) end end)
-    -- v8.408: auto-cancel dialog Submit Pet To Mutation Machine / Kirim Hewan ke Mesin Mutasi
+    -- v8.409: auto-cancel dialog Submit Pet To Mutation Machine
+    -- Struktur: Main > HeaderContainer > Title("Submit Pet To Mutation Machine")
+    --           Main > Buttons > Cancel(Frame) > TextLabel("Cancel")
     task.spawn(function()
         while true do
             task.wait(2)
             pcall(function()
                 local pg = plr:FindFirstChild("PlayerGui")
                 if not pg then return end
-                -- scan semua TextLabel/TextButton cari keyword dialog mutasi
-                local found = false
+                -- cari TextLabel Title dengan teks dialog mutasi
                 for _,d in ipairs(pg:GetDescendants()) do
-                    if not found and (d:IsA("TextLabel") or d:IsA("TextButton")) then
+                    if d:IsA("TextLabel") then
                         local t = d.Text or ""
-                        if t:find("Mutation Machine") or t:find("Mesin Mutasi") or
-                           t:find("menyerahkan") or t:find("submit that pet") or
-                           t:find("Submit Pet") then
-                            found = true
-                        end
-                    end
-                end
-                if not found then return end
-                -- ada dialog — cari tombol Cancel / Batalkan dan klik
-                for _,d in ipairs(pg:GetDescendants()) do
-                    if d:IsA("TextButton") then
-                        local t = (d.Text or ""):lower()
-                        if t == "cancel" or t == "batalkan" then
-                            -- pakai semua cara yang ada
-                            if firesignal then
-                                pcall(function() firesignal(d.MouseButton1Down) end)
-                                pcall(function() firesignal(d.MouseButton1Click) end)
+                        if t:find("Submit Pet To Mutation Machine") or t:find("Kirim Hewan Peliharaan ke Mesin Mutasi") then
+                            -- ketemu dialog — cari frame Buttons lalu Cancel
+                            local main = d.Parent and d.Parent.Parent -- HeaderContainer.Parent = Main
+                            if not main then return end
+                            local buttons = main:FindFirstChild("Buttons")
+                            if not buttons then return end
+                            local cancelFrame = buttons:FindFirstChild("Cancel")
+                            if not cancelFrame then return end
+                            -- klik cancelFrame (Frame/ImageButton) atau cari TextButton di dalamnya
+                            local function clickIt(obj)
+                                if firesignal then
+                                    pcall(function() firesignal(obj.MouseButton1Down) end)
+                                    pcall(function() firesignal(obj.MouseButton1Click) end)
+                                end
+                                if getconnections then
+                                    for _,c in ipairs(getconnections(obj.MouseButton1Click)) do
+                                        pcall(function() c:Fire() end)
+                                    end
+                                end
+                                pcall(function() obj.MouseButton1Click:Fire() end)
                             end
-                            if getconnections then
-                                for _,c in ipairs(getconnections(d.MouseButton1Click)) do
-                                    pcall(function() c:Fire() end)
+                            -- coba cancelFrame langsung dulu
+                            clickIt(cancelFrame)
+                            -- coba anak TextButton/ImageButton
+                            for _,child in ipairs(cancelFrame:GetDescendants()) do
+                                if child:IsA("TextButton") or child:IsA("ImageButton") then
+                                    clickIt(child)
                                 end
                             end
-                            pcall(function() d.MouseButton1Click:Fire() end)
                             return
                         end
                     end
