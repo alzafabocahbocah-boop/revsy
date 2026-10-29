@@ -1,7 +1,8 @@
--- uplevelnew v8.447 — auto-pick pool S1 kalau kosong sebelum loopMutasi start
+-- uplevelnew v8.448 — disable sementara CD watchdog pickup + GUI notif + T-Rex swap Eat
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.448: disable sementara CD watchdog pickup + GUI event notif + T-Rex swap Eat (flag false)
 -- v8.447: auto-pick pool S1 kalau kosong sebelum start (cegah equip Gremlin/random)
 -- v8.446: CD watchdog scan interval ganti ke 3s
 -- v8.445: hapus _mtsSaveAutoStart(false) dari _loopGift — re-exec tetap auto-start
@@ -157,7 +158,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.447"
+local VERSION = "v8.448"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2798,7 +2799,8 @@ do
             local rdy = _readyDariData(data) == true
             _cdCache[key] = { ready = rdy, at = tick() }
             -- notif ke GUI CD Watch tiap event baru masuk
-            if _cdGui then
+            -- v8.448: disabled sementara (CD_WATCH_ENABLED=false), aktifkan kembali kalau perlu
+            if false and _cdGui then  -- CD_WATCH_ENABLED guard
                 local shortId = key:sub(1,8)
                 if rdy then
                     pcall(_cdGui, shortId .. " READY ✅", Color3.fromRGB(80,255,120))
@@ -2937,6 +2939,8 @@ do
         if _cdGui then pcall(_cdGui, txt, col) end
     end
 
+    -- v8.448: flag disable sementara CD watchdog pickup + GUI notif
+    local CD_WATCH_ENABLED = false  -- set true untuk aktifkan kembali
     task.spawn(function()
         task.wait(5)  -- tunggu sistem stable
         while true do
@@ -2959,7 +2963,7 @@ do
                 local hasEvent = ce ~= nil and not cacheStale
                 if not hasEvent then noEvt = noEvt + 1 end
                 -- no event / stale → langsung pickup (no age threshold)
-                if not hasEvent and (now - lastReeq) > 20 then
+                if CD_WATCH_ENABLED and not hasEvent and (now - lastReeq) > 20 then
                     local reason = ce and "stale" or "nil"
                     cdLog(string.format("[CD-WATCH] %s %s → pickup", key:sub(1,8), reason), Color3.fromRGB(255,80,80))
                     _cdReequipCooldown[key] = now
@@ -2972,7 +2976,7 @@ do
                     end)
                 end
             end
-            if _cdGui then
+            if CD_WATCH_ENABLED and _cdGui then
                 local col = noEvt > 0 and Color3.fromRGB(255,180,60) or Color3.fromRGB(80,255,120)
                 pcall(_cdGui, string.format("scan: %d pet | no event: %d", n, noEvt), col)
             end
@@ -2988,9 +2992,12 @@ do
         end
     end)
     -- T-Rex: swap via CustomAnimationState "Eat" (DataStream ActivePets)
+    -- v8.448: flag disable sementara T-Rex swap Eat
+    local TREX_SWAP_ENABLED = false  -- set true untuk aktifkan kembali
     task.spawn(function()
         local function tsLog(msg) addLog(msg) end
         -- ─────────────────────────────────────────────────────
+        if not TREX_SWAP_ENABLED then tsLog("T-Rex swap Eat: DISABLED (flag false)"); return end
 
         -- cek ge2
         if not ge2 then tsLog("ERR: ge2 nil"); return end
