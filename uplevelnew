@@ -1,4 +1,4 @@
--- uplevelnew v8.427 — fix deteksi Gremlin di kebun via _activeUuids
+-- uplevelnew v8.428 — fix getMtsMachinePet: cek semua child PetModelLocation bukan hanya Model
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.427"
+local VERSION = "v8.428"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6146,8 +6146,10 @@ mtsPetLbl.Position=UDim2.new(0,0,0,0); mtsPetLbl.Size=UDim2.new(1,0,1,0)
 local function getMtsMachinePet()
     local ok,pml=pcall(function() return game.Workspace.NPCS.PetMutationMachine.PetModelLocation end)
     if ok and pml then
-        for _,c in ipairs(pml:GetChildren()) do
-            if c:IsA("Model") then return c.Name end
+        local children = pml:GetChildren()
+        if #children > 0 then
+            -- kembalikan nama child pertama apapun (Model, BasePart, dll)
+            return children[1].Name
         end
     end
     return nil
@@ -6764,7 +6766,7 @@ local _mutCurrentDef = nil   -- def lineup yang sedang aktif di MTS
 local _mutCurrentSesi = 1   -- sesiNum yang sedang aktif (untuk enforce)
 
 local function _mutWaitDone()
-    -- v8.417: cek siap via TimerTextLabel.Text == "READY"
+    -- v8.428: cek siap via TimerTextLabel.Text == "READY", atau mesin kosong
     local lastLog = -1
     while _mutState.running do
         local txt = getMtsMachineTimer()
@@ -6773,17 +6775,22 @@ local function _mutWaitDone()
             _mutLog("✓ Mesin READY! Siap di-claim", Color3.fromRGB(60,200,80))
             return
         end
+        -- mesin kosong (tidak ada pet) = tidak perlu tunggu
+        local pet = getMtsMachinePet()
+        if not pet then
+            _mutLog("⚠ Mesin kosong saat tunggu — keluar dari wait", Color3.fromRGB(255,140,60))
+            return
+        end
         -- log sisa waktu tiap menit
         local secs = _mutParseTimer(txt or "")
         if secs and secs > 0 then
             local menit = math.floor(secs/60)
             if menit ~= lastLog then
                 lastLog = menit
-                local pet = getMtsMachinePet() or "di mesin"
                 _mutLog(string.format("⏳ Mesin running... sisa %d:%02d (%s)", menit, secs%60, pet), Color3.fromRGB(255,200,60))
             end
         else
-            _mutLog("⏳ Tunggu mesin READY... (timer=".. (txt or "nil") ..")", Color3.fromRGB(255,200,60))
+            _mutLog("⏳ Tunggu mesin READY... (timer=".. (txt or "nil") ..", pet="..pet..")", Color3.fromRGB(255,200,60))
         end
         task.wait(3)
     end
