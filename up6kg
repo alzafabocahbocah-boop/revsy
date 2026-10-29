@@ -1,11 +1,11 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.267 (tambah floating debug panel ZenxDbg)        ║
+-- ║  UP KG — v10.268 (debug panel + RC chain diagnostic step-by-step) ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.267"
+local VERSION = "up6kg-v10.268"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -455,12 +455,54 @@ task.spawn(function()
         return lbl
     end
 
-    -- buat semua row (urutan: container, KgStat fields, _G vars lainnya)
+    -- RC diagnostic: cek step by step biar tau putus di mana
+    local function rcDiag()
+        local RS2 = game:GetService("ReplicatedStorage")
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        -- step 1: Modules ada?
+        local mods = RS2:FindFirstChild("Modules")
+        if not mods then return "NO Modules" end
+        -- step 2: ReplicationClass ada?
+        local rcMod = mods:FindFirstChild("ReplicationClass")
+        if not rcMod then return "NO ReplicationClass" end
+        -- step 3: require berhasil?
+        local ok1, RC2 = pcall(require, rcMod)
+        if not ok1 then return "require ERR: "..tostring(RC2):sub(1,30) end
+        -- step 4: RC.new berhasil?
+        local ok2, inst2 = pcall(function() return RC2.new("ActivePetsService_Replicator") end)
+        if not ok2 then return "RC.new ERR: "..tostring(inst2):sub(1,30) end
+        if not inst2 then return "RC.new=nil" end
+        -- step 5: GetData berhasil?
+        local ok3, data2 = pcall(function() return inst2:GetData(plrName) end)
+        if not ok3 then return "GetData ERR: "..tostring(data2):sub(1,30) end
+        if type(data2) ~= "table" then return "data bukan table: "..type(data2) end
+        -- step 6: Table ada?
+        local tbl2 = rawget(data2, "Table")
+        if type(tbl2) ~= "table" then return "NO .Table" end
+        -- step 7: PlayerPetData ada?
+        local ppd2 = rawget(tbl2, "PlayerPetData")
+        if type(ppd2) ~= "table" then return "NO PlayerPetData" end
+        -- step 8: pd[name] ada?
+        local pd2 = rawget(ppd2, plrName)
+        if type(pd2) ~= "table" then return "NO pd["..plrName.."]" end
+        -- step 9: PetInventory ada?
+        local pi2 = rawget(pd2, "PetInventory")
+        if type(pi2) ~= "table" then return "NO PetInventory" end
+        -- step 10: Data ada?
+        local dat2 = rawget(pi2, "Data")
+        if type(dat2) ~= "table" then return "NO PetInventory.Data" end
+        local n = 0; for _ in pairs(dat2) do n=n+1 end
+        return "OK ("..n.." pets)"
+    end
+
+    -- buat semua row (urutan: RC diag, container, KgStat fields, _G vars lainnya)
     local rows = {}
     local keys = {
+        -- RC diagnostic
+        {"RC chain",           rcDiag},
         -- Container
         {"_kgContainer",       function() return _kgContainer end},
-        {"_kgContainerDone",   function() return _G.__ZenxKgContainerDone end},
+        {"_kgContainerDone",   function() return _kgContainerDone end},
         -- ZenxKgStat fields
         {"KgStat.total",       function() return (_G.ZenxKgStat or {}).total end},
         {"KgStat.totalAll",    function() return (_G.ZenxKgStat or {}).totalAll end},
