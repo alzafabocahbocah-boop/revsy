@@ -1,11 +1,11 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.266 (hapus guard boot rejoin, langsung :00/:30)  ║
+-- ║  UP KG — v10.267 (tambah floating debug panel ZenxDbg)        ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.266"
+local VERSION = "up6kg-v10.267"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -381,6 +381,150 @@ task.spawn(function()
         task.wait(0.5)   -- v10.216: 0.2s → 0.5s
     end
 end)
+
+-- ============ v10.267: FLOATING DEBUG PANEL (ZenxDbg) ============
+-- Nampilin semua key variable up6kg: mana yang nil, mana yang ada nilainya
+-- Bisa discroll, ada tombol COPY ALL buat copy ke clipboard
+task.spawn(function()
+    local plr = game:GetService("Players").LocalPlayer
+    local par = (gethui and gethui()) or plr:WaitForChild("PlayerGui")
+    pcall(function() local o = par:FindFirstChild("ZenxDbg"); if o then o:Destroy() end end)
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "ZenxDbg"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.DisplayOrder = 999999
+    sg.Parent = par
+
+    -- background panel (bawah kiri, bisa drag)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 370, 0, 320)
+    frame.Position = UDim2.new(0, 10, 1, -330)
+    frame.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
+    frame.BackgroundTransparency = 0.05
+    frame.BorderSizePixel = 0; frame.Parent = sg
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+    local stDbg = Instance.new("UIStroke"); stDbg.Color = Color3.fromRGB(78, 214, 204); stDbg.Thickness = 1.5; stDbg.Parent = frame
+
+    -- header
+    local hdr = Instance.new("Frame"); hdr.Size = UDim2.new(1,0,0,28); hdr.BackgroundColor3 = Color3.fromRGB(15,15,20); hdr.BorderSizePixel = 0; hdr.Parent = frame
+    Instance.new("UICorner", hdr).CornerRadius = UDim.new(0, 12)
+    local ttl = Instance.new("TextLabel"); ttl.BackgroundTransparency = 1; ttl.Font = Enum.Font.GothamBold; ttl.TextSize = 13; ttl.TextColor3 = Color3.fromRGB(78,214,204); ttl.Text = "● DBG up6kg"; ttl.Position = UDim2.new(0,10,0,0); ttl.Size = UDim2.new(0,200,1,0); ttl.TextXAlignment = Enum.TextXAlignment.Left; ttl.Parent = hdr
+
+    -- tombol COPY ALL
+    local btnCopy = Instance.new("TextButton"); btnCopy.Size = UDim2.new(0,80,0,20); btnCopy.AnchorPoint = Vector2.new(1,0.5); btnCopy.Position = UDim2.new(1,-8,0.5,0)
+    btnCopy.BackgroundColor3 = Color3.fromRGB(30,80,70); btnCopy.BorderSizePixel = 0; btnCopy.Font = Enum.Font.GothamBold; btnCopy.TextSize = 12; btnCopy.TextColor3 = Color3.fromRGB(78,214,204); btnCopy.Text = "COPY ALL"; btnCopy.Parent = hdr
+    Instance.new("UICorner", btnCopy).CornerRadius = UDim.new(0, 6)
+
+    -- tombol CLOSE
+    local btnClose = Instance.new("TextButton"); btnClose.Size = UDim2.new(0,24,0,20); btnClose.AnchorPoint = Vector2.new(1,0.5); btnClose.Position = UDim2.new(1,-92,0.5,0)
+    btnClose.BackgroundColor3 = Color3.fromRGB(60,20,20); btnClose.BorderSizePixel = 0; btnClose.Font = Enum.Font.GothamBold; btnClose.TextSize = 13; btnClose.TextColor3 = Color3.fromRGB(255,80,80); btnClose.Text = "✕"; btnClose.Parent = hdr
+    Instance.new("UICorner", btnClose).CornerRadius = UDim.new(0, 6)
+    btnClose.MouseButton1Click:Connect(function() sg:Destroy() end)
+
+    -- scroll area
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1,0,1,-30); scroll.Position = UDim2.new(0,0,0,30)
+    scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 4; scroll.ScrollBarImageColor3 = Color3.fromRGB(78,214,204)
+    scroll.CanvasSize = UDim2.new(0,0,0,0); scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.Parent = frame
+    local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0,8); pad.PaddingRight = UDim.new(0,8); pad.PaddingTop = UDim.new(0,6); pad.Parent = scroll
+    local list = Instance.new("UIListLayout"); list.Padding = UDim.new(0,2); list.SortOrder = Enum.SortOrder.LayoutOrder; list.Parent = scroll
+
+    -- drag support
+    local dragging, dragStart, startPos = false, nil, nil
+    hdr.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.Touch or inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true; dragStart = inp.Position; startPos = frame.Position
+        end
+    end)
+    hdr.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.Touch or inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+    game:GetService("UserInputService").InputChanged:Connect(function(inp)
+        if dragging and (inp.UserInputType == Enum.UserInputType.Touch or inp.UserInputType == Enum.UserInputType.MouseMove) then
+            local delta = inp.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    -- helper: buat baris teks
+    local function mkRow(lo)
+        local lbl = Instance.new("TextLabel"); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Code; lbl.TextSize = 12
+        lbl.Size = UDim2.new(1,0,0,16); lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextTruncate = Enum.TextTruncate.AtEnd
+        lbl.RichText = true; lbl.LayoutOrder = lo; lbl.Parent = scroll
+        return lbl
+    end
+
+    -- buat semua row (urutan: container, KgStat fields, _G vars lainnya)
+    local rows = {}
+    local keys = {
+        -- Container
+        {"_kgContainer",       function() return _kgContainer end},
+        {"_kgContainerDone",   function() return _G.__ZenxKgContainerDone end},
+        -- ZenxKgStat fields
+        {"KgStat.total",       function() return (_G.ZenxKgStat or {}).total end},
+        {"KgStat.totalAll",    function() return (_G.ZenxKgStat or {}).totalAll end},
+        {"KgStat.maxInv",      function() return (_G.ZenxKgStat or {}).maxInv end},
+        {"KgStat.belum",       function() return (_G.ZenxKgStat or {}).belum end},
+        {"KgStat.udah",        function() return (_G.ZenxKgStat or {}).udah end},
+        {"KgStat.age50Belum",  function() return (_G.ZenxKgStat or {}).age50Belum end},
+        {"KgStat.ageP",        function() return (_G.ZenxKgStat or {}).ageP end},
+        {"KgStat.ageM",        function() return (_G.ZenxKgStat or {}).ageM end},
+        -- _G vars
+        {"ZenxMaxPetCache",    function() return _G.__ZenxMaxPetCache end},
+        {"ZenxFPS",            function() return _G.ZenxFPS end},
+        {"ZenxHactCount",      function() return _G.ZenxHactCount end},
+        {"ZenxKgStatGen",      function() return _G.__ZenxKgStatGen end},
+        {"ZenxEleNoRecv",      function() return _G.__ZenxEleNoRecv end},
+        {"ZenxTimIncomplete",  function() return _G.__ZenxTimIncomplete end},
+        {"ZenxOperNext",       function() return _G.ZenxOperNext end},
+    }
+    for i, kv in ipairs(keys) do
+        rows[i] = {label = kv[1], fn = kv[2], row = mkRow(i)}
+    end
+
+    -- helper format value
+    local function fmtVal(v)
+        if v == nil then return "<font color='#ff5555'>nil</font>", "nil"
+        elseif type(v) == "table" then
+            local n = 0; for _ in pairs(v) do n=n+1 end
+            return "<font color='#78d6cc'>table("..n..")</font>", "table("..n..")"
+        elseif type(v) == "boolean" then
+            local c = v and "#78d6cc" or "#ff9955"
+            return "<font color='"..c.."'>"..tostring(v).."</font>", tostring(v)
+        else
+            return "<font color='#e0e0e0'>"..tostring(v):sub(1,40).."</font>", tostring(v):sub(1,40)
+        end
+    end
+
+    -- COPY ALL handler
+    btnCopy.MouseButton1Click:Connect(function()
+        local lines = {"=== ZenxDbg up6kg ==="}
+        for _, r in ipairs(rows) do
+            local ok, v = pcall(r.fn)
+            local _, plain = fmtVal(ok and v or nil)
+            table.insert(lines, r.label .. " = " .. plain)
+        end
+        local txt = table.concat(lines, "\n")
+        pcall(function() setclipboard(txt) end)
+        btnCopy.Text = "✓ copied"
+        task.delay(2, function() pcall(function() btnCopy.Text = "COPY ALL" end) end)
+    end)
+
+    -- update loop tiap 1s
+    while sg.Parent do
+        for _, r in ipairs(rows) do
+            pcall(function()
+                local ok, v = pcall(r.fn)
+                local rich, _ = fmtVal(ok and v or nil)
+                local dimKey = "<font color='#888888'>"..r.label.."</font> = "
+                r.row.Text = dimKey .. rich
+            end)
+        end
+        task.wait(1)
+    end
+end)
+-- ============ end floating debug panel ============
 
 -- up6kg: rejoin v2.2 (atas) DIBUANG -> pakai REJOIN GACOR di bawah (kick + balik PS sama).
 
