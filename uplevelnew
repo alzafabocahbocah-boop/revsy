@@ -1,4 +1,4 @@
--- uplevelnew v8.434 — d=true = favorit pet (fix deteksi favorit dari attr "d")
+-- uplevelnew v8.435 — hapus loop tunggu Gremlin redundan (sudah diverifikasi di _mutSwapLineup)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.434"
+local VERSION = "v8.435"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7040,46 +7040,7 @@ local function _mutDoSiklus(skipSubmit)
     -- sesi 2: equip 2 Gremlin sebelum claim
     _mutSwapLineup(SESI2_MUT_DEF, "2 Gremlin", "Fase 2: Gremlin 🎰", 2)
 
-    -- v8.427: tunggu Gremlin masuk kebun via _activeUuids (lebih reliable dari ZenxModelByUuid)
-    local gremlinTarget = SESI2_MUT_DEF[1] and SESI2_MUT_DEF[1].jml or 2
-    local waited = 0
-    while _mutState.running and waited < 20 do
-        local cnt = 0
-        pcall(function()
-            -- cek _activeUuids (uuid yang sedang equip di kebun)
-            for uuid in pairs(_activeUuids or {}) do
-                local uclean = tostring(uuid):gsub("[{}]","")
-                -- cari di backpack/char untuk cek tipe
-                local tipe = ""
-                local function checkTool(parent)
-                    for _, t in ipairs(parent:GetChildren()) do
-                        if t:IsA("Tool") then
-                            local tu = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
-                            if tu and tostring(tu):gsub("[{}]","") == uclean then
-                                tipe = tostring(t:GetAttribute("f") or t:GetAttribute("PetType") or t:GetAttribute("type") or t.Name or ""):lower()
-                                return
-                            end
-                        end
-                    end
-                end
-                local bp = plr:FindFirstChild("Backpack")
-                local ch = plr.Character
-                if bp then checkTool(bp) end
-                if tipe == "" and ch then checkTool(ch) end
-                if tipe:find("gremlin") then cnt = cnt + 1 end
-            end
-        end)
-        if cnt >= gremlinTarget then
-            _mutLog("✓ Gremlin di kebun: "..cnt.."/"..gremlinTarget, Color3.fromRGB(78,214,204))
-            break
-        end
-        _mutLog("⏳ tunggu Gremlin masuk kebun... ("..cnt.."/"..gremlinTarget..")", Color3.fromRGB(255,200,60))
-        task.wait(1)
-        waited = waited + 1
-    end
-    if waited >= 20 then
-        _mutLog("⚠ Gremlin timeout, lanjut claim anyway", Color3.fromRGB(255,140,60))
-    end
+    -- v8.435: verifikasi Gremlin sudah done di _mutSwapLineup (log "Lineup aktif"), langsung lanjut
     -- countdown 3s sebelum claim
     for i=3,1,-1 do
         if not _mutState.running then return false end
