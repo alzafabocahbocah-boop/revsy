@@ -22,6 +22,18 @@ end
 
 local function getPetTipe(uuid)
     local key = tostring(uuid):gsub("[{}]","")
+    -- 1. dari ZenxModelByUuid langsung (model ada di workspace)
+    local mbu = _G.ZenxModelByUuid
+    if type(mbu) == "table" then
+        local m = mbu["{"..key.."}"] or mbu[key]
+        if m and type(m) == "userdata" then
+            local pt = m:GetAttribute("PetType")
+            if pt and pt ~= "" then return tostring(pt) end
+            -- fallback nama model (biasanya nama pet)
+            return tostring(m.Name)
+        end
+    end
+    -- 2. dari kgContainer
     local kgc = _G.__ZenxKgContainer or _G._kgContainer
     if type(kgc) == "table" then
         local e = kgc["{"..key.."}"] or kgc[key]
@@ -30,6 +42,7 @@ local function getPetTipe(uuid)
             if pt ~= "" then return pt end
         end
     end
+    -- 3. dari PetsPhysical workspace
     local pp = workspace:FindFirstChild("PetsPhysical")
     if pp then
         local m = pp:FindFirstChild("{"..key.."}") or pp:FindFirstChild(key)
@@ -276,4 +289,29 @@ task.spawn(function()
     end
 end)
 
-addLine("debug_cd v6 | uplevelnew v8.438", Color3.fromRGB(100,100,100))
+-- ===================== CHECK: pet yang NO EVENT setelah 15s =====================
+task.spawn(function()
+    task.wait(15)
+    local modelByUuid = _G.ZenxModelByUuid
+    if type(modelByUuid) ~= "table" then return end
+    addLine("=== CHECK pet tanpa event setelah 15s ===", Color3.fromRGB(255,220,80))
+    local noEvt = 0
+    local k = next(modelByUuid, nil)
+    while k ~= nil do
+        local key = tostring(k):gsub("[{}]","")
+        if _lastStatus[key] == nil then
+            noEvt = noEvt + 1
+            local tipe = getPetTipe(key)
+            addLine("  NO EVENT: " .. key:sub(1,8) .. " | " .. tipe, Color3.fromRGB(255,80,80))
+            -- coba fire request CD untuk uuid ini kalau ada cara
+        end
+        k = next(modelByUuid, k)
+    end
+    if noEvt == 0 then
+        addLine("  semua pet sudah dapat event ✅", Color3.fromRGB(80,255,120))
+    else
+        addLine(string.format("  %d pet tidak dapat event — kemungkinan bug CD hilang!", noEvt), Color3.fromRGB(255,80,80))
+    end
+end)
+
+addLine("debug_cd v7 | uplevelnew v8.438", Color3.fromRGB(100,100,100))
