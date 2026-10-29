@@ -1,4 +1,4 @@
--- uplevelnew v8.421 — protect sesiPool (tim auto lvl) dari scan kandidat MTS
+-- uplevelnew v8.422 — fix ikut-dari-tengah: cek READY text supaya break ke siklus baru
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.421"
+local VERSION = "v8.422"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7097,16 +7097,23 @@ local function _loopMutasi()
     if not isReady and secsNow and secsNow > 0 then
         _mutLog("🔁 Mesin running! Ikut dari Fase 1...", Color3.fromRGB(255,200,60))
         _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳", 1)
-        -- tunggu sampai pet keluar dari mesin; kalau timer 0 tapi pet masih ada → claim
+        -- v8.422: tunggu sampai mesin READY atau pet keluar
         local lastLogMenit = -1
         local claimTriedAt = 0
         while _mutState.running do
             local pet = getMtsMachinePet()
             if not pet then
                 _mutLog("⚠ Mesin kosong saat ikut dari tengah — skip ke siklus baru", Color3.fromRGB(255,140,60))
-                break  -- keluar loop ikut-dari-tengah, lanjut ke main loop siklus
+                break  -- mesin sudah kosong, lanjut ke main loop siklus
             end
             local txt = getMtsMachineTimer()
+            -- v8.422: kalau timer READY → claim lalu break, jangan tunggu pet hilang
+            if txt and txt:upper():find("READY") then
+                _mutLog("🎁 Timer READY (ikut tengah), claim pet: "..pet.."...", Color3.fromRGB(200,140,255))
+                pcall(function() RE_mut:FireServer("ClaimMutatedPet") end)
+                task.wait(2)
+                break  -- lanjut ke siklus baru
+            end
             local secs = _mutParseTimer(txt or "")
             local menit = secs and math.floor(secs/60) or -1
             if menit ~= lastLogMenit then
@@ -7114,11 +7121,11 @@ local function _loopMutasi()
                 if secs and secs > 0 then
                     _mutLog(string.format("⏳ Mesin running... sisa %d:%02d (%s)", math.floor(secs/60), secs%60, pet), Color3.fromRGB(255,200,60))
                 else
-                    -- timer 0 tapi pet masih di mesin → harus claim
+                    -- timer 0 dan bukan READY → coba claim kalau belum
                     local now = tick()
                     if now - claimTriedAt >= 5 then
                         claimTriedAt = now
-                        _mutLog("🎁 Timer selesai, claim pet: "..pet.."...", Color3.fromRGB(200,140,255))
+                        _mutLog("🎁 Timer 0, claim pet: "..pet.."...", Color3.fromRGB(200,140,255))
                         pcall(function() RE_mut:FireServer("ClaimMutatedPet") end)
                         task.wait(2)
                     end
