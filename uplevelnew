@@ -1,4 +1,4 @@
--- uplevelnew v8.417 — _mutWaitDone: cek siap via TimerTextLabel.Text=="READY"
+-- uplevelnew v8.418 — scan kandidat submit sekali di awal siklus, bukan tiap mau submit
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.417"
+local VERSION = "v8.418"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6795,110 +6795,129 @@ local function _mutDoSiklus(skipSubmit)
     end)
     if not RE_ok then _mutLog("✗ RE tidak ditemukan", Color3.fromRGB(255,80,80)); return false end
 
+    -- v8.418: scan kandidat submit SEKALI di awal siklus
+    -- kandidat = list {tool, uuid, name, level} pet age>=500 yang tidak protected
+    local _kandidat = {}
+    do
+        local protected = {}
+        if _mutPool then
+            for _, p in pairs(_mutPool) do
+                for u in pairs(p) do
+                    local uclean = tostring(u):gsub("[{}]","")
+                    protected[uclean] = true; protected["{"..uclean.."}"] = true
+                end
+            end
+        end
+        for u in pairs(_activeUuids or {}) do
+            local uclean = tostring(u):gsub("[{}]","")
+            protected[uclean] = true; protected["{"..uclean.."}"] = true
+        end
+        local char = plr.Character
+        local bp   = plr:FindFirstChild("Backpack")
+        local c2   = _kgContainer
+        local scan = {}
+        if bp   then for _,t in ipairs(bp:GetChildren())   do if t:IsA("Tool") then scan[#scan+1]=t end end end
+        if char then for _,t in ipairs(char:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
+        for _,t in ipairs(scan) do
+            local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
+            if uuid then
+                local uclean = tostring(uuid):gsub("[{}]","")
+                if not protected[uclean] and not protected["{"..uclean.."}"] then
+                    local lv = nil
+                    if c2 then
+                        local e = c2["{"..uclean.."}"]
+                        if type(e)=="table" and e.PetData then lv = tonumber(e.PetData.Level) end
+                    end
+                    if lv == nil then
+                        lv = tonumber(t:GetAttribute("Level")) or tonumber(t:GetAttribute("Age"))
+                            or tonumber(t:GetAttribute("age")) or tonumber(t:GetAttribute("level"))
+                    end
+                    if lv and lv >= 500 then
+                        local nm = tostring(t:GetAttribute("PetType") or t.Name or ""):sub(1,30)
+                        _kandidat[#_kandidat+1] = {tool=t, uuid=uclean, name=nm, level=lv}
+                    end
+                end
+            end
+        end
+        _mutLog(string.format("🔍 Kandidat submit: %d pet age>=500", #_kandidat), Color3.fromRGB(120,180,255))
+        for i,k in ipairs(_kandidat) do
+            _mutLog(string.format("  [%d] %s age=%d (%s)", i, k.name, k.level, k.uuid:sub(1,8)), Color3.fromRGB(160,160,255))
+        end
+        if #_kandidat == 0 and not skipSubmit then
+            _mutLog("⚠ Tidak ada pet age>=500 untuk submit!", Color3.fromRGB(255,80,80))
+            return false
+        end
+    end
+    local _kandidatIdx = 0  -- index kandidat yang akan dipakai berikutnya
+
+    -- helper: hold kandidat berikutnya ke tangan
+    local function _holdNextKandidat()
+        local char = plr.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if not hum then _mutLog("⚠ Humanoid tidak ditemukan!", Color3.fromRGB(255,80,80)); return false end
+        _kandidatIdx = _kandidatIdx + 1
+        local k = _kandidat[_kandidatIdx]
+        if not k then _mutLog("⚠ Kandidat habis! (idx="..tostring(_kandidatIdx)..")", Color3.fromRGB(255,80,80)); return false end
+        -- pastikan tool masih ada (bisa saja sudah pindah setelah claim sebelumnya)
+        local t = k.tool
+        if not t or not t.Parent then
+            -- cari ulang di backpack/char berdasarkan uuid
+            local bp2 = plr:FindFirstChild("Backpack")
+            local found2 = nil
+            local function findByUUID(parent)
+                for _,child in ipairs(parent:GetChildren()) do
+                    if child:IsA("Tool") then
+                        local u2 = child:GetAttribute("PET_UUID") or child:GetAttribute("uuid")
+                        if u2 and tostring(u2):gsub("[{}]","") == k.uuid then found2=child; return end
+                    end
+                end
+            end
+            if bp2 then findByUUID(bp2) end
+            if not found2 and char then findByUUID(char) end
+            if not found2 then
+                _mutLog("⚠ Tool kandidat ["..k.name.."] tidak ditemukan di backpack!", Color3.fromRGB(255,80,80))
+                return false
+            end
+            t = found2; k.tool = t
+        end
+        _mutLog("🤲 Hold → submit: "..k.name.." age="..k.level.." ("..k.uuid:sub(1,8)..")", Color3.fromRGB(120,180,120))
+        pcall(function() hum:EquipTool(t) end); task.wait(0.4)
+        if t.Parent ~= char then
+            pcall(function() hum:EquipTool(t) end); task.wait(0.4)
+        end
+        return true
+    end
+
     if not skipSubmit then
-        -- pastikan mesin kosong (tidak ada pet di dalamnya) sebelum submit
+        -- pastikan mesin kosong sebelum submit
         local existingPet = getMtsMachinePet()
         if existingPet then
-            -- cek timer: kalau masih running, tunggu dulu
             local timerExist = getMtsMachineTimer()
-            local secsExist  = _mutParseTimer(timerExist or "")
-            if secsExist and secsExist > 0 then
-                _mutLog("⏳ Mesin masih running ("..existingPet..") "..secsExist.."s, tunggu selesai...", Color3.fromRGB(255,200,60))
-                _mutWaitDone()
-                if not _mutState.running then return false end
-            elseif getMtsMachinePet() then
-                -- timer nil tapi pet masih ada — sudah selesai, langsung claim
-                _mutLog("ℹ Mesin selesai ("..existingPet.."), langsung claim...", Color3.fromRGB(200,140,255))
+            if timerExist and timerExist:upper():find("READY") then
+                _mutLog("ℹ Mesin READY ("..existingPet.."), langsung claim...", Color3.fromRGB(200,140,255))
             else
-                -- tidak ada pet, lanjut langsung
-                existingPet = nil
+                local secsExist = _mutParseTimer(timerExist or "")
+                if secsExist and secsExist > 0 then
+                    _mutLog("⏳ Mesin masih running ("..existingPet..") "..secsExist.."s, tunggu...", Color3.fromRGB(255,200,60))
+                    _mutWaitDone()
+                    if not _mutState.running then return false end
+                end
             end
-            -- claim pet yang ada di mesin sebelum mulai siklus baru
             _mutLog("🎁 Claim sisa mesin sebelumnya...", Color3.fromRGB(200,140,255))
             pcall(function() RE_mut:FireServer("ClaimMutatedPet") end)
             task.wait(2)
-            -- verifikasi pet sudah keluar (max 10s)
             local clearWait = 0
             while _mutState.running and clearWait < 10 do
-                local stillPet = getMtsMachinePet()
-                if not stillPet then
-                    _mutLog("✓ Mesin bersih, siap siklus baru", Color3.fromRGB(60,200,80))
-                    break
+                if not getMtsMachinePet() then
+                    _mutLog("✓ Mesin bersih, siap siklus baru", Color3.fromRGB(60,200,80)); break
                 end
                 task.wait(2); clearWait = clearWait + 2
             end
             if not _mutState.running then return false end
         end
 
-        -- hold 1 pet age>=500 ke tangan (hum:EquipTool) sebelum SubmitHeldPet
-        -- syarat: age>=500, BUKAN bagian dari pool MTS S1/S2 atau _activeUuids
-        do
-            -- bangun set UUID yang "dilindungi" (jangan disubmit ke mesin)
-            local protected = {}
-            if _mutPool then
-                for _, p in pairs(_mutPool) do
-                    for u in pairs(p) do
-                        local uclean = tostring(u):gsub("[{}]","")
-                        protected[uclean] = true
-                        protected["{"..uclean.."}"] = true
-                    end
-                end
-            end
-            for u in pairs(_activeUuids or {}) do
-                local uclean = tostring(u):gsub("[{}]","")
-                protected[uclean] = true; protected["{"..uclean.."}"] = true
-            end
-            local char = plr.Character
-            local hum  = char and char:FindFirstChildOfClass("Humanoid")
-            local bp   = plr:FindFirstChild("Backpack")
-            local c2   = _kgContainer  -- bisa nil, ada fallback di bawah
-            local found = false
-            if hum then
-                -- scan backpack + character (konsisten sama getMtsPets)
-                local scan = {}
-                if bp then for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
-                if char then for _,t in ipairs(char:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
-                for _,t in ipairs(scan) do
-                    local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
-                    if uuid then
-                        local uclean = tostring(uuid):gsub("[{}]","")
-                        if not protected[uclean] and not protected["{"..uclean.."}"] then
-                            -- 1) dari container (paling akurat)
-                            local lv = nil
-                            if c2 then
-                                local key = "{"..uclean.."}"
-                                local e = c2[key]
-                                if type(e)=="table" and e.PetData then
-                                    lv = tonumber(e.PetData.Level)
-                                end
-                            end
-                            -- 2) fallback atribut Tool (kalau container nil/missing)
-                            if lv == nil then
-                                lv = tonumber(t:GetAttribute("Level"))
-                                    or tonumber(t:GetAttribute("Age"))
-                                    or tonumber(t:GetAttribute("age"))
-                                    or tonumber(t:GetAttribute("level"))
-                            end
-                            -- 3) masih nil → skip (tidak tahu umurnya, jangan submit sembarangan)
-                            if lv and lv >= 500 then
-                                local nm = tostring(t:GetAttribute("PetType") or t.Name or ""):sub(1,30)
-                                _mutLog("🤲 Hold → submit: "..nm.." age="..lv.." ("..uclean:sub(1,8)..")", Color3.fromRGB(120,180,120))
-                                pcall(function() hum:EquipTool(t) end); task.wait(0.4)
-                                if t.Parent ~= char then
-                                    pcall(function() hum:EquipTool(t) end); task.wait(0.4)
-                                end
-                                found = true
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-            if not found then
-                _mutLog("⚠ Tidak ada pet age>=500 bebas untuk submit!", Color3.fromRGB(255,80,80))
-                return false
-            end
-        end
+        -- hold kandidat pertama ke tangan
+        if not _holdNextKandidat() then return false end
 
         local pp = _mutGetPP()
         if not pp then
