@@ -1,4 +1,4 @@
--- uplevelnew v8.437 — skip UUID tim MTS dari gift + fix isFavP pakai d=true
+-- uplevelnew v8.438 — getMtsPets: skip favorit (d=true) + skip tim auto lvl (sesiPool)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.437"
+local VERSION = "v8.438"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7222,6 +7222,14 @@ local function getMtsPets()
     for uuid in pairs(_G.ZenxSupportUuids or {}) do _prot(uuid) end
     for uuid in pairs(_G.ZenxSupportKunci or {}) do _prot(uuid) end
     for uuid in pairs(_G.__ZenxSupProtect or {}) do _prot(uuid) end
+    -- v8.438: tambah sesiPool (tim auto lvl) ke protected
+    for _, pool in pairs(sesiPool) do
+        for _, slots in pairs(pool) do
+            for _, entry in pairs(slots) do
+                if entry and entry.uuid then _prot(entry.uuid) end
+            end
+        end
+    end
     -- scan backpack + character (konsisten sama petsLolos di TRADE tab)
     local scan = {}
     local bp = plr:FindFirstChild("Backpack")
@@ -7231,8 +7239,8 @@ local function getMtsPets()
         local uuid = t:GetAttribute("PET_UUID") or t:GetAttribute("uuid")
         if uuid then
             local uStr = tostring(uuid):gsub("[{}]","")
-            -- skip pet lineup MTS / pet di kebun
-            if not protected[uStr] and not protected["{"..uStr.."}"] then
+            -- skip pet lineup MTS / pet di kebun / pet favorit (d=true)
+            if not protected[uStr] and not protected["{"..uStr.."}"] and t:GetAttribute("d") ~= true then
                 local age = nil
                 -- 1) dari container (paling akurat)
                 if c then
