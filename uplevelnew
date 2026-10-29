@@ -1,7 +1,8 @@
--- uplevelnew v8.443 — CD watchdog GUI: tampilkan event baru masuk ke cache realtime
+-- uplevelnew v8.444 — CD watchdog scan 1s, pickup langsung tanpa threshold age
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.444: scan interval 1s, pickup langsung saat stale/no-event (hapus age>4 threshold)
 -- v8.443: GUI CD Watch tampilkan event baru masuk cache (READY/ON-CD) realtime per event
 -- v8.442: CD watchdog deteksi cache stale >8s (event berhenti fire = bug CD hilang)
 -- v8.441: CD watchdog GUI floating kanan atas, copy all, monitor no event per pet
@@ -154,7 +155,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.443"
+local VERSION = "v8.444"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2937,7 +2938,7 @@ do
     task.spawn(function()
         task.wait(5)  -- tunggu sistem stable
         while true do
-            task.wait(4)
+            task.wait(1)
             if _isTransisi or _isCollecting then continue end
             if not running then continue end
             local now = tick()
@@ -2949,17 +2950,16 @@ do
                 n = n + 1
                 local key = tostring(uuid):gsub("[{}]","")
                 if not _cdFirstSeen[key] then _cdFirstSeen[key] = now end
-                local age = now - _cdFirstSeen[key]
                 local lastReeq = _cdReequipCooldown[key] or 0
                 -- cek: cache nil ATAU cache stale >8s (event berhenti fire)
                 local ce = _cdCache[key]
                 local cacheStale = ce and (now - ce.at) > 8
                 local hasEvent = ce ~= nil and not cacheStale
                 if not hasEvent then noEvt = noEvt + 1 end
-                -- no event / stale setelah 4s → pickup
-                if not hasEvent and age > 4 and (now - lastReeq) > 20 then
+                -- no event / stale → langsung pickup (no age threshold)
+                if not hasEvent and (now - lastReeq) > 20 then
                     local reason = ce and "stale" or "nil"
-                    cdLog(string.format("[CD-WATCH] %s %s %.0fs → pickup", key:sub(1,8), reason, age), Color3.fromRGB(255,80,80))
+                    cdLog(string.format("[CD-WATCH] %s %s → pickup", key:sub(1,8), reason), Color3.fromRGB(255,80,80))
                     _cdReequipCooldown[key] = now
                     _cdFirstSeen[key] = now
                     task.spawn(function()
