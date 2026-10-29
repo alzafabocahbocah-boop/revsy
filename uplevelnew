@@ -1,7 +1,8 @@
--- uplevelnew v8.440 — CD watchdog: scan 4s, no event langsung pickup (fix CD hilang bug)
+-- uplevelnew v8.441 — CD watchdog: GUI floating kanan atas monitor no event per pet
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.441: CD watchdog GUI floating kanan atas, copy all, monitor no event per pet
 -- v8.440: CD watchdog scan 4s — no event langsung pickup (fix CD hilang bug)
 -- v8.439: CD watchdog awal (threshold 20s) — diganti v8.440
 -- v8.438: getMtsPets skip favorit (d=true) + skip tim auto lvl (sesiPool)
@@ -151,7 +152,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.440"
+local VERSION = "v8.441"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2800,6 +2801,114 @@ do
     -- Bug: PetCooldownsUpdated tidak fire untuk pet tertentu → cdCache nil → swap salah
     local _cdFirstSeen = {}       -- key → tick() pertama kali terdeteksi di kebun
     local _cdReequipCooldown = {} -- key → tick() terakhir re-equip (hindari loop)
+    local _cdWatchLog = {}        -- log lines untuk GUI
+
+    -- ── GUI CD WATCHDOG (floating, kanan atas) ──
+    local _cdGui do
+        local pg = plr:FindFirstChild("PlayerGui")
+        if pg then
+            -- hapus kalau sudah ada (reload script)
+            local old = pg:FindFirstChild("ZenxCDWatch")
+            if old then old:Destroy() end
+
+            local sg = Instance.new("ScreenGui")
+            sg.Name = "ZenxCDWatch"
+            sg.ResetOnSpawn = false
+            sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+            pcall(function() sg.Parent = (gethui and gethui()) or pg end)
+            if not sg.Parent then sg.Parent = pg end
+
+            local fr = Instance.new("Frame")
+            fr.Size = UDim2.new(0, 260, 0, 200)
+            fr.Position = UDim2.new(1, -268, 0, 8)
+            fr.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+            fr.BackgroundTransparency = 0.15
+            fr.BorderSizePixel = 0
+            fr.Active = true; fr.Draggable = true
+            fr.Parent = sg
+            Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 7)
+
+            local titleLbl = Instance.new("TextLabel")
+            titleLbl.Size = UDim2.new(1, -70, 0, 26)
+            titleLbl.Position = UDim2.new(0, 6, 0, 0)
+            titleLbl.BackgroundTransparency = 1
+            titleLbl.Text = "🛡 CD Watch"
+            titleLbl.TextColor3 = Color3.fromRGB(255, 220, 60)
+            titleLbl.Font = Enum.Font.GothamBold
+            titleLbl.TextSize = 12
+            titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+            titleLbl.Parent = fr
+
+            local copyBtn = Instance.new("TextButton")
+            copyBtn.Size = UDim2.new(0, 62, 0, 22)
+            copyBtn.Position = UDim2.new(1, -66, 0, 2)
+            copyBtn.BackgroundColor3 = Color3.fromRGB(40, 100, 200)
+            copyBtn.Text = "Copy All"
+            copyBtn.TextColor3 = Color3.fromRGB(255,255,255)
+            copyBtn.Font = Enum.Font.GothamBold
+            copyBtn.TextSize = 11
+            copyBtn.BorderSizePixel = 0
+            copyBtn.Parent = fr
+            Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 5)
+
+            local scroll = Instance.new("ScrollingFrame")
+            scroll.Size = UDim2.new(1, -6, 1, -30)
+            scroll.Position = UDim2.new(0, 3, 0, 27)
+            scroll.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+            scroll.BackgroundTransparency = 0.3
+            scroll.BorderSizePixel = 0
+            scroll.ScrollBarThickness = 3
+            scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+            scroll.CanvasSize = UDim2.new(0,0,0,0)
+            scroll.Parent = fr
+            Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 5)
+            local layout = Instance.new("UIListLayout")
+            layout.Padding = UDim.new(0, 1)
+            layout.Parent = scroll
+            local pad = Instance.new("UIPadding")
+            pad.PaddingLeft = UDim.new(0,3); pad.PaddingTop = UDim.new(0,2)
+            pad.Parent = scroll
+
+            local MAX_GUI = 60
+            local function addCdLine(txt, col)
+                col = col or Color3.fromRGB(200,200,200)
+                local ts = string.format("[%d]", math.floor(tick()%10000))
+                local full = ts.." "..txt
+                table.insert(_cdWatchLog, full)
+                if #_cdWatchLog > MAX_GUI then table.remove(_cdWatchLog,1) end
+                local lbl = Instance.new("TextLabel")
+                lbl.Size = UDim2.new(1,0,0,15)
+                lbl.AutomaticSize = Enum.AutomaticSize.Y
+                lbl.BackgroundTransparency = 1
+                lbl.Text = full
+                lbl.TextColor3 = col
+                lbl.Font = Enum.Font.Code
+                lbl.TextSize = 10
+                lbl.TextXAlignment = Enum.TextXAlignment.Left
+                lbl.TextWrapped = true
+                lbl.Parent = scroll
+                local kids = scroll:GetChildren()
+                local lbls = {}
+                for _,c in ipairs(kids) do if c:IsA("TextLabel") then table.insert(lbls,c) end end
+                if #lbls > MAX_GUI then lbls[1]:Destroy() end
+                task.defer(function() scroll.CanvasPosition = Vector2.new(0, math.huge) end)
+            end
+
+            copyBtn.MouseButton1Click:Connect(function()
+                pcall(function() setclipboard(table.concat(_cdWatchLog,"\n")) end)
+                copyBtn.Text = "Copied!"
+                task.delay(1.5, function() copyBtn.Text = "Copy All" end)
+            end)
+
+            _cdGui = addCdLine
+            addCdLine("CD Watch aktif — scan 4s", Color3.fromRGB(80,255,120))
+        end
+    end
+    local function cdLog(txt, col)
+        addLog(txt)
+        if _cdGui then pcall(_cdGui, txt, col) end
+    end
+
     task.spawn(function()
         task.wait(5)  -- tunggu sistem stable
         while true do
@@ -2809,16 +2918,21 @@ do
             local now = tick()
             local mbu = modelByUuid
             if type(mbu) ~= "table" then continue end
+            -- update status tiap pet di GUI
+            local n, noEvt = 0, 0
             for uuid in pairs(mbu) do
+                n = n + 1
                 local key = tostring(uuid):gsub("[{}]","")
                 if not _cdFirstSeen[key] then _cdFirstSeen[key] = now end
                 local age = now - _cdFirstSeen[key]
                 local lastReeq = _cdReequipCooldown[key] or 0
+                local hasEvent = _cdCache[key] ~= nil
+                if not hasEvent then noEvt = noEvt + 1 end
                 -- no event setelah 4s → pickup (unequip+equip ulang)
-                if _cdCache[key] == nil and age > 4 and (now - lastReeq) > 20 then
-                    addLog(string.format("[CD-WATCH] %s no event %.0fs → pickup", key:sub(1,8), age))
+                if not hasEvent and age > 4 and (now - lastReeq) > 20 then
+                    cdLog(string.format("[CD-WATCH] %s no event %.0fs → pickup", key:sub(1,8), age), Color3.fromRGB(255,80,80))
                     _cdReequipCooldown[key] = now
-                    _cdFirstSeen[key] = now  -- reset timer setelah re-equip
+                    _cdFirstSeen[key] = now
                     task.spawn(function()
                         if not running or _isTransisi or _isCollecting then return end
                         pcall(function() unequipPet(uuid) end)
@@ -2826,6 +2940,10 @@ do
                         pcall(function() equipPet(uuid) end)
                     end)
                 end
+            end
+            if _cdGui then
+                local col = noEvt > 0 and Color3.fromRGB(255,180,60) or Color3.fromRGB(80,255,120)
+                pcall(_cdGui, string.format("scan: %d pet | no event: %d", n, noEvt), col)
             end
             -- cleanup uuid yang sudah tidak di kebun
             for key in pairs(_cdFirstSeen) do
