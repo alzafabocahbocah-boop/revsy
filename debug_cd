@@ -1,0 +1,227 @@
+-- debug_cd — monitor PetCooldownsUpdated events
+-- GUI: log semua CD event masuk, ready/oncd/nil, + Copy All
+
+local RS = game:GetService("ReplicatedStorage")
+local plr = game.Players.LocalPlayer
+
+-- ===================== HELPER =====================
+local function readyDariData(data)
+    if type(data) ~= "table" then return nil end
+    local adaSkill = false
+    for _, v in ipairs(data) do
+        if type(v) == "table" and type(v.Time) == "number" then
+            local p = tostring(v.Passive or ""):lower()
+            if not p:find("mutation") then
+                adaSkill = true
+                if v.Time <= 0 then return true end
+            end
+        end
+    end
+    if adaSkill then return false end
+    return nil
+end
+
+local function getPetTipe(uuid)
+    local key = tostring(uuid):gsub("[{}]","")
+    -- coba dari _kgContainer global
+    local kgc = _G.__ZenxKgContainer or _G._kgContainer
+    if type(kgc) == "table" then
+        local e = kgc["{"..key.."}"] or kgc[key]
+        if type(e) == "table" then
+            local pt = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+            if pt ~= "" then return pt end
+        end
+    end
+    -- coba dari workspace model
+    local pp = workspace:FindFirstChild("PetsPhysical")
+    if pp then
+        local m = pp:FindFirstChild("{"..key.."}") or pp:FindFirstChild(key)
+        if m then return tostring(m:GetAttribute("PetType") or m.Name) end
+    end
+    return key:sub(1,8)
+end
+
+-- ===================== GUI =====================
+local sg = Instance.new("ScreenGui")
+sg.Name = "DebugCD"
+sg.ResetOnSpawn = false
+sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+sg.Parent = plr.PlayerGui
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 420, 0, 340)
+frame.Position = UDim2.new(0.5, -210, 0.5, -170)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = sg
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = frame
+
+-- title bar
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -90, 0, 32)
+title.Position = UDim2.new(0, 8, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "🔍 CD Debug Monitor"
+title.TextColor3 = Color3.fromRGB(255, 220, 80)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 13
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = frame
+
+-- copy all button
+local copyBtn = Instance.new("TextButton")
+copyBtn.Size = UDim2.new(0, 80, 0, 26)
+copyBtn.Position = UDim2.new(1, -88, 0, 3)
+copyBtn.BackgroundColor3 = Color3.fromRGB(40, 100, 200)
+copyBtn.Text = "Copy All"
+copyBtn.TextColor3 = Color3.fromRGB(255,255,255)
+copyBtn.Font = Enum.Font.GothamBold
+copyBtn.TextSize = 12
+copyBtn.BorderSizePixel = 0
+copyBtn.Parent = frame
+Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 5)
+
+-- clear button
+local clearBtn = Instance.new("TextButton")
+clearBtn.Size = UDim2.new(0, 50, 0, 26)
+clearBtn.Position = UDim2.new(1, -140, 0, 3)
+clearBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
+clearBtn.Text = "Clear"
+clearBtn.TextColor3 = Color3.fromRGB(255,255,255)
+clearBtn.Font = Enum.Font.GothamBold
+clearBtn.TextSize = 12
+clearBtn.BorderSizePixel = 0
+clearBtn.Parent = frame
+Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 5)
+
+-- scroll frame
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -8, 1, -38)
+scroll.Position = UDim2.new(0, 4, 0, 34)
+scroll.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 4
+scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80)
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.Parent = frame
+Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 6)
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 2)
+layout.Parent = scroll
+
+local padding = Instance.new("UIPadding")
+padding.PaddingLeft = UDim.new(0, 4)
+padding.PaddingRight = UDim.new(0, 4)
+padding.PaddingTop = UDim.new(0, 4)
+padding.Parent = scroll
+
+-- ===================== LOG =====================
+local logLines = {}
+local MAX_LINES = 200
+
+local function addLine(txt, color)
+    color = color or Color3.fromRGB(200, 200, 200)
+    local ts = string.format("[%d]", math.floor(tick() % 10000))
+    local full = ts .. " " .. txt
+    table.insert(logLines, full)
+    if #logLines > MAX_LINES then table.remove(logLines, 1) end
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 0, 18)
+    lbl.AutomaticSize = Enum.AutomaticSize.Y
+    lbl.BackgroundTransparency = 1
+    lbl.Text = full
+    lbl.TextColor3 = color
+    lbl.Font = Enum.Font.Code
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextWrapped = true
+    lbl.Parent = scroll
+
+    -- trim lama kalau kebanyakan
+    local kids = scroll:GetChildren()
+    local lbls = {}
+    for _, c in ipairs(kids) do if c:IsA("TextLabel") then table.insert(lbls, c) end end
+    if #lbls > MAX_LINES then lbls[1]:Destroy() end
+
+    -- auto scroll bawah
+    task.defer(function()
+        scroll.CanvasPosition = Vector2.new(0, math.huge)
+    end)
+end
+
+-- copy all
+copyBtn.MouseButton1Click:Connect(function()
+    local all = table.concat(logLines, "\n")
+    setclipboard(all)
+    copyBtn.Text = "Copied!"
+    task.delay(1.5, function() copyBtn.Text = "Copy All" end)
+end)
+
+-- clear
+clearBtn.MouseButton1Click:Connect(function()
+    for _, c in ipairs(scroll:GetChildren()) do
+        if c:IsA("TextLabel") then c:Destroy() end
+    end
+    logLines = {}
+    addLine("-- cleared --", Color3.fromRGB(100,100,100))
+end)
+
+-- ===================== LISTENER =====================
+local ge = RS:FindFirstChild("GameEvents")
+local pcu = ge and ge:FindFirstChild("PetCooldownsUpdated")
+local req = ge and ge:FindFirstChild("RequestPetCooldowns")
+
+if not pcu then
+    addLine("❌ PetCooldownsUpdated NOT FOUND", Color3.fromRGB(255,80,80))
+else
+    addLine("✅ listener ON — waiting events...", Color3.fromRGB(80,255,120))
+    pcu.OnClientEvent:Connect(function(uuid, data)
+        local key = tostring(uuid):gsub("[{}]","")
+        local rdy = readyDariData(data)
+        local tipe = getPetTipe(key)
+
+        -- warna berdasarkan status
+        local status, color
+        if rdy == true then
+            status = "READY ✅"
+            color = Color3.fromRGB(80, 255, 120)
+        elseif rdy == false then
+            -- ambil timer dari data
+            local minTime = math.huge
+            if type(data) == "table" then
+                for _, v in ipairs(data) do
+                    if type(v) == "table" and type(v.Time) == "number" then
+                        local p = tostring(v.Passive or ""):lower()
+                        if not p:find("mutation") and v.Time > 0 then
+                            if v.Time < minTime then minTime = v.Time end
+                        end
+                    end
+                end
+            end
+            local timerStr = minTime < math.huge and string.format(" (%.1fs)", minTime) or ""
+            status = "ON-CD ⏳" .. timerStr
+            color = Color3.fromRGB(255, 180, 60)
+        else
+            status = "NIL ❓ (no skill data)"
+            color = Color3.fromRGB(180, 80, 255)
+        end
+
+        addLine(tipe .. " | " .. status, color)
+    end)
+
+    -- request refresh
+    if req and req:IsA("RemoteEvent") then
+        pcall(function() req:FireServer() end)
+        addLine("→ RequestPetCooldowns fired", Color3.fromRGB(100,100,100))
+    end
+end
+
+addLine("debug_cd ready", Color3.fromRGB(100,100,100))
