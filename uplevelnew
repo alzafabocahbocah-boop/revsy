@@ -1,4 +1,4 @@
--- uplevelnew v8.415 — fix _mutWaitDone: timer nil + pet ada → claim setelah 3x nil streak
+-- uplevelnew v8.416 — _mutWaitDone: cek siap via getMtsMachinePet() nil, bukan parse timer
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.415"
+local VERSION = "v8.416"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6764,24 +6764,27 @@ local _mutCurrentDef = nil   -- def lineup yang sedang aktif di MTS
 local _mutCurrentSesi = 1   -- sesiNum yang sedang aktif (untuk enforce)
 
 local function _mutWaitDone()
-    -- poll getMtsMachineTimer() langsung (tidak pakai timerLbl agar tidak stale)
+    -- cek siap/ready via getMtsMachinePet(): nil = mesin kosong = siap
+    -- timer hanya untuk logging sisa waktu
     local lastLog = -1
-    local nilStreak = 0  -- hitung berapa kali timer nil berturut-turut
     while _mutState.running do
-        local txt = getMtsMachineTimer()
-        local secs = _mutParseTimer(txt or "")
-        if not secs or secs <= 0 then
-            -- timer nil/0 = selesai → langsung return (claim dilakukan di caller)
-            _mutLog("✓ Mesin SIAP! (timer habis)", Color3.fromRGB(60,200,80))
+        local pet = getMtsMachinePet()
+        if not pet then
+            _mutLog("✓ Mesin SIAP! (pet keluar)", Color3.fromRGB(60,200,80))
             return
         end
-        nilStreak = 0
-        -- log tiap menit
-        local menit = math.floor(secs/60)
-        if menit ~= lastLog then
-            lastLog = menit
-            _mutLog(string.format("⏳ Mesin running... sisa %d:%02d", menit, secs%60),
-                Color3.fromRGB(255,200,60))
+        -- log sisa waktu tiap menit
+        local txt = getMtsMachineTimer()
+        local secs = _mutParseTimer(txt or "")
+        if secs and secs > 0 then
+            local menit = math.floor(secs/60)
+            if menit ~= lastLog then
+                lastLog = menit
+                _mutLog(string.format("⏳ Mesin running... sisa %d:%02d (%s)", menit, secs%60, pet), Color3.fromRGB(255,200,60))
+            end
+        else
+            -- timer nil/0 tapi pet masih ada → timer habis, tunggu pet keluar
+            _mutLog("⏳ Timer habis, tunggu pet keluar ("..pet..")...", Color3.fromRGB(255,200,60))
         end
         task.wait(3)
     end
