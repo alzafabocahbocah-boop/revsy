@@ -1,7 +1,8 @@
--- uplevelnew v8.441 — CD watchdog: GUI floating kanan atas monitor no event per pet
+-- uplevelnew v8.442 — CD watchdog: deteksi cache stale >8s (event berhenti fire)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.442: CD watchdog deteksi cache stale >8s (event berhenti fire = bug CD hilang)
 -- v8.441: CD watchdog GUI floating kanan atas, copy all, monitor no event per pet
 -- v8.440: CD watchdog scan 4s — no event langsung pickup (fix CD hilang bug)
 -- v8.439: CD watchdog awal (threshold 20s) — diganti v8.440
@@ -152,7 +153,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.441"
+local VERSION = "v8.442"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2926,11 +2927,15 @@ do
                 if not _cdFirstSeen[key] then _cdFirstSeen[key] = now end
                 local age = now - _cdFirstSeen[key]
                 local lastReeq = _cdReequipCooldown[key] or 0
-                local hasEvent = _cdCache[key] ~= nil
+                -- cek: cache nil ATAU cache stale >8s (event berhenti fire)
+                local ce = _cdCache[key]
+                local cacheStale = ce and (now - ce.at) > 8
+                local hasEvent = ce ~= nil and not cacheStale
                 if not hasEvent then noEvt = noEvt + 1 end
-                -- no event setelah 4s → pickup (unequip+equip ulang)
+                -- no event / stale setelah 4s → pickup
                 if not hasEvent and age > 4 and (now - lastReeq) > 20 then
-                    cdLog(string.format("[CD-WATCH] %s no event %.0fs → pickup", key:sub(1,8), age), Color3.fromRGB(255,80,80))
+                    local reason = ce and "stale" or "nil"
+                    cdLog(string.format("[CD-WATCH] %s %s %.0fs → pickup", key:sub(1,8), reason, age), Color3.fromRGB(255,80,80))
                     _cdReequipCooldown[key] = now
                     _cdFirstSeen[key] = now
                     task.spawn(function()
