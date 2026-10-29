@@ -1,4 +1,4 @@
--- uplevelnew v8.414 — mtsLogScroll: hapus auto-scroll ke bawah, biar user scroll manual
+-- uplevelnew v8.415 — fix _mutWaitDone: timer nil + pet ada → claim setelah 3x nil streak
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.414"
+local VERSION = "v8.415"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6771,21 +6771,9 @@ local function _mutWaitDone()
         local txt = getMtsMachineTimer()
         local secs = _mutParseTimer(txt or "")
         if not secs or secs <= 0 then
-            -- timer nil/0: cek apakah pet masih di mesin
-            local stillPet = getMtsMachinePet()
-            if stillPet then
-                -- timer gagal dibaca tapi pet masih ada → tunggu, jangan return dulu
-                nilStreak = nilStreak + 1
-                if nilStreak == 1 or nilStreak % 5 == 0 then
-                    _mutLog("⏳ Timer nil tapi pet masih di mesin ("..stillPet.."), tunggu...", Color3.fromRGB(255,200,60))
-                end
-                task.wait(3)
-                continue  -- jangan return
-            else
-                -- benar-benar kosong
-                _mutLog("✓ Mesin SIAP!", Color3.fromRGB(60,200,80))
-                return
-            end
+            -- timer nil/0 = selesai → langsung return (claim dilakukan di caller)
+            _mutLog("✓ Mesin SIAP! (timer habis)", Color3.fromRGB(60,200,80))
+            return
         end
         nilStreak = 0
         -- log tiap menit
