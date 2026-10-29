@@ -1,7 +1,8 @@
--- uplevelnew v8.449 — hapus GUI CD Watch (tidak dipakai, CD watch disabled)
+-- uplevelnew v8.450 — fix gift error: cek targetPlayer.Parent sebelum FireServer
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.450: fix gift error barrier nil — cek targetPlayer.Parent sebelum FireServer (player disconnect)
 -- v8.449: hapus GUI CD Watch floating (tidak dipakai, CD watch sudah disabled)
 -- v8.448: disable sementara CD watchdog pickup + GUI event notif + T-Rex swap Eat (flag false)
 -- v8.447: auto-pick pool S1 kalau kosong sebelum start (cegah equip Gremlin/random)
@@ -159,7 +160,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.449"
+local VERSION = "v8.450"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7700,8 +7701,18 @@ mtsGiftOne = function(targetPlayer, petEntry)
         mtsAddGiftLog("✗ gift gagal: giftRE nil (PetGiftingService tidak ditemukan)", Color3.fromRGB(255,80,80))
         _cleanup(); return false
     end
+    -- v8.450: cek target masih online (Parent nil = sudah disconnect → barrier nil crash)
+    if not targetPlayer.Parent then
+        mtsAddGiftLog("✗ gift skip: "..tostring(targetPlayer.Name).." sudah disconnect", Color3.fromRGB(255,140,60))
+        _cleanup(); return false
+    end
     if MtsGift.pgs and MtsGift.pgs.GivePet then pcall(function()MtsGift.pgs.GivePet(targetPlayer)end); task.wait(0.3) end
     if petTool.Parent and MtsGift.giftRE then
+        -- cek ulang sebelum fire (bisa disconnect saat task.wait di atas)
+        if not targetPlayer.Parent then
+            mtsAddGiftLog("✗ gift skip (post-wait): "..tostring(targetPlayer.Name).." disconnect", Color3.fromRGB(255,140,60))
+            _cleanup(); return false
+        end
         local function _fmt(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.."}" end; return s end
         local ok5,e5=pcall(function()MtsGift.giftRE:FireServer("GivePet",targetPlayer,_fmt(petEntry.uuid))end)
         if not ok5 then mtsAddGiftLog("✗ giftRE:FireServer error: "..tostring(e5):sub(1,60), Color3.fromRGB(255,80,80)) end
