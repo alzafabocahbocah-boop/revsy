@@ -1,4 +1,4 @@
--- uplevelnew v8.430 — getMtsMachinePet: skip HitBox & non-Model, hanya return nama pet valid
+-- uplevelnew v8.431 — retry submit kalau mesin masih kosong setelah StartMachine
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.430"
+local VERSION = "v8.431"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6949,30 +6949,57 @@ local function _mutDoSiklus(skipSubmit)
             if not _mutState.running then return false end
         end
 
-        -- hold kandidat pertama ke tangan
-        if not _holdNextKandidat() then return false end
+        -- v8.431: loop retry submit sampai pet benar-benar masuk mesin
+        local submitOk = false
+        local submitTry = 0
+        while _mutState.running and not submitOk and submitTry < 5 do
+            submitTry = submitTry + 1
+            if submitTry > 1 then
+                _mutLog("🔄 Retry submit ke mesin... (try "..submitTry..")", Color3.fromRGB(255,200,60))
+                task.wait(2)
+            end
 
-        local pp = _mutGetPP()
-        if not pp then
-            _mutLog("✗ PP Mutation Machine tidak ditemukan!", Color3.fromRGB(255,80,80)); return false
+            -- hold kandidat ke tangan
+            if not _holdNextKandidat() then return false end
+
+            local pp = _mutGetPP()
+            if not pp then
+                _mutLog("✗ PP Mutation Machine tidak ditemukan!", Color3.fromRGB(255,80,80)); return false
+            end
+            _mutLog("[1/3] fireproximityprompt... (try "..submitTry..")", C.textDim)
+            local ok1 = pcall(fireproximityprompt, pp)
+            if not ok1 then _mutLog("✗ fireproximityprompt gagal", Color3.fromRGB(255,80,80)); task.wait(2); _kandidatIdx = _kandidatIdx - 1; continue end
+            task.wait(DELAY_MUT_PP)
+
+            _mutLog("[2/3] SubmitHeldPet...", C.textDim)
+            local ok2,e2 = pcall(function() RE_mut:FireServer("SubmitHeldPet") end)
+            if not ok2 then _mutLog("✗ SubmitHeldPet: "..tostring(e2), Color3.fromRGB(255,80,80)); task.wait(2); _kandidatIdx = _kandidatIdx - 1; continue end
+            task.wait(DELAY_MUT_STEP)
+
+            _mutLog("[3/3] StartMachine...", C.textDim)
+            local ok3,e3 = pcall(function() RE_mut:FireServer("StartMachine") end)
+            if not ok3 then _mutLog("✗ StartMachine: "..tostring(e3), Color3.fromRGB(255,80,80)); task.wait(2); _kandidatIdx = _kandidatIdx - 1; continue end
+            task.wait(DELAY_MUT_STEP)
+
+            -- cek apakah pet benar-benar masuk (tunggu max 5 detik)
+            local checkWait = 0
+            while checkWait < 5 do
+                local petNm = getMtsMachinePet()
+                if petNm then
+                    _mutLog("✓ Pet masuk mesin: "..petNm, Color3.fromRGB(78,214,204))
+                    submitOk = true; break
+                end
+                task.wait(1); checkWait = checkWait + 1
+            end
+            if not submitOk then
+                _mutLog("⚠ Pet tidak terdeteksi di mesin setelah submit (try "..submitTry..")", Color3.fromRGB(255,140,60))
+                _kandidatIdx = _kandidatIdx - 1  -- rollback idx supaya kandidat yang sama dicoba lagi
+            end
         end
-        _mutLog("[1/3] fireproximityprompt...", C.textDim)
-        local ok1 = pcall(fireproximityprompt, pp)
-        if not ok1 then _mutLog("✗ fireproximityprompt gagal", Color3.fromRGB(255,80,80)); return false end
-        task.wait(DELAY_MUT_PP)
-
-        _mutLog("[2/3] SubmitHeldPet...", C.textDim)
-        local ok2,e2 = pcall(function() RE_mut:FireServer("SubmitHeldPet") end)
-        if not ok2 then _mutLog("✗ SubmitHeldPet: "..tostring(e2), Color3.fromRGB(255,80,80)); return false end
-        task.wait(DELAY_MUT_STEP)
-
-        _mutLog("[3/3] StartMachine...", C.textDim)
-        local ok3,e3 = pcall(function() RE_mut:FireServer("StartMachine") end)
-        if not ok3 then _mutLog("✗ StartMachine: "..tostring(e3), Color3.fromRGB(255,80,80)); return false end
-        task.wait(DELAY_MUT_STEP)
-
-        local petNm = getMtsMachinePet() or "?"
-        _mutLog("✓ Pet masuk mesin: "..petNm, Color3.fromRGB(78,214,204))
+        if not submitOk then
+            _mutLog("✗ Gagal submit ke mesin setelah "..submitTry.." try", Color3.fromRGB(255,80,80))
+            return false
+        end
     end
 
     -- sesi 1: equip Mimic+Golem selama mesin running
