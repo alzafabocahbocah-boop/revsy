@@ -1,4 +1,4 @@
--- uplevelnew v8.405 — getMtsPets: exclude lineup auto lvl/trade (ZenxSupportUuids dll)
+-- uplevelnew v8.406 — auto-cancel dialog "Kirim Hewan Peliharaan ke Mesin Mutasi" tiap 2s
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.405"
+local VERSION = "v8.406"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2409,6 +2409,39 @@ task.spawn(function()
     end
     -- v8.248: gift popup 0.6s→1s, trade window 0.12s→1s
     task.spawn(function() while true do task.wait(1); pcall(acceptAllGiftPopups) end end)
+    -- v8.406: auto-cancel dialog "Kirim Hewan Peliharaan ke Mesin Mutasi" tiap 2s
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            pcall(function()
+                local pg = plr:FindFirstChild("PlayerGui")
+                if not pg then return end
+                for _,sg in ipairs(pg:GetDescendants()) do
+                    if sg:IsA("TextLabel") and (
+                        sg.Text:find("Mesin Mutasi") or
+                        sg.Text:find("Mutation Machine") or
+                        sg.Text:find("menyerahkan")
+                    ) then
+                        -- cari tombol Batalkan / Cancel di parent hierarchy
+                        local frame = sg.Parent
+                        for _=1,6 do
+                            if not frame then break end
+                            for _,child in ipairs(frame:GetDescendants()) do
+                                if child:IsA("TextButton") then
+                                    local t = child.Text:lower()
+                                    if t:find("batalkan") or t:find("cancel") then
+                                        pcall(function() child.MouseButton1Click:Fire() end)
+                                        return
+                                    end
+                                end
+                            end
+                            frame = frame.Parent
+                        end
+                    end
+                end
+            end)
+        end
+    end)
     while true do task.wait(1); pcall(autoAcceptTradeWindow) end
 end)
 
