@@ -2786,39 +2786,46 @@ do
         end
     end)
 
-    -- update loop tiap 0.5s
+    -- update loop tiap 0.5s — hitung langsung dari _kgContainer uplevelnew
     task.spawn(function()
         while sg2.Parent do
             -- shrink saat 10s setelah touch
             local s = (tick() - _lastTouch2 < 10) and 0.7 or 1.95
             if oscale2.Scale ~= s then oscale2.Scale = s end
 
-            local st = _G.ZenxKgStat or {}
-            -- kartu 1: total / max inventory
-            local tot = tonumber(st.totalAll) or 0
-            local mx  = tonumber(st.maxInv) or (_G.__ZenxMaxPetCache or 0)
-            if mx > 0 then
-                vInv.Text = string.format("%d<font color='#444455'>/%d</font>", tot, mx)
-            else
-                vInv.Text = tostring(tot)
-            end
+            pcall(function()
+                local c = _kgContainer
+                local tot, kg_m, kg_p, a500m, a500p = 0, 0, 0, 0, 0
+                if c then
+                    for _, entry in pairs(c) do
+                        if type(entry) == "table" and entry.PetData then
+                            tot = tot + 1
+                            local lv = tonumber(entry.PetData.Level) or 0
+                            local bw = tonumber(entry.PetData.BaseWeight) or 0
+                            -- kg current: bw*(lv+10)/10 (sama dengan uplevelnew)
+                            local kg = bw * (lv + 10) / 10
+                            if kg >= 6.0 then kg_p = kg_p + 1 else kg_m = kg_m + 1 end
+                            -- age 500
+                            if lv >= 500 then a500p = a500p + 1 else a500m = a500m + 1 end
+                        end
+                    end
+                end
 
-            -- kartu 2: 6kg- / 6kg+
-            local kg_m = tonumber(st.belum) or 0
-            local kg_p = tonumber(st.udah)  or 0
-            vKg.Text = string.format("%d<font color='#444455'>/%d</font>", kg_m, kg_p)
+                -- kartu 1: total / max inventory
+                local mx = _G.__ZenxMaxPetCache or 0
+                if mx > 0 then
+                    vInv.Text = string.format("%d<font color='#444455'>/%d</font>", tot, mx)
+                else
+                    vInv.Text = tostring(tot)
+                end
 
-            -- kartu 3 & 4: 500- / 500+ (dari _G.ZenxUpStat kalau ada, fallback hitung sendiri)
-            local up = _G.ZenxUpStat or {}
-            local a500m = tonumber(up.age500minus) or 0
-            local a500p = tonumber(up.age500plus)  or 0
-            -- fallback: coba ambil dari label stat yang sudah ada di main GUI
-            if a500m == 0 and a500p == 0 then
-                a500m = tonumber(age500minusL and age500minusL.Text) or 0
-                a500p = tonumber(age500plusL  and age500plusL.Text)  or 0
-            end
-            v500m.Text = tostring(a500m)
-            v500p.Text = tostring(a500p)
+                -- kartu 2: 6kg- / 6kg+
+                vKg.Text = string.format("%d<font color='#444455'>/%d</font>", kg_m, kg_p)
+
+                -- kartu 3 & 4: 500- / 500+
+                v500m.Text = tostring(a500m)
+                v500p.Text = tostring(a500p)
+            end)
 
             task.wait(0.5)
         end
