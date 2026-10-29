@@ -1,4 +1,4 @@
--- uplevelnew v8.436 — fix auto MTS re-exe: startMts tidak terdefinisi → balik off
+-- uplevelnew v8.437 — skip UUID tim MTS dari gift + fix isFavP pakai d=true
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.436"
+local VERSION = "v8.437"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4243,10 +4243,20 @@ do
                 end
             end
         end
+        -- v8.437: tambah UUID tim MTS (_mutPool) ke _poolUuids supaya tidak ikut di-gift
+        local mp = _G.MTS_POOL
+        if type(mp) == "table" then
+            for _, mpool in pairs(mp) do
+                if type(mpool) == "table" then
+                    for uuid in pairs(mpool) do
+                        local u = tostring(uuid); _poolUuids[u]=true; _poolUuids[fmtU(u)]=true
+                    end
+                end
+            end
+        end
         local function isFavP(t,uuid)
-            if uuid and c then local e=c[fmtU(uuid)] or c[tostring(uuid)]; if type(e)=="table" and type(e.PetData)=="table" and e.PetData.IsFavorite==true then return true end end
-            for _,attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do if t:GetAttribute(attr)==true then return true end end
-            return false
+            -- v8.437: d=true = favorit (dari debug attr Tool)
+            return t:GetAttribute("d") == true
         end
         local scan={}
         for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end
