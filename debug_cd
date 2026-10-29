@@ -1,4 +1,4 @@
--- debug_cd v2 — monitor PetCooldownsUpdated events + scan _activeUuids CD state
+-- debug_cd v6 — monitor PetCooldownsUpdated events + scan ZenxModelByUuid CD state
 
 local RS = game:GetService("ReplicatedStorage")
 local plr = game.Players.LocalPlayer
@@ -22,7 +22,6 @@ end
 
 local function getPetTipe(uuid)
     local key = tostring(uuid):gsub("[{}]","")
-    -- coba dari _kgContainer global
     local kgc = _G.__ZenxKgContainer or _G._kgContainer
     if type(kgc) == "table" then
         local e = kgc["{"..key.."}"] or kgc[key]
@@ -31,7 +30,6 @@ local function getPetTipe(uuid)
             if pt ~= "" then return pt end
         end
     end
-    -- coba dari workspace model
     local pp = workspace:FindFirstChild("PetsPhysical")
     if pp then
         local m = pp:FindFirstChild("{"..key.."}") or pp:FindFirstChild(key)
@@ -56,11 +54,8 @@ frame.Active = true
 frame.Draggable = true
 frame.Parent = sg
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = frame
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
--- title bar
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -90, 0, 32)
 title.Position = UDim2.new(0, 8, 0, 0)
@@ -72,7 +67,6 @@ title.TextSize = 13
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = frame
 
--- copy all button
 local copyBtn = Instance.new("TextButton")
 copyBtn.Size = UDim2.new(0, 80, 0, 26)
 copyBtn.Position = UDim2.new(1, -88, 0, 3)
@@ -85,7 +79,6 @@ copyBtn.BorderSizePixel = 0
 copyBtn.Parent = frame
 Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 5)
 
--- clear button
 local clearBtn = Instance.new("TextButton")
 clearBtn.Size = UDim2.new(0, 50, 0, 26)
 clearBtn.Position = UDim2.new(1, -140, 0, 3)
@@ -98,7 +91,6 @@ clearBtn.BorderSizePixel = 0
 clearBtn.Parent = frame
 Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 5)
 
--- scroll frame
 local scroll = Instance.new("ScrollingFrame")
 scroll.Size = UDim2.new(1, -8, 1, -38)
 scroll.Position = UDim2.new(0, 4, 0, 34)
@@ -144,19 +136,16 @@ local function addLine(txt, color)
     lbl.TextWrapped = true
     lbl.Parent = scroll
 
-    -- trim lama kalau kebanyakan
     local kids = scroll:GetChildren()
     local lbls = {}
     for _, c in ipairs(kids) do if c:IsA("TextLabel") then table.insert(lbls, c) end end
     if #lbls > MAX_LINES then lbls[1]:Destroy() end
 
-    -- auto scroll bawah
     task.defer(function()
         scroll.CanvasPosition = Vector2.new(0, math.huge)
     end)
 end
 
--- copy all
 copyBtn.MouseButton1Click:Connect(function()
     local all = table.concat(logLines, "\n")
     setclipboard(all)
@@ -164,7 +153,6 @@ copyBtn.MouseButton1Click:Connect(function()
     task.delay(1.5, function() copyBtn.Text = "Copy All" end)
 end)
 
--- clear
 clearBtn.MouseButton1Click:Connect(function()
     for _, c in ipairs(scroll:GetChildren()) do
         if c:IsA("TextLabel") then c:Destroy() end
@@ -172,6 +160,9 @@ clearBtn.MouseButton1Click:Connect(function()
     logLines = {}
     addLine("-- cleared --", Color3.fromRGB(100,100,100))
 end)
+
+-- ===================== STATE (di luar scope apapun) =====================
+local _lastStatus = {}  -- key=uuid, value=true/false/nil — HARUS di luar scope listener
 
 -- ===================== LISTENER =====================
 local ge = RS:FindFirstChild("GameEvents")
@@ -182,8 +173,6 @@ if not pcu then
     addLine("❌ PetCooldownsUpdated NOT FOUND", Color3.fromRGB(255,80,80))
 else
     addLine("✅ listener ON — waiting events...", Color3.fromRGB(80,255,120))
-    -- track per uuid: last status
-    local _lastStatus = {}
 
     pcu.OnClientEvent:Connect(function(uuid, data)
         local key = tostring(uuid):gsub("[{}]","")
@@ -191,7 +180,6 @@ else
         local tipe = getPetTipe(key)
         local shortUuid = key:sub(1,8)
 
-        -- warna berdasarkan status
         local status, color
         if rdy == true then
             status = "READY ✅"
@@ -216,17 +204,14 @@ else
             color = Color3.fromRGB(180, 80, 255)
         end
 
-        -- deteksi perubahan status per uuid
         local prev = _lastStatus[key]
         local changed = (prev ~= rdy)
         _lastStatus[key] = rdy
 
-        -- format: uuid | tipe | status [CHANGED]
         local changedMark = changed and " ◄CHANGE" or ""
         addLine(shortUuid .. " | " .. tipe .. " | " .. status .. changedMark,
             changed and Color3.fromRGB(255, 255, 80) or color)
 
-        -- raw data kalau NIL
         if rdy == nil then
             local parts = {}
             if type(data) == "table" then
@@ -243,7 +228,6 @@ else
         end
     end)
 
-    -- request refresh + auto retry tiap 5s
     if req and req:IsA("RemoteEvent") then
         pcall(function() req:FireServer() end)
         addLine("→ RequestPetCooldowns fired", Color3.fromRGB(100,100,100))
@@ -256,41 +240,40 @@ else
     end
 end
 
--- ===================== SCAN modelByUuid tiap 3s =====================
--- Baca _G.ZenxModelByUuid (di-expose uplevelnew) = semua pet yang model-nya ada di workspace
+-- ===================== SCAN ZenxModelByUuid tiap 3s =====================
+-- _lastStatus di-declare di luar scope listener, jadi bisa diakses di sini
 task.spawn(function()
     task.wait(2)
-    addLine("--- SCAN modelByUuid tiap 3s ---", Color3.fromRGB(100,100,100))
+    addLine("--- SCAN kebun tiap 3s ---", Color3.fromRGB(100,100,100))
     while true do
         task.wait(3)
         local modelByUuid = _G.ZenxModelByUuid
         if type(modelByUuid) ~= "table" then
             addLine("ZenxModelByUuid nil (uplevelnew belum jalan?)", Color3.fromRGB(255,100,100))
         else
-            -- snapshot dulu biar gak berubah saat iterate
-            -- satu loop: kumpulkan dulu ke array, baru log
-            local list = {}
-            for uuid, _ in pairs(modelByUuid) do
-                table.insert(list, tostring(uuid))
-            end
-            addLine(string.format("kebun: %d pet", #list), Color3.fromRGB(100, 150, 255))
-            for i, uuid in ipairs(list) do
-                local key = uuid:gsub("[{}]","")
-                local tipe = getPetTipe(key)
-                local lastS = _lastStatus[key]
-                local statusStr, col
-                if lastS == true then
-                    statusStr = "READY ✅"; col = Color3.fromRGB(80,255,120)
-                elseif lastS == false then
-                    statusStr = "ON-CD ⏳"; col = Color3.fromRGB(255,180,60)
-                else
-                    statusStr = "NO EVENT ❌"; col = Color3.fromRGB(255,80,80)
+            -- pakai next() langsung biar gak kena metatable issue
+            local n = 0
+            local k = next(modelByUuid, nil)
+            while k ~= nil do
+                n = n + 1
+                local ok, err = pcall(function()
+                    local key = tostring(k):gsub("[{}]","")
+                    local tipe = getPetTipe(key)
+                    local lastS = _lastStatus[key]
+                    local statusStr, col
+                    if lastS == true then statusStr="READY ✅"; col=Color3.fromRGB(80,255,120)
+                    elseif lastS == false then statusStr="ON-CD ⏳"; col=Color3.fromRGB(255,180,60)
+                    else statusStr="NO EVENT ❌"; col=Color3.fromRGB(255,80,80) end
+                    addLine(string.format("  [%d] %s | %s | %s", n, key:sub(1,8), tipe, statusStr), col)
+                end)
+                if not ok then
+                    addLine("  [err#"..n.."] " .. tostring(err):sub(1,50), Color3.fromRGB(255,80,80))
                 end
-                addLine(string.format("  [%d] %s | %s | %s", i, key:sub(1,8), tipe, statusStr), col)
+                k = next(modelByUuid, k)
             end
-            if #list == 0 then addLine("  (list kosong)", Color3.fromRGB(255,80,80)) end
+            addLine(string.format("kebun: %d pet", n), Color3.fromRGB(100, 150, 255))
         end
     end
 end)
 
-addLine("debug_cd v5 | uplevelnew v8.438", Color3.fromRGB(100,100,100))
+addLine("debug_cd v6 | uplevelnew v8.438", Color3.fromRGB(100,100,100))
