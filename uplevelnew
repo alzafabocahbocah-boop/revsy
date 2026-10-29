@@ -1,4 +1,4 @@
--- uplevelnew v8.438 — getMtsPets: skip favorit (d=true) + skip tim auto lvl (sesiPool)
+-- uplevelnew v8.439 — CD watchdog: re-equip pet yang no event >20s (fix CD hilang bug)
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -2793,6 +2793,47 @@ do
     if req2 and req2:IsA("RemoteEvent") then
         pcall(function() req2:FireServer() end)
     end
+    -- CD WATCHDOG: pet yang ada di kebun tapi tidak dapat event >20s → re-equip
+    -- Bug: PetCooldownsUpdated tidak fire untuk pet tertentu → cdCache stale → swap salah
+    local _cdFirstSeen = {}  -- uuid → tick() pertama kali terdeteksi di kebun
+    local _cdReequipCooldown = {}  -- uuid → tick() terakhir re-equip (hindari loop)
+    task.spawn(function()
+        task.wait(10)  -- tunggu sistem stable dulu
+        while true do
+            task.wait(10)
+            if _isTransisi or _isCollecting then continue end
+            local now = tick()
+            local mbu = modelByUuid
+            if type(mbu) ~= "table" then continue end
+            for uuid in pairs(mbu) do
+                local key = tostring(uuid):gsub("[{}]","")
+                -- track kapan pertama kali lihat pet ini
+                if not _cdFirstSeen[key] then _cdFirstSeen[key] = now end
+                local age = now - _cdFirstSeen[key]
+                local lastReeq = _cdReequipCooldown[key] or 0
+                -- kalau belum dapat event SAMA SEKALI setelah 20s, dan belum re-equip dalam 30s
+                if _cdCache[key] == nil and age > 20 and (now - lastReeq) > 30 then
+                    addLog(string.format("[CD-WATCH] %s no event %.0fs → re-equip", key:sub(1,8), age))
+                    _cdReequipCooldown[key] = now
+                    task.spawn(function()
+                        if not running or _isTransisi or _isCollecting then return end
+                        pcall(function() unequipPet(uuid) end)
+                        task.wait(1.5)
+                        pcall(function() equipPet(uuid) end)
+                    end)
+                end
+            end
+            -- bersihkan _cdFirstSeen untuk uuid yang sudah tidak ada di kebun
+            for key in pairs(_cdFirstSeen) do
+                local fmtU = "{"..key.."}"
+                if not mbu[fmtU] and not mbu[key] then
+                    _cdFirstSeen[key] = nil
+                    _cdCache[key] = nil
+                    _cdReequipCooldown[key] = nil
+                end
+            end
+        end
+    end)
     -- T-Rex: swap via CustomAnimationState "Eat" (DataStream ActivePets)
     task.spawn(function()
         local function tsLog(msg) addLog(msg) end
