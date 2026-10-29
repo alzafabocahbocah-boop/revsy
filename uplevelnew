@@ -1,7 +1,8 @@
--- uplevelnew v8.446 — CD watchdog scan 3s
+-- uplevelnew v8.447 — auto-pick pool S1 kalau kosong sebelum loopMutasi start
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.447: auto-pick pool S1 kalau kosong sebelum start (cegah equip Gremlin/random)
 -- v8.446: CD watchdog scan interval ganti ke 3s
 -- v8.445: hapus _mtsSaveAutoStart(false) dari _loopGift — re-exec tetap auto-start
 -- v8.443: GUI CD Watch tampilkan event baru masuk cache (READY/ON-CD) realtime per event
@@ -156,7 +157,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.446"
+local VERSION = "v8.447"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7294,6 +7295,22 @@ local mtsStopBtn=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=Colo
 local function _loopMutasi()
     _mutState.running = true; _G.ZenxMutRunning = true
     mutStatLbl.Text="⚙ mesin: start..."; mutStatLbl.TextColor3=Color3.fromRGB(180,120,255)
+
+    -- v8.447: auto-pick pool S1 kalau kosong sebelum swap lineup
+    -- (mencegah fallback ke auto-pick sembarangan yg bisa ambil Gremlin dll)
+    local pool1Count = 0
+    if _mutPool and _mutPool[1] then
+        for _ in pairs(_mutPool[1]) do pool1Count = pool1Count + 1 end
+    end
+    if pool1Count == 0 then
+        _mutLog("⚠ Pool S1 kosong — auto-pick sebelum start", Color3.fromRGB(255,200,60))
+        pcall(function()
+            local ok, det = pcall(_mutPickTim, 1, MTS_LINEUP_DEF, mutPickS1Status)
+            if ok and type(det)=="string" and #det>0 then
+                _mutLog("✓ Auto-pick S1: "..det:gsub("\n",", "), Color3.fromRGB(78,214,204))
+            end
+        end)
+    end
 
     -- background loop: enforce lineup tiap 3s (terpisah dari main flow)
     task.spawn(function()
