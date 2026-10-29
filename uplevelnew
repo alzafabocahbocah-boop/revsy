@@ -1,4 +1,4 @@
--- uplevelnew v8.431 — retry submit kalau mesin masih kosong setelah StartMachine
+-- uplevelnew v8.432 — cek pet di mesin tiap 2s selama running, retry submit kalau timeout kosong
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.431"
+local VERSION = "v8.432"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6768,40 +6768,43 @@ local _mutCurrentDef = nil   -- def lineup yang sedang aktif di MTS
 local _mutCurrentSesi = 1   -- sesiNum yang sedang aktif (untuk enforce)
 
 local function _mutWaitDone()
-    -- v8.429: cek siap via TimerTextLabel.Text == "READY"
-    -- exit kalau mesin kosong (getMtsMachinePet nil) DAN timer tidak valid (bukan sedang running)
+    -- v8.432: poll tiap 2s
+    -- return "ready"   → READY, siap claim
+    -- return "empty"   → pet nil (timer jalan maupun mati) → harus insert pet baru
+    -- return "stopped" → _mutState.running false
     local lastLog = -1
     local emptyCount = 0
     while _mutState.running do
         local txt = getMtsMachineTimer()
-        -- "READY" = mesin selesai, siap di-claim
         if txt and txt:upper():find("READY") then
             _mutLog("✓ Mesin READY! Siap di-claim", Color3.fromRGB(60,200,80))
-            return
+            return "ready"
         end
         local secs = _mutParseTimer(txt or "")
         local pet = getMtsMachinePet()
-        -- keluar hanya kalau pet nil DAN timer tidak jalan (secs nil/0)
-        if not pet and (not secs or secs <= 0) then
+        if not pet then
+            -- pet kosong (timer jalan atau mati) — konfirmasi 3x lalu insert baru
             emptyCount = emptyCount + 1
+            local timerInfo = (secs and secs > 0) and string.format("%d:%02d", math.floor(secs/60), secs%60) or "mati"
+            _mutLog(string.format("⚠ Pet kosong di mesin, timer=%s (%d/3)...", timerInfo, emptyCount), Color3.fromRGB(255,140,60))
             if emptyCount >= 3 then
-                _mutLog("⚠ Mesin kosong & timer tidak aktif ("..emptyCount.."x) — keluar dari wait", Color3.fromRGB(255,140,60))
-                return
+                return "empty"
             end
         else
-            emptyCount = 0  -- reset kalau timer jalan lagi
-        end
-        if secs and secs > 0 then
-            local menit = math.floor(secs/60)
-            if menit ~= lastLog then
-                lastLog = menit
-                _mutLog(string.format("⏳ Mesin running... sisa %d:%02d (%s)", menit, secs%60, pet or "?"), Color3.fromRGB(255,200,60))
+            emptyCount = 0
+            if secs and secs > 0 then
+                local menit = math.floor(secs/60)
+                if menit ~= lastLog then
+                    lastLog = menit
+                    _mutLog(string.format("⏳ Mesin running... sisa %d:%02d (%s)", menit, secs%60, pet), Color3.fromRGB(255,200,60))
+                end
+            else
+                _mutLog("⏳ Tunggu mesin READY... (timer="..(txt or "nil")..", pet="..pet..")", Color3.fromRGB(255,200,60))
             end
-        else
-            _mutLog("⏳ Tunggu mesin READY... (timer=".. (txt or "nil") ..", pet="..(pet or "nil")..")", Color3.fromRGB(255,200,60))
         end
-        task.wait(3)
+        task.wait(2)
     end
+    return "stopped"
 end
 
 local function _mutDoSiklus(skipSubmit)
@@ -6932,8 +6935,8 @@ local function _mutDoSiklus(skipSubmit)
                 local secsExist = _mutParseTimer(timerExist or "")
                 if secsExist and secsExist > 0 then
                     _mutLog("⏳ Mesin masih running ("..existingPet..") "..secsExist.."s, tunggu...", Color3.fromRGB(255,200,60))
-                    _mutWaitDone()
-                    if not _mutState.running then return false end
+                    local wr = _mutWaitDone()
+                    if not _mutState.running or wr == "empty" then return false end
                 end
             end
             _mutLog("🎁 Claim sisa mesin sebelumnya...", Color3.fromRGB(200,140,255))
@@ -6981,7 +6984,7 @@ local function _mutDoSiklus(skipSubmit)
             if not ok3 then _mutLog("✗ StartMachine: "..tostring(e3), Color3.fromRGB(255,80,80)); task.wait(2); _kandidatIdx = _kandidatIdx - 1; continue end
             task.wait(DELAY_MUT_STEP)
 
-            -- cek apakah pet benar-benar masuk (tunggu max 5 detik)
+            -- cek pet masuk (tunggu max 5 detik)
             local checkWait = 0
             while checkWait < 5 do
                 local petNm = getMtsMachinePet()
@@ -6993,7 +6996,7 @@ local function _mutDoSiklus(skipSubmit)
             end
             if not submitOk then
                 _mutLog("⚠ Pet tidak terdeteksi di mesin setelah submit (try "..submitTry..")", Color3.fromRGB(255,140,60))
-                _kandidatIdx = _kandidatIdx - 1  -- rollback idx supaya kandidat yang sama dicoba lagi
+                _kandidatIdx = _kandidatIdx - 1
             end
         end
         if not submitOk then
@@ -7018,9 +7021,13 @@ local function _mutDoSiklus(skipSubmit)
         task.wait(2); timerCheck = timerCheck + 1
     end
 
-    -- tunggu mesin SIAP
-    _mutWaitDone()
+    -- tunggu mesin SIAP; kalau pet kosong → siklus baru langsung insert
+    local waitResult = _mutWaitDone()
     if not _mutState.running then return false end
+    if waitResult == "empty" then
+        _mutLog("⚠ Mesin kosong di tengah siklus — insert pet baru", Color3.fromRGB(255,140,60))
+        return false
+    end
     task.wait(0.5)
     _mutLog("✅ Masuk Sesi 2 — swap ke Gremlin", Color3.fromRGB(60,200,80))
 
@@ -7203,9 +7210,8 @@ local function _loopMutasi()
             if secs and secs > 0 then
                 _mutLog(string.format("⏳ Mesin masih running %d:%02d, tunggu dulu...",
                     math.floor(secs/60), secs%60), Color3.fromRGB(255,200,60))
-                _mutWaitDone()
+                _mutWaitDone()  -- hasil diabaikan, outer loop handle
             else
-                -- minimum wait 5s agar tidak spam crash
                 task.wait(5)
             end
         else
