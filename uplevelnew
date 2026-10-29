@@ -1,4 +1,4 @@
--- uplevelnew v8.420 — log kandidat full UUID+jenis+age; log next pet ke mesin
+-- uplevelnew v8.421 — protect sesiPool (tim auto lvl) dari scan kandidat MTS
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.420"
+local VERSION = "v8.421"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6795,11 +6795,12 @@ local function _mutDoSiklus(skipSubmit)
     end)
     if not RE_ok then _mutLog("✗ RE tidak ditemukan", Color3.fromRGB(255,80,80)); return false end
 
-    -- v8.418: scan kandidat submit SEKALI di awal siklus
+    -- v8.421: scan kandidat submit SEKALI di awal siklus
     -- kandidat = list {tool, uuid, name, level} pet age>=500 yang tidak protected
     local _kandidat = {}
     do
         local protected = {}
+        -- 1) tim lineup mesin (MTS pool S1/S2)
         if _mutPool then
             for _, p in pairs(_mutPool) do
                 for u in pairs(p) do
@@ -6808,9 +6809,25 @@ local function _mutDoSiklus(skipSubmit)
                 end
             end
         end
+        -- 2) tim kebun auto lvl yang sedang di-equip
         for u in pairs(_activeUuids or {}) do
             local uclean = tostring(u):gsub("[{}]","")
             protected[uclean] = true; protected["{"..uclean.."}"] = true
+        end
+        -- 3) tim auto lvl yang sudah dipilih di sesiPool (meski belum di-equip)
+        if sesiPool then
+            for _,sp in pairs(sesiPool) do
+                for _,slots in pairs(sp) do
+                    if type(slots)=="table" then
+                        for _,entry in ipairs(slots) do
+                            if entry and entry.uuid then
+                                local uclean = tostring(entry.uuid):gsub("[{}]","")
+                                protected[uclean] = true; protected["{"..uclean.."}"] = true
+                            end
+                        end
+                    end
+                end
+            end
         end
         local char = plr.Character
         local bp   = plr:FindFirstChild("Backpack")
