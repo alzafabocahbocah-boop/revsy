@@ -1,4 +1,4 @@
--- uplevelnew v8.406 — auto-cancel dialog "Kirim Hewan Peliharaan ke Mesin Mutasi" tiap 2s
+-- uplevelnew v8.407 — auto-cancel dialog Submit Pet To Mutation Machine (EN+ID) tiap 2s
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.406"
+local VERSION = "v8.407"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2409,33 +2409,34 @@ task.spawn(function()
     end
     -- v8.248: gift popup 0.6s→1s, trade window 0.12s→1s
     task.spawn(function() while true do task.wait(1); pcall(acceptAllGiftPopups) end end)
-    -- v8.406: auto-cancel dialog "Kirim Hewan Peliharaan ke Mesin Mutasi" tiap 2s
+    -- v8.407: auto-cancel dialog Submit Pet To Mutation Machine / Kirim Hewan ke Mesin Mutasi
     task.spawn(function()
         while true do
             task.wait(2)
             pcall(function()
                 local pg = plr:FindFirstChild("PlayerGui")
                 if not pg then return end
-                for _,sg in ipairs(pg:GetDescendants()) do
-                    if sg:IsA("TextLabel") and (
-                        sg.Text:find("Mesin Mutasi") or
-                        sg.Text:find("Mutation Machine") or
-                        sg.Text:find("menyerahkan")
-                    ) then
-                        -- cari tombol Batalkan / Cancel di parent hierarchy
-                        local frame = sg.Parent
-                        for _=1,6 do
-                            if not frame then break end
-                            for _,child in ipairs(frame:GetDescendants()) do
-                                if child:IsA("TextButton") then
-                                    local t = child.Text:lower()
-                                    if t:find("batalkan") or t:find("cancel") then
-                                        pcall(function() child.MouseButton1Click:Fire() end)
-                                        return
-                                    end
-                                end
-                            end
-                            frame = frame.Parent
+                -- scan semua TextLabel/TextButton cari keyword dialog mutasi
+                local found = false
+                for _,d in ipairs(pg:GetDescendants()) do
+                    if not found and (d:IsA("TextLabel") or d:IsA("TextButton")) then
+                        local t = d.Text or ""
+                        if t:find("Mutation Machine") or t:find("Mesin Mutasi") or
+                           t:find("menyerahkan") or t:find("submit that pet") or
+                           t:find("Submit Pet") then
+                            found = true
+                        end
+                    end
+                end
+                if not found then return end
+                -- ada dialog — cari tombol Cancel / Batalkan dan klik
+                for _,d in ipairs(pg:GetDescendants()) do
+                    if d:IsA("TextButton") then
+                        local t = (d.Text or ""):lower()
+                        if t == "cancel" or t == "batalkan" then
+                            pcall(function() d.MouseButton1Click:Fire() end)
+                            pcall(function() fireBtn(d) end)
+                            return
                         end
                     end
                 end
