@@ -1,4 +1,4 @@
--- uplevelnew v8.418 — scan kandidat submit sekali di awal siklus, bukan tiap mau submit
+-- uplevelnew v8.419 — timerCheck break kalau READY; log pet dari getMtsMachinePet
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -148,7 +148,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.418"
+local VERSION = "v8.419"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6774,16 +6774,16 @@ local function _mutWaitDone()
             return
         end
         -- log sisa waktu tiap menit
-        local pet = getMtsMachinePet()
         local secs = _mutParseTimer(txt or "")
         if secs and secs > 0 then
             local menit = math.floor(secs/60)
             if menit ~= lastLog then
                 lastLog = menit
-                _mutLog(string.format("⏳ Mesin running... sisa %d:%02d (%s)", menit, secs%60, pet or "?"), Color3.fromRGB(255,200,60))
+                local pet = getMtsMachinePet() or "di mesin"
+                _mutLog(string.format("⏳ Mesin running... sisa %d:%02d (%s)", menit, secs%60, pet), Color3.fromRGB(255,200,60))
             end
         else
-            _mutLog("⏳ Tunggu mesin READY... (".. (txt or "nil") ..")", Color3.fromRGB(255,200,60))
+            _mutLog("⏳ Tunggu mesin READY... (timer=".. (txt or "nil") ..")", Color3.fromRGB(255,200,60))
         end
         task.wait(3)
     end
@@ -6947,10 +6947,11 @@ local function _mutDoSiklus(skipSubmit)
 
     -- tunggu timer mesin muncul dulu (delay setelah StartMachine ~2-3 detik)
     task.wait(3)
-    -- pastikan timer benar-benar ada sebelum mulai poll
+    -- pastikan timer benar-benar ada sebelum mulai poll (break juga kalau sudah READY)
     local timerCheck = 0
     while _mutState.running and timerCheck < 10 do
         local t = getMtsMachineTimer()
+        if t and t:upper():find("READY") then break end  -- sudah READY, skip tunggu timer
         local s = _mutParseTimer(t or "")
         if s and s > 0 then break end
         _mutLog("⏳ tunggu timer mesin muncul...", Color3.fromRGB(255,200,60))
@@ -7075,7 +7076,8 @@ local function _loopMutasi()
     -- kalau mesin sedang running, ikut dari tengah
     local timerNow = getMtsMachineTimer()
     local secsNow  = _mutParseTimer(timerNow or "")
-    if secsNow and secsNow > 0 then
+    local isReady  = timerNow and timerNow:upper():find("READY")
+    if not isReady and secsNow and secsNow > 0 then
         _mutLog("🔁 Mesin running! Ikut dari Fase 1...", Color3.fromRGB(255,200,60))
         _mutSwapLineup(MTS_LINEUP_DEF, "7 Mimic + 1 Golem", "Fase 1: Mimic+Golem ⏳", 1)
         -- tunggu sampai pet keluar dari mesin; kalau timer 0 tapi pet masih ada → claim
@@ -7084,8 +7086,8 @@ local function _loopMutasi()
         while _mutState.running do
             local pet = getMtsMachinePet()
             if not pet then
-                _mutLog("⚠ Mesin kosong (pet nil) saat ikut dari tengah — mulai siklus baru", Color3.fromRGB(255,140,60))
-                return false  -- biar main loop submit pet baru dari awal
+                _mutLog("⚠ Mesin kosong saat ikut dari tengah — skip ke siklus baru", Color3.fromRGB(255,140,60))
+                break  -- keluar loop ikut-dari-tengah, lanjut ke main loop siklus
             end
             local txt = getMtsMachineTimer()
             local secs = _mutParseTimer(txt or "")
