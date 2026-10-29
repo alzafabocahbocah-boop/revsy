@@ -1,4 +1,4 @@
--- debug_cd v7 — monitor PetCooldownsUpdated events + scan ZenxModelByUuid CD state
+-- debug_cd v8 — tambah deteksi stale (event berhenti fire >8s = bug CD hilang)
 
 local RS = game:GetService("ReplicatedStorage")
 local plr = game.Players.LocalPlayer
@@ -175,7 +175,8 @@ clearBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ===================== STATE (di luar scope apapun) =====================
-local _lastStatus = {}  -- key=uuid, value=true/false/nil — HARUS di luar scope listener
+local _lastStatus = {}    -- key=uuid, value=true/false/nil
+local _lastEventAt = {}   -- key=uuid, value=tick() terakhir dapat event
 
 -- ===================== LISTENER =====================
 local ge = RS:FindFirstChild("GameEvents")
@@ -220,6 +221,7 @@ else
         local prev = _lastStatus[key]
         local changed = (prev ~= rdy)
         _lastStatus[key] = rdy
+        _lastEventAt[key] = tick()
 
         local changedMark = changed and " ◄CHANGE" or ""
         addLine(shortUuid .. " | " .. tipe .. " | " .. status .. changedMark,
@@ -273,10 +275,21 @@ task.spawn(function()
                     local key = tostring(k):gsub("[{}]","")
                     local tipe = getPetTipe(key)
                     local lastS = _lastStatus[key]
+                    local lastAt = _lastEventAt[key]
+                    local now2 = tick()
+                    local stale = lastAt and (now2 - lastAt) > 8
                     local statusStr, col
-                    if lastS == true then statusStr="READY ✅"; col=Color3.fromRGB(80,255,120)
-                    elseif lastS == false then statusStr="ON-CD ⏳"; col=Color3.fromRGB(255,180,60)
-                    else statusStr="NO EVENT ❌"; col=Color3.fromRGB(255,80,80) end
+                    if lastS == nil then
+                        statusStr="NO EVENT ❌"; col=Color3.fromRGB(255,80,80)
+                    elseif stale then
+                        -- event pernah ada tapi berhenti fire — ini bug CD hilang
+                        local ago = math.floor(now2 - lastAt)
+                        statusStr=string.format("STALE 🔴 (%ds)", ago); col=Color3.fromRGB(255,60,60)
+                    elseif lastS == true then
+                        statusStr="READY ✅"; col=Color3.fromRGB(80,255,120)
+                    else
+                        statusStr="ON-CD ⏳"; col=Color3.fromRGB(255,180,60)
+                    end
                     addLine(string.format("  [%d] %s | %s | %s", n, key:sub(1,8), tipe, statusStr), col)
                 end)
                 if not ok then
@@ -314,4 +327,4 @@ task.spawn(function()
     end
 end)
 
-addLine("debug_cd v7 | uplevelnew v8.438", Color3.fromRGB(100,100,100))
+addLine("debug_cd v8 | uplevelnew v8.442", Color3.fromRGB(100,100,100))
