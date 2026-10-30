@@ -194,7 +194,7 @@ export default {
     // Cuma balikin versi backend, gak ada data sensitif.
     if (jalur === "/versi" && req.method === "GET") {
       return new Response(
-        JSON.stringify({ versi: "v8.89-backend-2026-10-25", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence"] }),
+        JSON.stringify({ versi: "v8.90-backend-2026-10-30", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil"] }),
         { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
       );
     }
@@ -4366,6 +4366,94 @@ export default {
           ).bind(skrg, JSON.stringify(sd)).run();
         } catch (e) {}
         return json({ ok: true, akun });
+      }
+
+      // ============================================================
+      // DELTA KEY QUEUE (v8.90)
+      // Flow: zenx POST /delta-antri -> PC polling GET /delta-antri
+      //       -> PC proses Playwright -> POST /delta-hasil
+      //       -> zenx polling GET /delta-hasil?id=xxx
+      //
+      // Simpan di D1 tabel cfg:
+      //   scope='delta_antri' -> { id, link, ts }[]
+      //   scope='delta_hasil_<id>' -> { key, ts }
+      // ============================================================
+
+      // POST /delta-antri  (zenx kirim platorelay link)
+      // -> { id }
+      if (jalur === "/delta-antri" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const link = teks(b.link, 2000);
+        if (!link) return salah("link kosong");
+        const id = crypto.randomUUID();
+        // Ambil antrian lama, tambah item baru
+        const row = await db.prepare("SELECT data FROM cfg WHERE scope='delta_antri'").first();
+        let antrian = [];
+        if (row) { try { antrian = JSON.parse(row.data) || []; } catch {} }
+        // Bersihkan antrian > 5 menit
+        antrian = antrian.filter(x => (skrg - x.ts) < 300);
+        antrian.push({ id, link, ts: skrg });
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('delta_antri', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(antrian)).run();
+        return json({ ok: true, id });
+      }
+
+      // GET /delta-antri  (PC polling ambil antrian)
+      // -> { items: [{id, link, ts}] }
+      if (jalur === "/delta-antri" && req.method === "GET") {
+        const row = await db.prepare("SELECT data FROM cfg WHERE scope='delta_antri'").first();
+        let antrian = [];
+        if (row) { try { antrian = JSON.parse(row.data) || []; } catch {} }
+        // Bersihkan yang sudah > 5 menit
+        antrian = antrian.filter(x => (skrg - x.ts) < 300);
+        return json({ items: antrian });
+      }
+
+      // DELETE /delta-antri?id=xxx  (PC hapus setelah diproses)
+      if (jalur === "/delta-antri" && req.method === "DELETE") {
+        const id = url.searchParams.get("id");
+        if (!id) return salah("id kosong");
+        const row = await db.prepare("SELECT data FROM cfg WHERE scope='delta_antri'").first();
+        let antrian = [];
+        if (row) { try { antrian = JSON.parse(row.data) || []; } catch {} }
+        antrian = antrian.filter(x => x.id !== id);
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('delta_antri', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(antrian)).run();
+        return json({ ok: true });
+      }
+
+      // POST /delta-hasil  (PC kirim key hasil proses)
+      // body: { id, key }
+      if (jalur === "/delta-hasil" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const id = teks(b.id, 100);
+        const key = teks(b.key, 200);
+        if (!id) return salah("id kosong");
+        const scope = "delta_hasil_" + id;
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3)
+           ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
+        ).bind(scope, skrg, JSON.stringify({ key: key || null, ts: skrg })).run();
+        return json({ ok: true });
+      }
+
+      // GET /delta-hasil?id=xxx  (zenx polling ambil key)
+      // -> { ready: true, key } atau { ready: false }
+      if (jalur === "/delta-hasil" && req.method === "GET") {
+        const id = url.searchParams.get("id");
+        if (!id) return salah("id kosong");
+        const scope = "delta_hasil_" + id;
+        const row = await db.prepare("SELECT ts, data FROM cfg WHERE scope=?1").bind(scope).first();
+        if (!row) return json({ ready: false });
+        let data = {};
+        try { data = JSON.parse(row.data) || {}; } catch {}
+        // Hapus hasil setelah dibaca (cleanup)
+        await db.prepare("DELETE FROM cfg WHERE scope=?1").bind(scope).run();
+        return json({ ready: true, key: data.key || null });
       }
 
       return salah("jalur gak dikenal: " + jalur, 404);
