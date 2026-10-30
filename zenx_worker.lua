@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.566 — freeform tetap hidup, Roblox dipaksa ke stack 4
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.568"
+local VERSION = "9.569"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -9960,6 +9960,12 @@ if PERINTAH == "intip" then
     info("Atau tambah sendiri:  key_tanda=\"Kata A,Kata B\"  di config")
     print()
     return
+end
+
+-- v9.568: alias "zenx auto key" = "zenx key watch"
+if PERINTAH == "auto" and (arg and arg[2] or ""):lower() == "key" then
+    PERINTAH = "key"
+    if arg then arg[2] = "watch" end
 end
 
 if PERINTAH == "key" then
