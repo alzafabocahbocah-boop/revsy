@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.566 — freeform tetap hidup, Roblox dipaksa ke stack 4
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.567"
+local VERSION = "9.568"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -9999,6 +9999,39 @@ if PERINTAH == "key" then
             end
         else
             err("Config belum ada. Jalanin `zenx` dulu buat setup.")
+        end
+        return
+    end
+
+    -- v9.567: zenx key watch -- monitor clipboard, kirim platorelay ke PC
+    if a2:lower() == "watch" then
+        local cfg2 = load_config()
+        if not cfg2 then err("Config belum ada. Jalanin `zenx` dulu."); return end
+        ok("WATCH MODE -- salin link platorelay kapan aja, otomatis dikirim ke PC")
+        info("Ctrl+C buat berhenti")
+        local klip_lama = ""
+        while true do
+            local klip = baca_klip() or ""
+            local link_baru = klip_link_key(klip)
+            if link_baru and link_baru ~= klip_lama then
+                klip_lama = link_baru
+                ok("Detect platorelay! Kirim ke PC...")
+                info("Link: " .. link_baru:sub(1, 60) .. "...")
+                local kunci, sebab = delta_kirim_pc(cfg2, link_baru)
+                if kunci then
+                    ok("KEY DAPAT: " .. kunci)
+                    local wok, wket = tulis_lisensi(cfg2, kunci)
+                    if wok then
+                        ok("Ditulis ke Delta: " .. wket)
+                    else
+                        warn("Gagal nulis: " .. tostring(wket))
+                        warn("Key: " .. kunci)
+                    end
+                else
+                    warn("Gagal dapat key: " .. tostring(sebab))
+                end
+            end
+            os.execute("sleep 2")
         end
         return
     end
