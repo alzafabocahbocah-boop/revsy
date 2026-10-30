@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.566 — freeform tetap hidup, Roblox dipaksa ke stack 4
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.566"
+local VERSION = "9.567"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -259,6 +259,7 @@ local function save_config(cfg)
     f:write(string.format("  key_jam=%d,\n",cfg.key_jam or 24))
     f:write(string.format("  home_detik=%d,\n",cfg.home_detik or 60))
     f:write(string.format("  auto_key=%s,\n",tostring(cfg.auto_key == true)))
+    f:write(string.format("  auto_key_pc=%s,\n",tostring(cfg.auto_key_pc == true)))  -- v9.567: kirim platorelay ke PC via worker
     f:write(string.format("  key_tap=%q,\n",cfg.key_tap or ""))
     f:write(string.format("  gofile_token=%q,\n",cfg.gofile_token or ""))  -- v6.79: token gofile premium
     f:write(string.format("  apk_folder=%q,\n",tostring(cfg.apk_folder or "")))
@@ -524,6 +525,54 @@ local function bypass_kunci(cfg, link, pakaiRefresh)
     if e and e ~= "" then return nil, "API bilang: " .. e, jawab end
 
     return nil, "jawaban API gak dikenali bentuknya", jawab
+end
+
+-- v9.567: kirim platorelay link ke PC via worker, polling hasil key
+local function delta_kirim_pc(cfg, link)
+    local url = cfg.url or ""
+    if url == "" then return nil, "cfg.url kosong" end
+    local kunci = cfg.kunci or ""
+
+    -- Generate ID unik
+    local id = tostring(os.time()) .. tostring(math.random(1000,9999))
+
+    -- POST /delta-antri
+    local body_file = "/data/data/com.termux/files/home/zenx_delta_body.json"
+    local f = io.open(body_file, "w")
+    if not f then return nil, "gagal buat file body" end
+    f:write('{"id":"' .. id .. '","link":"' .. link:gsub('"', '\\"') .. '"}')
+    f:close()
+
+    local cmd_post = string.format(
+        "timeout 15 curl -s -X POST -H 'Content-Type: application/json' -H 'X-Kunci: %s' --data @%s %s/delta-antri 2>/dev/null",
+        kunci, body_file, url)
+    local h = io.popen(cmd_post)
+    local res = h and h:read("*all") or ""
+    if h then h:close() end
+    info("  [delta-pc] kirim antrian id=" .. id .. " res=" .. res:sub(1,80))
+
+    -- Polling /delta-hasil?id=xxx (max 120 detik)
+    local cmd_poll = string.format(
+        "timeout 10 curl -s -H 'X-Kunci: %s' '%s/delta-hasil?id=%s' 2>/dev/null",
+        kunci, url, id)
+    for i = 1, 40 do
+        os.execute("sleep 3")
+        local hp = io.popen(cmd_poll)
+        local rp = hp and hp:read("*all") or ""
+        if hp then hp:close() end
+        local ready = rp:match('"ready"%s*:%s*true')
+        if ready then
+            local key = rp:match('"key"%s*:%s*"(.-)"')
+            if key and key ~= "" and key ~= "null" then
+                ok("  [delta-pc] KEY DAPAT dari PC: " .. key:sub(1,20) .. "...")
+                return key, nil
+            end
+        end
+        if i % 5 == 0 then
+            info(("  [delta-pc] tunggu key dari PC... (%ds)"):format(i * 3))
+        end
+    end
+    return nil, "PC tidak membalas dalam 120 detik"
 end
 
 local DELTA_LICENSE = "/sdcard/Delta/Internals/Cache/license"
@@ -3205,16 +3254,31 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
 
                 if link then
                     local kunci, sebab
-                    for percobaan = 1, 5 do
-                        kunci, sebab = bypass_kunci(cfg, link, percobaan > 1)  -- retry pakai refresh
-                        if kunci then
-                            if percobaan > 1 then ok("  BYPASS sukses di percobaan ke-" .. percobaan) end
-                            break
+                    -- v9.567: kalau auto_key_pc=true, kirim ke PC via worker
+                    if cfg.auto_key_pc == true then
+                        info("  [delta-pc] auto_key_pc=true -> kirim ke PC via worker...")
+                        kunci, sebab = delta_kirim_pc(cfg, link)
+                        if not kunci then
+                            warn("  [delta-pc] gagal: " .. tostring(sebab) .. " -- fallback bypass lokal")
+                            for percobaan = 1, 5 do
+                                kunci, sebab = bypass_kunci(cfg, link, percobaan > 1)
+                                if kunci then break end
+                                warn(("  API bypass gagal (percobaan %d/5): %s"):format(percobaan, tostring(sebab)))
+                                if percobaan < 5 then os.execute("sleep 8") end
+                            end
                         end
-                        warn(("  API bypass gagal (percobaan %d/5): %s"):format(percobaan, tostring(sebab)))
-                        if percobaan < 5 then
-                            info("  tunggu 8s -> tembak bypass lagi...")
-                            os.execute("sleep 8")
+                    else
+                        for percobaan = 1, 5 do
+                            kunci, sebab = bypass_kunci(cfg, link, percobaan > 1)  -- retry pakai refresh
+                            if kunci then
+                                if percobaan > 1 then ok("  BYPASS sukses di percobaan ke-" .. percobaan) end
+                                break
+                            end
+                            warn(("  API bypass gagal (percobaan %d/5): %s"):format(percobaan, tostring(sebab)))
+                            if percobaan < 5 then
+                                info("  tunggu 8s -> tembak bypass lagi...")
+                                os.execute("sleep 8")
+                            end
                         end
                     end
                     if kunci then
