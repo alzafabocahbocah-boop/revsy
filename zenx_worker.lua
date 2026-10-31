@@ -10051,9 +10051,7 @@ if PERINTAH == "key" then
                     local kunci, sebab = delta_kirim_pc(cfg2, link_baru)
                     if kunci then
                         ok("KEY DAPAT: " .. kunci)
-                        -- v9.574: fokus Termux HANYA saat key dapet, lalu copy ke clipboard
-                        sh_silent("su -c 'am start -n com.termux/com.termux.app.TermuxActivity'")
-                        os.execute("sleep 1")
+                        -- v9.574: copy key ke clipboard
                         local esc = kunci:gsub("'", "'\\''")
                         os.execute("printf '%s' '" .. esc .. "' | termux-clipboard-set 2>/dev/null")
                         ok("Key disalin ke clipboard!")
