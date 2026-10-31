@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.571 — freeform tetap hidup, Roblox dipaksa ke stack 4
+-- zenx_worker v9.572 — freeform tetap hidup, Roblox dipaksa ke stack 4
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.571"
+local VERSION = "9.572"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -549,7 +549,18 @@ local function delta_kirim_pc(cfg, link)
     local h = io.popen(cmd_post)
     local res = h and h:read("*all") or ""
     if h then h:close() end
-    info("  [delta-pc] kirim antrian id=" .. id .. " res=" .. res:sub(1,80))
+
+    -- v9.572: ambil ID dari response worker (worker generate UUID sendiri, bukan pakai ID kita)
+    local id_dari_worker = res:match('"id"%s*:%s*"([^"]+)"')
+    if id_dari_worker and id_dari_worker ~= "" then
+        id = id_dari_worker
+        info("  [delta-pc] kirim antrian OK, id dari worker=" .. id)
+    else
+        info("  [delta-pc] kirim antrian res=" .. res:sub(1,80))
+        if res:match('"ok"%s*:%s*false') or res == "" then
+            return nil, "gagal kirim ke worker: " .. res:sub(1,100)
+        end
+    end
 
     -- Polling /delta-hasil?id=xxx (max 120 detik)
     local cmd_poll = string.format(
