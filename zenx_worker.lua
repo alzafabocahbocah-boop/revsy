@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.566 — freeform tetap hidup, Roblox dipaksa ke stack 4
+-- zenx_worker v9.570 — freeform tetap hidup, Roblox dipaksa ke stack 4
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.569"
+local VERSION = "9.570"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10009,33 +10009,56 @@ if PERINTAH == "key" then
         return
     end
 
-    -- v9.567: zenx key watch -- monitor clipboard, kirim platorelay ke PC
+    -- v9.570: zenx key watch -- monitor clipboard, kirim platorelay ke PC
     if a2:lower() == "watch" then
         local cfg2 = load_config()
         if not cfg2 then err("Config belum ada. Jalanin `zenx` dulu."); return end
         ok("WATCH MODE -- salin link platorelay kapan aja, otomatis dikirim ke PC")
         info("Ctrl+C buat berhenti")
         local klip_lama = ""
+        local klip_ts = {}   -- simpan timestamp pertama kali link terdeteksi
+        local LINK_MAX_UMUR = 3600  -- 1 jam dalam detik
         while true do
             local klip = baca_klip() or ""
             local link_baru = klip_link_key(klip)
-            if link_baru and link_baru ~= klip_lama then
-                klip_lama = link_baru
-                ok("Detect platorelay! Kirim ke PC...")
-                info("Link: " .. link_baru:sub(1, 60) .. "...")
-                local kunci, sebab = delta_kirim_pc(cfg2, link_baru)
-                if kunci then
-                    ok("KEY DAPAT: " .. kunci)
-                    local wok, wket = tulis_lisensi(cfg2, kunci)
-                    if wok then
-                        ok("Ditulis ke Delta: " .. wket)
-                    else
-                        warn("Gagal nulis: " .. tostring(wket))
-                        warn("Key: " .. kunci)
-                    end
-                else
-                    warn("Gagal dapat key: " .. tostring(sebab))
+            if link_baru then
+                -- Simpan timestamp pertama kali link ini terdeteksi
+                if not klip_ts[link_baru] then
+                    klip_ts[link_baru] = os.time()
                 end
+                local umur = os.time() - klip_ts[link_baru]
+                if umur >= LINK_MAX_UMUR then
+                    -- Link sudah lebih dari 1 jam, skip dan minta salin ulang
+                    if link_baru ~= klip_lama then
+                        klip_lama = link_baru
+                        warn("Link platorelay sudah lebih dari 1 jam -- EXPIRED!")
+                        warn("Salin ulang link platorelay yang baru dari Delta.")
+                    end
+                elseif link_baru ~= klip_lama then
+                    klip_lama = link_baru
+                    ok("Detect platorelay! Kirim ke PC...")
+                    info("Link: " .. link_baru:sub(1, 60) .. "...")
+                    local kunci, sebab = delta_kirim_pc(cfg2, link_baru)
+                    if kunci then
+                        ok("KEY DAPAT: " .. kunci)
+                        local wok, wket = tulis_lisensi(cfg2, kunci)
+                        if wok then
+                            ok("Ditulis ke Delta: " .. wket)
+                        else
+                            warn("Gagal nulis: " .. tostring(wket))
+                            warn("Key: " .. kunci)
+                        end
+                        -- Hapus timestamp link yang sudah diproses
+                        klip_ts[link_baru] = nil
+                    else
+                        warn("Gagal dapat key: " .. tostring(sebab))
+                    end
+                end
+            end
+            -- Bersihkan cache timestamp link lama (>2 jam) biar gak numpuk
+            local skrg = os.time()
+            for lnk, ts in pairs(klip_ts) do
+                if (skrg - ts) > 7200 then klip_ts[lnk] = nil end
             end
             os.execute("sleep 2")
         end
