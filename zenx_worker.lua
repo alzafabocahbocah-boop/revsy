@@ -973,11 +973,15 @@ end
 local function klip_link_key(isi)
     if not isi or isi == "" then return nil end
     local link = isi:match("(https?://[^%s\"']+)")
-    if not link then return nil end
+    if not link then
+        info("[klip_link_key] tidak ada URL di: " .. isi:sub(1,60))
+        return nil
+    end
     if link:find("platorelay", 1, true) or link:find("?d=", 1, true)
        or link:find("&d=", 1, true) then
         return link
     end
+    info("[klip_link_key] URL ada tapi bukan platorelay: " .. link:sub(1,60))
     return nil
 end
 
