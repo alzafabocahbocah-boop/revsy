@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.572 — freeform tetap hidup, Roblox dipaksa ke stack 4
+-- zenx_worker v9.573 — freeform tetap hidup, Roblox dipaksa ke stack 4
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.572"
+local VERSION = "9.573"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10051,6 +10051,10 @@ if PERINTAH == "key" then
                     local kunci, sebab = delta_kirim_pc(cfg2, link_baru)
                     if kunci then
                         ok("KEY DAPAT: " .. kunci)
+                        -- v9.573: copy key ke clipboard otomatis
+                        local esc = kunci:gsub("'", "'\\''")
+                        os.execute("printf '%s' '" .. esc .. "' | termux-clipboard-set 2>/dev/null")
+                        ok("Key disalin ke clipboard!")
                         local wok, wket = tulis_lisensi(cfg2, kunci)
                         if wok then
                             ok("Ditulis ke Delta: " .. wket)
