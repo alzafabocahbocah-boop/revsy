@@ -37,6 +37,13 @@ async function processPlato(platoUrl) {
     console.log('[*] Page loaded, tunggu 5 detik...');
     await page.waitForTimeout(5000);
 
+    // Cek expired link
+    const pageBody = await page.evaluate(() => document.body.innerText || document.body.textContent || '');
+    if (pageBody.includes('Expired link') || pageBody.includes('This session has expired')) {
+      console.log('[!] EXPIRED LINK -- skip, tidak perlu diproses');
+      return { type: 'expired', value: null };
+    }
+
     const keyBefore = await scanKeyFromDOM(page);
     if (keyBefore) {
       console.log('[!!!] KEY SUDAH ADA DI DOM:', keyBefore);
@@ -112,6 +119,7 @@ async function getKey(platoUrl, depth = 0) {
   console.log('\n[*] Checkpoint', depth + 1, '...');
 
   const result = await processPlato(platoUrl);
+  if (result.type === 'expired') return null;
   if (result.type === 'key') return result.value;
 
   if (result.type === 'url') {
