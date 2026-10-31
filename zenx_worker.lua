@@ -961,11 +961,13 @@ local function tap_simpan(kunci, fx, fy)
 end
 
 local function baca_klip()
-    -- v9.571: hapus am start TermuxActivity
-    local h = io.popen("timeout 10 termux-clipboard-get 2>/dev/null")
+    local h = io.popen("timeout 10 termux-clipboard-get 2>&1")
     local isi = h and (h:read("*all") or "") or ""
     if h then h:close() end
-    return (isi:gsub("^%s+", ""):gsub("%s+$", ""))
+    isi = isi:gsub("^%s+", ""):gsub("%s+$", "")
+    -- debug: log isi clipboard tiap iterasi biar keliatan apa yang dibaca
+    info("[klip] " .. (isi ~= "" and isi:sub(1,60) or "(kosong)"))
+    return isi
 end
 
 local function klip_link_key(isi)
