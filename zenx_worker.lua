@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.570 — freeform tetap hidup, Roblox dipaksa ke stack 4
+-- zenx_worker v9.571 — freeform tetap hidup, Roblox dipaksa ke stack 4
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.570"
+local VERSION = "9.571"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -950,8 +950,7 @@ local function tap_simpan(kunci, fx, fy)
 end
 
 local function baca_klip()
-    sh_silent("su -c 'am start -n com.termux/com.termux.app.TermuxActivity'")
-    os.execute("sleep 2")
+    -- v9.571: hapus am start TermuxActivity -- bikin fokus balik ke Termux tiap 2 detik
     local h = io.popen("timeout 10 termux-clipboard-get 2>/dev/null")
     local isi = h and (h:read("*all") or "") or ""
     if h then h:close() end
