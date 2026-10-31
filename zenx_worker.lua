@@ -1,6 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.573 — freeform tetap hidup, Roblox dipaksa ke stack 4
+-- zenx_worker v9.574 — fokus Termux hanya saat key dapet, bukan setiap loop
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
 local VERSION = "9.573"
 TIM1_AKHIR = 10
@@ -961,7 +961,7 @@ local function tap_simpan(kunci, fx, fy)
 end
 
 local function baca_klip()
-    -- v9.571: hapus am start TermuxActivity -- bikin fokus balik ke Termux tiap 2 detik
+    -- v9.571: hapus am start TermuxActivity
     local h = io.popen("timeout 10 termux-clipboard-get 2>/dev/null")
     local isi = h and (h:read("*all") or "") or ""
     if h then h:close() end
@@ -10051,7 +10051,9 @@ if PERINTAH == "key" then
                     local kunci, sebab = delta_kirim_pc(cfg2, link_baru)
                     if kunci then
                         ok("KEY DAPAT: " .. kunci)
-                        -- v9.573: copy key ke clipboard otomatis
+                        -- v9.574: fokus Termux HANYA saat key dapet, lalu copy ke clipboard
+                        sh_silent("su -c 'am start -n com.termux/com.termux.app.TermuxActivity'")
+                        os.execute("sleep 1")
                         local esc = kunci:gsub("'", "'\\''")
                         os.execute("printf '%s' '" .. esc .. "' | termux-clipboard-set 2>/dev/null")
                         ok("Key disalin ke clipboard!")
