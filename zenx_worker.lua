@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.575 — watch mode log lengkap: clipboard, link, status tiap langkah
+-- zenx_worker v9.576 — watch mode log alasan skip: expired, sudah diproses, bukan platorelay
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.575"
+local VERSION = "9.576"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10044,8 +10044,11 @@ if PERINTAH == "key" then
                 if umur >= LINK_MAX_UMUR then
                     if link_baru ~= klip_lama then
                         klip_lama = link_baru
-                        warn("[watch] Link EXPIRED (umur " .. math.floor(umur/60) .. " menit) -- salin ulang dari Delta!")
+                        warn("[watch] SKIP -- link expired (umur " .. math.floor(umur/60) .. " menit), salin ulang dari Delta!")
                     end
+                elseif link_baru == klip_lama then
+                    -- skip diam-diam, tapi info sekali kalau masih nunggu
+                    -- (tidak spam, sudah di-log waktu pertama detect)
                 elseif link_baru ~= klip_lama then
                     klip_lama = link_baru
                     ok("[watch] Detect platorelay! Kirim ke PC...")
@@ -10074,6 +10077,9 @@ if PERINTAH == "key" then
                         warn("[watch] Coba salin ulang link platorelay dari Delta")
                     end
                 end
+            elseif klip ~= "" then
+                -- Ada isi clipboard tapi bukan platorelay link
+                info("[watch] SKIP -- clipboard ada isi tapi bukan link platorelay: " .. klip:sub(1,60))
             end
             -- Bersihkan cache timestamp link lama (>2 jam) biar gak numpuk
             local skrg = os.time()
