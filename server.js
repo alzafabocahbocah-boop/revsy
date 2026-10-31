@@ -9,6 +9,7 @@ const POLL_INTERVAL = 3000;
 const headers = { 'X-Kunci': WORKER_KUNCI, 'Content-Type': 'application/json' };
 
 let sedangProses = false;
+const sudahDiproses = new Set(); // track ID yang sudah/sedang diproses
 
 async function scanKeyFromDOM(page) {
   return page.evaluate(() => {
@@ -153,7 +154,7 @@ async function kirimHasil(id, key) {
       headers,
       body: JSON.stringify({ id, key })
     });
-    console.log('[+] Hasil terkirim ke worker, id:', id, 'key:', key ? key.slice(0, 20) + '...' : null);
+    console.log('[+] Hasil terkirim, id:', id, 'key:', key ? key.slice(0, 20) + '...' : null);
   } catch (e) {
     console.error('[!] Gagal kirim hasil:', e.message);
   }
@@ -165,12 +166,26 @@ async function hapusAntrian(id) {
       method: 'DELETE',
       headers
     });
-    console.log('[~] Hapus antrian id:', id);
   } catch (e) {}
 }
 
+async function prosesItem(item) {
+  console.log('\n[+] Mulai proses id:', item.id);
+  console.log('[+] Link:', item.link.slice(0, 70));
+  try {
+    const key = await getKey(item.link);
+    console.log('[+] KEY:', key);
+    await hapusAntrian(item.id);
+    await kirimHasil(item.id, key);
+  } catch (e) {
+    console.error('[!] Error proses:', e.message);
+    await hapusAntrian(item.id);
+    await kirimHasil(item.id, null);
+  }
+  sudahDiproses.delete(item.id);
+}
+
 async function pollDanProses() {
-  // Kalau lagi proses, skip poll
   if (sedangProses) return;
 
   try {
@@ -178,32 +193,19 @@ async function pollDanProses() {
     const data = await res.json();
     const items = data.items || [];
 
-    if (items.length === 0) return;
+    // Filter item yang belum diproses
+    const antrian = items.filter(i => !sudahDiproses.has(i.id));
+    if (antrian.length === 0) return;
 
-    // Ambil yang PALING BARU (terakhir di antrian)
-    const item = items[items.length - 1];
-
-    // Hapus semua item LAMA (yang bukan item terbaru)
-    for (const lama of items) {
-      if (lama.id !== item.id) {
-        console.log('[~] Buang antrian lama:', lama.id);
-        await hapusAntrian(lama.id);
-      }
-    }
+    console.log('[+] Ada', antrian.length, 'item di antrian, proses satu-satu...');
 
     sedangProses = true;
-    console.log('\n[+] Proses request! id:', item.id);
-    console.log('[+] Link:', item.link.slice(0, 70));
-
     try {
-      const key = await getKey(item.link);
-      console.log('[+] KEY:', key);
-      await hapusAntrian(item.id);
-      await kirimHasil(item.id, key);
-    } catch (e) {
-      console.error('[!] Error proses:', e.message);
-      await hapusAntrian(item.id);
-      await kirimHasil(item.id, null);
+      for (const item of antrian) {
+        sudahDiproses.add(item.id);
+        await prosesItem(item);
+        console.log('[+] Selesai proses id:', item.id, '-- lanjut berikutnya...');
+      }
     } finally {
       sedangProses = false;
     }
@@ -216,7 +218,7 @@ async function pollDanProses() {
 console.log('[+] PC Delta Key Processor jalan');
 console.log('[+] Worker:', WORKER_URL);
 console.log('[+] Polling setiap', POLL_INTERVAL / 1000, 'detik...');
-console.log('[+] Mode: ambil 1 yang terbaru, buang yang lama');
+console.log('[+] Mode: proses semua item satu-satu (tidak concurrent)');
 
 pollDanProses();
 setInterval(pollDanProses, POLL_INTERVAL);
