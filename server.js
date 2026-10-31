@@ -8,8 +8,7 @@ const POLL_INTERVAL = 3000;
 
 const headers = { 'X-Kunci': WORKER_KUNCI, 'Content-Type': 'application/json' };
 
-let sedangProses = false;
-const sudahDiproses = new Set(); // track ID yang sudah/sedang diproses
+const sedangDiproses = new Set();
 
 async function scanKeyFromDOM(page) {
   return page.evaluate(() => {
@@ -178,47 +177,42 @@ async function prosesItem(item) {
     await hapusAntrian(item.id);
     await kirimHasil(item.id, key);
   } catch (e) {
-    console.error('[!] Error proses:', e.message);
+    console.error('[!] Error proses id', item.id, ':', e.message);
     await hapusAntrian(item.id);
     await kirimHasil(item.id, null);
+  } finally {
+    sedangDiproses.delete(item.id);
+    console.log('[+] Selesai proses id:', item.id);
   }
-  sudahDiproses.delete(item.id);
 }
 
 async function pollDanProses() {
-  if (sedangProses) return;
-
   try {
     const res = await fetch(WORKER_URL + '/delta-antri', { headers });
     const data = await res.json();
     const items = data.items || [];
 
-    // Filter item yang belum diproses
-    const antrian = items.filter(i => !sudahDiproses.has(i.id));
-    if (antrian.length === 0) return;
+    // Filter yang belum diproses
+    const baru = items.filter(i => !sedangDiproses.has(i.id));
+    if (baru.length === 0) return;
 
-    console.log('[+] Ada', antrian.length, 'item di antrian, proses satu-satu...');
+    console.log('[+] Ada', baru.length, 'item baru, buka', baru.length, 'browser sekaligus...');
 
-    sedangProses = true;
-    try {
-      for (const item of antrian) {
-        sudahDiproses.add(item.id);
-        await prosesItem(item);
-        console.log('[+] Selesai proses id:', item.id, '-- lanjut berikutnya...');
-      }
-    } finally {
-      sedangProses = false;
-    }
+    // Tandai semua sebagai sedang diproses
+    for (const item of baru) sedangDiproses.add(item.id);
+
+    // Proses SEMUA concurrent (buka browser bersamaan)
+    Promise.all(baru.map(item => prosesItem(item)));
+
   } catch (e) {
     console.error('[!] Poll error:', e.message);
-    sedangProses = false;
   }
 }
 
 console.log('[+] PC Delta Key Processor jalan');
 console.log('[+] Worker:', WORKER_URL);
 console.log('[+] Polling setiap', POLL_INTERVAL / 1000, 'detik...');
-console.log('[+] Mode: proses semua item satu-satu (tidak concurrent)');
+console.log('[+] Mode: concurrent -- semua item buka browser sekaligus');
 
 pollDanProses();
 setInterval(pollDanProses, POLL_INTERVAL);
