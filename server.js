@@ -8,7 +8,7 @@ const POLL_INTERVAL = 3000;
 
 const headers = { 'X-Kunci': WORKER_KUNCI, 'Content-Type': 'application/json' };
 
-const sedangDiproses = new Set();
+const aktif = new Set(); // ID yang sedang diproses (reset kalau server restart)
 
 async function scanKeyFromDOM(page) {
   return page.evaluate(() => {
@@ -73,32 +73,22 @@ async function processPlato(platoUrl) {
       console.log('[*] Navigasi ke:', currentUrl.slice(0, 120));
 
       if (currentUrl.includes('lootlabs.gg')) {
-        console.log('[*] Step awal -- dapat lootlabs URL');
         result = { type: 'url', value: currentUrl };
       } else if (currentUrl.includes('platorelay.com')) {
-        console.log('[*] Navigasi ke platorelay lain');
         result = { type: 'url', value: currentUrl };
       } else {
-        console.log('[*] URL tidak dikenal, scan DOM...');
         await page.waitForTimeout(3000);
         const keyNav = await scanKeyFromDOM(page);
-        if (keyNav) {
-          console.log('[!!!] KEY DARI DOM (post-nav):', keyNav);
-          result = { type: 'key', value: keyNav };
-        }
+        if (keyNav) result = { type: 'key', value: keyNav };
       }
     } catch (e) {
-      console.log('[*] Tidak ada navigasi, scan DOM untuk key...');
+      console.log('[*] Tidak ada navigasi, scan DOM...');
       await page.waitForTimeout(5000);
       const currentUrl = page.url();
       console.log('[*] Current URL:', currentUrl.slice(0, 120));
       const keyFallback = await scanKeyFromDOM(page);
-      if (keyFallback) {
-        console.log('[!!!] KEY DARI DOM (last step):', keyFallback);
-        result = { type: 'key', value: keyFallback };
-      } else {
-        console.log('[!] Key tidak ditemukan di DOM');
-      }
+      if (keyFallback) result = { type: 'key', value: keyFallback };
+      else console.log('[!] Key tidak ditemukan');
     }
 
     return result;
@@ -118,27 +108,23 @@ async function bypassLootlabs(lootlabsUrl) {
 }
 
 async function getKey(platoUrl, depth = 0) {
-  if (depth > 5) { console.log('[!] Max depth'); return null; }
+  if (depth > 5) return null;
   console.log('\n[*] Checkpoint', depth + 1, '...');
 
   const result = await processPlato(platoUrl);
-
   if (result.type === 'key') return result.value;
 
   if (result.type === 'url') {
     const nextUrl = result.value;
-
     if (nextUrl.includes('lootlabs.gg')) {
       console.log('[*] Bypass lootlabs...');
       const bypassed = await bypassLootlabs(nextUrl);
-      console.log('[*] Bypassed:', bypassed ? bypassed.slice(0, 80) : null);
       if (!bypassed) return null;
       if (bypassed.includes('platorelay.com')) return getKey(bypassed, depth + 1);
-      const keyMatch = bypassed.match(/FREE_[a-f0-9]{32}/i);
-      if (keyMatch) return keyMatch[0];
+      const m = bypassed.match(/FREE_[a-f0-9]{32}/i);
+      if (m) return m[0];
       return bypassed;
     }
-
     if (nextUrl.includes('platorelay.com')) return getKey(nextUrl, depth + 1);
     return nextUrl;
   }
@@ -153,7 +139,7 @@ async function kirimHasil(id, key) {
       headers,
       body: JSON.stringify({ id, key })
     });
-    console.log('[+] Hasil terkirim, id:', id, 'key:', key ? key.slice(0, 20) + '...' : null);
+    console.log('[+] Hasil terkirim, id:', id, '| key:', key ? key.slice(0, 20) + '...' : 'null');
   } catch (e) {
     console.error('[!] Gagal kirim hasil:', e.message);
   }
@@ -162,28 +148,33 @@ async function kirimHasil(id, key) {
 async function hapusAntrian(id) {
   try {
     await fetch(WORKER_URL + '/delta-antri?id=' + encodeURIComponent(id), {
-      method: 'DELETE',
-      headers
+      method: 'DELETE', headers
     });
   } catch (e) {}
 }
 
-async function prosesItem(item) {
-  console.log('\n[+] Mulai proses id:', item.id);
+// Tiap request spawn browser sendiri, tidak ganggu yang lain
+function spawnProses(item) {
+  aktif.add(item.id);
+  console.log('\n[+] SPAWN browser untuk id:', item.id);
   console.log('[+] Link:', item.link.slice(0, 70));
-  try {
-    const key = await getKey(item.link);
-    console.log('[+] KEY:', key);
-    await hapusAntrian(item.id);
-    await kirimHasil(item.id, key);
-  } catch (e) {
-    console.error('[!] Error proses id', item.id, ':', e.message);
-    await hapusAntrian(item.id);
-    await kirimHasil(item.id, null);
-  } finally {
-    sedangDiproses.delete(item.id);
-    console.log('[+] Selesai proses id:', item.id);
-  }
+  console.log('[+] Aktif sekarang:', aktif.size, 'browser');
+
+  getKey(item.link)
+    .then(async key => {
+      console.log('[+] KEY dapat! id:', item.id, '| key:', key);
+      await hapusAntrian(item.id);
+      await kirimHasil(item.id, key);
+    })
+    .catch(async e => {
+      console.error('[!] Error id:', item.id, '|', e.message);
+      await hapusAntrian(item.id);
+      await kirimHasil(item.id, null);
+    })
+    .finally(() => {
+      aktif.delete(item.id);
+      console.log('[+] Browser tutup, id:', item.id, '| Sisa aktif:', aktif.size);
+    });
 }
 
 async function pollDanProses() {
@@ -192,18 +183,12 @@ async function pollDanProses() {
     const data = await res.json();
     const items = data.items || [];
 
-    // Filter yang belum diproses
-    const baru = items.filter(i => !sedangDiproses.has(i.id));
-    if (baru.length === 0) return;
-
-    console.log('[+] Ada', baru.length, 'item baru, buka', baru.length, 'browser sekaligus...');
-
-    // Tandai semua sebagai sedang diproses
-    for (const item of baru) sedangDiproses.add(item.id);
-
-    // Proses SEMUA concurrent (buka browser bersamaan)
-    Promise.all(baru.map(item => prosesItem(item)));
-
+    // Spawn browser untuk setiap item baru yang belum diproses
+    for (const item of items) {
+      if (!aktif.has(item.id)) {
+        spawnProses(item);
+      }
+    }
   } catch (e) {
     console.error('[!] Poll error:', e.message);
   }
@@ -212,7 +197,7 @@ async function pollDanProses() {
 console.log('[+] PC Delta Key Processor jalan');
 console.log('[+] Worker:', WORKER_URL);
 console.log('[+] Polling setiap', POLL_INTERVAL / 1000, 'detik...');
-console.log('[+] Mode: concurrent -- semua item buka browser sekaligus');
+console.log('[+] Mode: tiap request baru langsung spawn browser sendiri');
 
 pollDanProses();
 setInterval(pollDanProses, POLL_INTERVAL);
