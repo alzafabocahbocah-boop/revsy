@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.574 — fokus Termux hanya saat key dapet, bukan setiap loop
+-- zenx_worker v9.575 — watch mode log lengkap: clipboard, link, status tiap langkah
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.574"
+local VERSION = "9.575"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10026,48 +10026,52 @@ if PERINTAH == "key" then
         local cfg2 = load_config()
         if not cfg2 then err("Config belum ada. Jalanin `zenx` dulu."); return end
         ok("WATCH MODE -- salin link platorelay kapan aja, otomatis dikirim ke PC")
+        info("Worker  : " .. (cfg2.url or "?"))
+        info("PC poll : setiap 3 detik, timeout 120 detik")
         info("Ctrl+C buat berhenti")
         local klip_lama = ""
-        local klip_ts = {}   -- simpan timestamp pertama kali link terdeteksi
-        local LINK_MAX_UMUR = 3600  -- 1 jam dalam detik
+        local klip_ts = {}
+        local LINK_MAX_UMUR = 3600
         while true do
             local klip = baca_klip() or ""
             local link_baru = klip_link_key(klip)
             if link_baru then
-                -- Simpan timestamp pertama kali link ini terdeteksi
                 if not klip_ts[link_baru] then
                     klip_ts[link_baru] = os.time()
+                    info("[watch] link baru terdeteksi: " .. link_baru:sub(1,70))
                 end
                 local umur = os.time() - klip_ts[link_baru]
                 if umur >= LINK_MAX_UMUR then
-                    -- Link sudah lebih dari 1 jam, skip dan minta salin ulang
                     if link_baru ~= klip_lama then
                         klip_lama = link_baru
-                        warn("Link platorelay sudah lebih dari 1 jam -- EXPIRED!")
-                        warn("Salin ulang link platorelay yang baru dari Delta.")
+                        warn("[watch] Link EXPIRED (umur " .. math.floor(umur/60) .. " menit) -- salin ulang dari Delta!")
                     end
                 elseif link_baru ~= klip_lama then
                     klip_lama = link_baru
-                    ok("Detect platorelay! Kirim ke PC...")
-                    info("Link: " .. link_baru:sub(1, 60) .. "...")
+                    ok("[watch] Detect platorelay! Kirim ke PC...")
+                    info("[watch] Link: " .. link_baru:sub(1, 70))
+                    info("[watch] Tunggu key dari PC (max 120 detik)...")
                     local kunci, sebab = delta_kirim_pc(cfg2, link_baru)
                     if kunci then
-                        ok("KEY DAPAT: " .. kunci)
-                        -- v9.574: copy key ke clipboard
+                        ok("[watch] KEY DAPAT: " .. kunci)
                         local esc = kunci:gsub("'", "'\\''")
-                        os.execute("printf '%s' '" .. esc .. "' | termux-clipboard-set 2>/dev/null")
-                        ok("Key disalin ke clipboard!")
+                        local ret = os.execute("printf '%s' '" .. esc .. "' | termux-clipboard-set 2>/dev/null")
+                        if ret == 0 or ret == true then
+                            ok("[watch] Key disalin ke clipboard!")
+                        else
+                            warn("[watch] termux-clipboard-set gagal (ret=" .. tostring(ret) .. ")")
+                        end
                         local wok, wket = tulis_lisensi(cfg2, kunci)
                         if wok then
-                            ok("Ditulis ke Delta: " .. wket)
+                            ok("[watch] Ditulis ke Delta: " .. wket)
                         else
-                            warn("Gagal nulis: " .. tostring(wket))
-                            warn("Key: " .. kunci)
+                            warn("[watch] Gagal tulis lisensi: " .. tostring(wket))
+                            warn("[watch] Key (salin manual): " .. kunci)
                         end
-                        -- Hapus timestamp link yang sudah diproses
                         klip_ts[link_baru] = nil
                     else
-                        warn("Gagal dapat key: " .. tostring(sebab))
+                        warn("[watch] Gagal dapat key: " .. tostring(sebab))
+                        warn("[watch] Coba salin ulang link platorelay dari Delta")
                     end
                 end
             end
