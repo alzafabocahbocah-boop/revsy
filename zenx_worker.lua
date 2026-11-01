@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.583 — zenx delta 1: fix Lua pattern slot 1 pakai %d%d bukan [0-9][0-9]
+-- zenx_worker v9.585 — zenx delta 1: fix Lua pattern slot 1 pakai %d%d bukan [0-9][0-9]
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.583"
+local VERSION = "9.585"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
