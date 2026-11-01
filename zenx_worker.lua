@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.585 — zenx delta 1: fix Lua pattern slot 1 pakai %d%d bukan [0-9][0-9]
+-- zenx_worker v9.588 — matiin semua cek_cookie_roblox di main loop (anti captcha home screen)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.587"
+local VERSION = "9.588"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -3153,22 +3153,19 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     elseif PKGS_AKTIF and #PKGS_AKTIF > 0 then
                         listBypass = PKGS_AKTIF
                     end
+                    -- v9.588: cek_cookie_roblox dimatiin di sini (curl ke Roblox API bisa trigger captcha)
+                    -- pakai client pertama yang punya cookie valid (_|WARNING ada), gak cek ke server Roblox
                     for _, pkg in ipairs(listBypass) do
                         local ck = cookie_pkg(pkg)
-                        if ck and ck ~= "" then
-                            local kead = cek_cookie_roblox(ck)
-                            if kead == "alive" then
-                                pilih = pkg
-                                info("  pakai " .. pkg:gsub("com%.roblox%.","") .. " buat ambil key (cookie normal)")
-                                break
-                            else
-                                info("  " .. pkg:gsub("com%.roblox%.","") .. " cookie " .. tostring(kead) .. " -> skip, cari yg normal...")
-                            end
+                        if ck and ck ~= "" and ck:find("_|WARNING") then
+                            pilih = pkg
+                            info("  pakai " .. pkg:gsub("com%.roblox%.","") .. " buat ambil key (cookie ada)")
+                            break
                         end
                     end
                     if not pilih then
                         pilih = listBypass[1]
-                        info("  gak ada cookie kebukti normal -> pakai " .. pilih:gsub("com%.roblox%.","") .. " (fallback)")
+                        info("  gak ada cookie valid -> pakai " .. pilih:gsub("com%.roblox%.","") .. " (fallback)")
                     end
                 end
 
