@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.582 — zenx delta 1: fix regex slot 1, cari Delta-*-0N.apk tanpa strict nomor
+-- zenx_worker v9.583 — zenx delta 1: fix Lua pattern slot 1 pakai %d%d bukan [0-9][0-9]
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.582"
+local VERSION = "9.583"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10430,7 +10430,7 @@ if PERINTAH == "delta" then
         if n == 1 then
             -- Slot 1: format "Delta-x.x.x-0N.apk" (huruf besar D, nomor 2 digit di akhir, berapapun)
             -- contoh: Delta-2.743.1136-02.apk
-            url = rel:match('"(https://[^"]*Delta%-[%d%.]+%-[0-9][0-9]%.apk)"')
+            url = rel:match('"(https://[^"]*Delta%-[%d%.]+%-%d%d%.apk)"')
         end
         -- Slot 2+: format "delta.N_x.x.x_clone.apk"
         if not url then
