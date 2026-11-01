@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.580 — tambah `zenx key paste`: loop baca stdin, paste link langsung proses
+-- zenx_worker v9.581 — zenx key paste: fix auto-copy key via echo pipe
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.580"
+local VERSION = "9.581"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10144,8 +10144,22 @@ if PERINTAH == "key" then
                 if kunci then
                     ok("[paste] KEY DAPAT: " .. kunci)
                     local esc = kunci:gsub("'", "'\\''")
-                    os.execute("printf '%s' '" .. esc .. "' | termux-clipboard-set 2>/dev/null")
-                    ok("[paste] Key disalin ke clipboard!")
+                    local ret1 = os.execute("echo -n '" .. esc .. "' | termux-clipboard-set 2>/dev/null")
+                    if ret1 == 0 or ret1 == true then
+                        ok("[paste] Key disalin ke clipboard!")
+                    else
+                        -- fallback: tulis ke file sementara lalu pipe
+                        local tmpf = "/data/data/com.termux/files/home/.zenx_key_tmp"
+                        local f = io.open(tmpf, "w")
+                        if f then f:write(kunci); f:close() end
+                        local ret2 = os.execute("termux-clipboard-set < " .. tmpf .. " 2>/dev/null")
+                        os.remove(tmpf)
+                        if ret2 == 0 or ret2 == true then
+                            ok("[paste] Key disalin ke clipboard!")
+                        else
+                            warn("[paste] Clipboard gagal -- key di atas, long-press copy manual")
+                        end
+                    end
                     local wok, wket = tulis_lisensi(cfg2, kunci)
                     if wok then ok("[paste] Ditulis ke Delta: " .. wket)
                     else warn("[paste] Gagal tulis lisensi: " .. tostring(wket)) end
