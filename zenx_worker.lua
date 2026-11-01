@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.578 — zenx key send: kirim link manual (bypass Android 15 clipboard block)
+-- zenx_worker v9.579 — baca_klip: fallback dumpsys root kalau Android 15 blokir clipboard
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.578"
+local VERSION = "9.579"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -961,11 +961,24 @@ local function tap_simpan(kunci, fx, fy)
 end
 
 local function baca_klip()
+    -- Coba termux-clipboard-get biasa
     local h = io.popen("timeout 10 termux-clipboard-get 2>&1")
     local isi = h and (h:read("*all") or "") or ""
     if h then h:close() end
     isi = isi:gsub("^%s+", ""):gsub("%s+$", "")
-    -- debug: log isi clipboard tiap iterasi biar keliatan apa yang dibaca
+
+    -- Android 15 blokir clipboard dari background -- fallback: dumpsys via root
+    if isi == "" or isi:find("^Error") or isi:find("^error") then
+        local h2 = io.popen("su -c \"dumpsys clipboard 2>/dev/null | grep -o 'https\\?://[^ ]*' | head -1\" 2>/dev/null")
+        local isi2 = h2 and (h2:read("*all") or "") or ""
+        if h2 then h2:close() end
+        isi2 = isi2:gsub("^%s+",""):gsub("%s+$","")
+        if isi2 ~= "" then
+            info("[klip] via dumpsys root: " .. isi2:sub(1,60))
+            return isi2
+        end
+    end
+
     info("[klip] " .. (isi ~= "" and isi:sub(1,60) or "(kosong)"))
     return isi
 end
