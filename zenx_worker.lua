@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.585 — zenx delta 1: fix Lua pattern slot 1 pakai %d%d bukan [0-9][0-9]
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.585"
+local VERSION = "9.586"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10421,7 +10421,8 @@ if PERINTAH == "delta" then
     if #nums == 0 then print("Pakai: zenx delta 1-4   (atau: zenx delta 1 3 5)"); return end
     print("== DOWNLOAD DELTA: no " .. rentang .. " ==")
     print("ambil daftar rilis GitHub...")
-    local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
+    -- v9.586: sh_tmo 30s biar JSON GitHub gak kepotong di koneksi lambat (sh() cuma 8s)
+    local rel = sh_tmo("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null", 30) or ""
     -- cek versi delta terbaru dari releases (ambil angka versi dari nama file delta)
     local versiDelta = rel:match('"name":%s*"delta%.%d+_([%d%.]+)_clone%.apk"') or "2.743.1059"
     print("versi delta: " .. versiDelta)
