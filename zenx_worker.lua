@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.579 — baca_klip: fallback dumpsys root kalau Android 15 blokir clipboard
+-- zenx_worker v9.580 — tambah `zenx key paste`: loop baca stdin, paste link langsung proses
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.579"
+local VERSION = "9.580"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10116,6 +10116,44 @@ if PERINTAH == "key" then
                 if (skrg - ts) > 7200 then klip_ts[lnk] = nil end
             end
             os.execute("sleep 2")
+        end
+        return
+    end
+
+    -- v9.580: zenx key paste -- loop baca stdin, paste link langsung proses (Android 15)
+    if a2:lower() == "paste" then
+        local cfg2 = load_config()
+        if not cfg2 then err("Config belum ada. Jalanin `zenx` dulu."); return end
+        ok("PASTE MODE -- tempel link platorelay kapan aja, langsung diproses")
+        info("Worker  : " .. (cfg2.worker_url or "?"))
+        info("Ctrl+C buat berhenti")
+        io.write("\n")
+        while true do
+            io.write("> ")
+            io.flush()
+            local baris = io.read("*l")
+            if not baris then break end
+            baris = baris:gsub("^%s+",""):gsub("%s+$","")
+            if baris == "" then
+                -- skip baris kosong
+            elseif not (baris:find("platorelay",1,true) or baris:find("?d=",1,true) or baris:find("&d=",1,true)) then
+                warn("[paste] Bukan link platorelay, skip: " .. baris:sub(1,60))
+            else
+                ok("[paste] Kirim ke PC: " .. baris:sub(1,70))
+                local kunci, sebab = delta_kirim_pc(cfg2, baris)
+                if kunci then
+                    ok("[paste] KEY DAPAT: " .. kunci)
+                    local esc = kunci:gsub("'", "'\\''")
+                    os.execute("printf '%s' '" .. esc .. "' | termux-clipboard-set 2>/dev/null")
+                    ok("[paste] Key disalin ke clipboard!")
+                    local wok, wket = tulis_lisensi(cfg2, kunci)
+                    if wok then ok("[paste] Ditulis ke Delta: " .. wket)
+                    else warn("[paste] Gagal tulis lisensi: " .. tostring(wket)) end
+                else
+                    err("[paste] Gagal dapat key: " .. tostring(sebab))
+                end
+            end
+            io.write("\n")
         end
         return
     end
