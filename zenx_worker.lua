@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.577 — zenx delta: fix regex slot 1 format Delta-x.x.x-0N.apk
+-- zenx_worker v9.578 — zenx key send: kirim link manual (bypass Android 15 clipboard block)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.577"
+local VERSION = "9.578"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10032,12 +10032,24 @@ if PERINTAH == "key" then
         ok("WATCH MODE -- salin link platorelay kapan aja, otomatis dikirim ke PC")
         info("Worker  : " .. (cfg2.url or "?"))
         info("PC poll : setiap 3 detik, timeout 120 detik")
+        info("Android 15: kalau clipboard kosong, pakai: zenx key send <link>")
         info("Ctrl+C buat berhenti")
         local klip_lama = ""
         local klip_ts = {}
         local LINK_MAX_UMUR = 3600
+        local klip_kosong_streak = 0
         while true do
             local klip = baca_klip() or ""
+            if klip == "" then
+                klip_kosong_streak = klip_kosong_streak + 1
+                if klip_kosong_streak == 5 then
+                    warn("[watch] Clipboard terus kosong -- Android 15 blokir akses background?")
+                    warn("[watch] Pakai terminal baru: zenx key send <link platorelay>")
+                    klip_kosong_streak = 0
+                end
+            else
+                klip_kosong_streak = 0
+            end
             local link_baru = klip_link_key(klip)
             if link_baru then
                 if not klip_ts[link_baru] then
@@ -10091,6 +10103,36 @@ if PERINTAH == "key" then
                 if (skrg - ts) > 7200 then klip_ts[lnk] = nil end
             end
             os.execute("sleep 2")
+        end
+        return
+    end
+
+    -- v9.578: zenx key send <link> -- kirim manual kalau Android 15 blokir clipboard
+    if a2:lower() == "send" then
+        local cfg2 = load_config()
+        if not cfg2 then err("Config belum ada. Jalanin `zenx` dulu."); return end
+        local link = arg[3] or ""
+        link = link:gsub("^%s+",""):gsub("%s+$","")
+        if link == "" then
+            err("Pakai: zenx key send <link platorelay>")
+            return
+        end
+        if not (link:find("platorelay",1,true) or link:find("?d=",1,true) or link:find("&d=",1,true)) then
+            err("Link bukan platorelay: " .. link:sub(1,60))
+            return
+        end
+        ok("[send] Kirim ke PC: " .. link:sub(1,70))
+        local kunci, sebab = delta_kirim_pc(cfg2, link)
+        if kunci then
+            ok("[send] KEY DAPAT: " .. kunci)
+            local esc = kunci:gsub("'", "'\\''")
+            os.execute("printf '%s' '" .. esc .. "' | termux-clipboard-set 2>/dev/null")
+            ok("[send] Key disalin ke clipboard!")
+            local wok, wket = tulis_lisensi(cfg2, kunci)
+            if wok then ok("[send] Ditulis ke Delta: " .. wket)
+            else warn("[send] Gagal tulis lisensi: " .. tostring(wket)) end
+        else
+            err("[send] Gagal dapat key: " .. tostring(sebab))
         end
         return
     end
