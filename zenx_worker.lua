@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.588 — matiin semua cek_cookie_roblox di main loop (anti captcha home screen)
+-- zenx_worker v9.589 — matiin auto getps saat place berubah (getps manual aja)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.588"
+local VERSION = "9.589"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5423,12 +5423,8 @@ local function run(cfg)
                     info("Place diganti ke " .. placeTop .. " (dari denyut-loop, sebelum rejoin)")
                     SUDAH_GRID = false; GRID_CACHE = nil
                     pcall(function() simpan_aktif(cfg) end)   -- v9.90: state ke-timpa (server baru)
-                    if placeTop ~= "129343810645058" then
-                        info("  AUTO GETPS -- ambil PS link semua akun dulu (biar gak public)...")
-                        os.execute(((os.getenv("PREFIX") or "/data/data/com.termux/files/usr")
-                            .. "/bin/zenx") .. " getps")
-                        pcall(refresh_ps_getps); pcall(refresh_hactoto)   -- muat ulang ps_link + assign hactoto
-                    end
+                    -- v9.589: auto getps dimatiin (getps manual aja, biar gak request ke Roblox API otomatis)
+                    pcall(refresh_ps_getps); pcall(refresh_hactoto)   -- muat ulang ps_link + assign hactoto dari backend
                 end
                 local gridTop = isiTop:match("GRID:(%w+)")
                 if gridTop then
