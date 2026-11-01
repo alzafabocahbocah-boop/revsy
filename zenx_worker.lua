@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.576 — watch mode log alasan skip: expired, sudah diproses, bukan platorelay
+-- zenx_worker v9.577 — zenx delta: fix regex slot 1 format Delta-x.x.x-0N.apk
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.576"
+local VERSION = "9.577"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10319,8 +10319,12 @@ if PERINTAH == "delta" then
     local versiDelta = rel:match('"name":%s*"delta%.%d+_([%d%.]+)_clone%.apk"') or "2.743.1059"
     print("versi delta: " .. versiDelta)
     for _, n in ipairs(nums) do
-        -- match: delta + separator + nomor langsung (titik/spasi/underscore) + apapun + .apk
-        local url = rel:match('"(https://[^"]*[Dd]elta[%.%s_]' .. n .. '[%.%s_][^"]*%.apk)"')
+        -- Slot 1: format "Delta-x.x.x-0N.apk" (huruf besar, dash, nomor 2 digit di akhir)
+        local url = rel:match('"(https://[^"]*Delta%-[%d%.]+%-0*' .. n .. '%.apk)"')
+        -- Slot 2+: format "delta.N_x.x.x_clone.apk"
+        if not url then
+            url = rel:match('"(https://[^"]*delta[%.%s_]' .. n .. '[%.%s_][^"]*%.apk)"')
+        end
         if not url then
             url = rel:match('"(https://[^"]*[Dd]elta[%.%s_]0*' .. n .. '[^%d][^"]*%.apk)"')
         end
