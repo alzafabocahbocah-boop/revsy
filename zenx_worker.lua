@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.581 — zenx key paste: fix auto-copy key via echo pipe
+-- zenx_worker v9.582 — zenx delta 1: fix regex slot 1, cari Delta-*-0N.apk tanpa strict nomor
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.581"
+local VERSION = "9.582"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10426,8 +10426,12 @@ if PERINTAH == "delta" then
     local versiDelta = rel:match('"name":%s*"delta%.%d+_([%d%.]+)_clone%.apk"') or "2.743.1059"
     print("versi delta: " .. versiDelta)
     for _, n in ipairs(nums) do
-        -- Slot 1: format "Delta-x.x.x-0N.apk" (huruf besar, dash, nomor 2 digit di akhir)
-        local url = rel:match('"(https://[^"]*Delta%-[%d%.]+%-0*' .. n .. '%.apk)"')
+        local url = nil
+        if n == 1 then
+            -- Slot 1: format "Delta-x.x.x-0N.apk" (huruf besar D, nomor 2 digit di akhir, berapapun)
+            -- contoh: Delta-2.743.1136-02.apk
+            url = rel:match('"(https://[^"]*Delta%-[%d%.]+%-[0-9][0-9]%.apk)"')
+        end
         -- Slot 2+: format "delta.N_x.x.x_clone.apk"
         if not url then
             url = rel:match('"(https://[^"]*delta[%.%s_]' .. n .. '[%.%s_][^"]*%.apk)"')
