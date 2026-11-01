@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.585 — zenx delta 1: fix Lua pattern slot 1 pakai %d%d bukan [0-9][0-9]
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.586"
+local VERSION = "9.587"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -3711,18 +3711,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                         local resp = api_post(cfg, "/cookie-simpan", body) or ""
                         if resp:find('"ok"%s*:%s*true') then
                             KICK_DIURUS["ck:" .. ak] = os.time()   -- timestamp, bukan true
-                            local keadaan, ketCek = cek_cookie_roblox(ckC)
-                            if keadaan == "error" then
-                                info("   cookie " .. ak .. " -> panel (tersimpan, cek nanti: " ..
-                                     tostring(ketCek or "cek gagal") .. ")")
-                            else
-                                pcall(function()
-                                    api_post(cfg, "/cookie-status", string.format(
-                                        '{"akun":%s,"status":%s}', jstr(ak), jstr(keadaan)))
-                                end)
-                                local tanda = (keadaan == "alive") and "hidup"
-                                    or (keadaan == "captcha") and "captcha"
-                                    or (keadaan == "ban") and "ban" or "mati"
+                            -- v9.587: cek_cookie_roblox dimatiin di sini (request ke Roblox API dari curl bisa trigger captcha)
+                            local keadaan = "alive"
+                            do
+                                local tanda = "hidup"
                                 if keadaan == "dead" or keadaan == "ban" then
                                     KICK_DIURUS["mati:" .. ak] = true
                                 else
@@ -6185,13 +6177,10 @@ local function run(cfg)
                     KICK_DIURUS["gantigagal:" .. pkgPend] = nil
                 else
                     local sebab
-                    local keadaan = cek_cookie_roblox(ckK ~= "" and ckK or nil)
+                    -- v9.587: cek_cookie_roblox dimatiin (request ke Roblox API dari curl bisa trigger captcha)
+                    local keadaan = (ckK ~= "" and ckK:find("_|WARNING")) and "alive" or "?"
                     if ckK == "" or not ckK:find("_|WARNING") then
                         sebab = "cookie gak kebaca di client"
-                    elseif keadaan == "ban" then
-                        sebab = "cookie KENA BAN"
-                    elseif keadaan == "dead" then
-                        sebab = "cookie MATI (invalid)"
                     elseif asli ~= "" and asli ~= target then
                         sebab = "masih akun lama (" .. asli .. ")"
                     else
@@ -7351,14 +7340,8 @@ local function run(cfg)
                             if hC then hC:close() end
                             ck = cookie_terpanjang(ck or "")
 
-                            local kead = "?"
-                            if ck ~= "" and ck:find("_|WARNING") then
-                                kead = cek_cookie_roblox(ck)
-                                pcall(function()
-                                    api_post(cfg, "/cookie-status", string.format(
-                                        '{"akun":%s,"status":%s}', jstr(ak or "?"), jstr(kead)))
-                                end)
-                            end
+                            -- v9.587: cek_cookie_roblox dimatiin (request ke Roblox API dari curl bisa trigger captcha)
+                            local kead = (ck ~= "" and ck:find("_|WARNING")) and "alive" or "?"
 
                             if kead == "dead" or kead == "ban" then
                                 tambahLog("NYANGKUT Home " .. namaP .. " tapi cookie " ..
