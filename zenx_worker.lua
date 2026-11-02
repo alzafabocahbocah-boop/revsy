@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.589 — matiin auto getps saat place berubah (getps manual aja)
+-- zenx_worker v9.590 — tambah preset uplevelnew-delta (split screen kiri-kanan)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.589"
+local VERSION = "9.590"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -3912,6 +3912,7 @@ local function setup_otomatis(namaPreset)
         ["up3.8kg"] = { place = "126884695634066", game = "GAG 1 UP3.8KG", sc = "UP3.8KG", url = "up3.8kg" },
         uplevel = { place = "126884695634066", game = "GAG 1 UPLEVEL", sc = "UPLEVEL", url = "uplevel" },
         uplevelnew = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew" },
+        ["uplevelnew-delta"] = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew" },  -- v9.590: alias uplevelnew buat split screen kiri-kanan (2 akun per HP, grid 2 kolom 1 baris otomatis)
         hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
