@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.595 — delta_split: skip close di FORCE/start_fresh juga (fix FORCE masih tutup client) (client tidak pernah ditutup, cukup kirim URL baru)
+-- zenx_worker v9.596 — delta_split: persist ke config file (fix delta_split=false setelah worker restart) (client tidak pernah ditutup, cukup kirim URL baru)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.595"
+local VERSION = "9.596"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -264,6 +264,8 @@ local function save_config(cfg)
     f:write(string.format("  gofile_token=%q,\n",cfg.gofile_token or ""))  -- v6.79: token gofile premium
     f:write(string.format("  apk_folder=%q,\n",tostring(cfg.apk_folder or "")))
     f:write(string.format("  apk_sandi=%q,\n",cfg.apk_sandi or ""))
+    -- v9.596: delta_split harus persist -- tanpa ini, worker restart -> delta_split=false -> skip close gak aktif
+    f:write(string.format("  delta_split=%s,\n",tostring(cfg.delta_split == true)))
     f:write("}\n"); f:close(); return true
 end
 
