@@ -194,7 +194,7 @@ export default {
     // Cuma balikin versi backend, gak ada data sensitif.
     if (jalur === "/versi" && req.method === "GET") {
       return new Response(
-        JSON.stringify({ versi: "v8.95-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
+        JSON.stringify({ versi: "v8.96-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
         { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
       );
     }
@@ -2601,12 +2601,24 @@ export default {
         const tplRows = await db.prepare("SELECT nama, link FROM ps_template WHERE link IS NOT NULL AND link != ''").all();
         const tplMap = {};
         for (const r of (tplRows.results || [])) tplMap[r.nama] = r.link;
+        // v8.96: cek delta-ps cache per tim (scope deltaps:<tim>_1, deltaps:<tim>_2)
+        // supaya akun lvl: bisa dapat link dari ⭐ template delta yang disimpan di panel
+        const deltaMap = {};
+        for (const slot of ["1", "2"]) {
+          const dr = await db.prepare("SELECT data FROM cfg WHERE scope=?1").bind("deltaps:"+tim+"_"+slot).first();
+          if (dr) {
+            try {
+              const arr = JSON.parse(dr.data);
+              if (Array.isArray(arr)) arr.forEach(x => { if (x && x.nama && x.link && !deltaMap[x.nama]) deltaMap[x.nama] = x.link; });
+            } catch {}
+          }
+        }
         const assign = (rs.results || []).map((r) => {
           const nm = r.ps_nama || "";
           if (nm.startsWith("lvl:")) {
             const akunNm = nm.slice(4);
-            // priority: cfg pslink > ps_template (nama = akunNm) > cookies.ps_link
-            const lnk = pslink[akunNm] || tplMap[akunNm] || ckMap[r.akun] || "";
+            // priority: cfg pslink > delta-ps cache > ps_template > cookies.ps_link
+            const lnk = pslink[akunNm] || deltaMap[akunNm] || tplMap[akunNm] || ckMap[r.akun] || "";
             return { ...r, link: lnk };
           }
           return r;
