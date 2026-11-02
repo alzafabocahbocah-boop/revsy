@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.603 — fix parse_window_rf: exact match pkg (client vs clienu)
+-- zenx_worker v9.604 — grid_rf_delta retry taskId sampai 10x sebelum skip
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.603"
+local VERSION = "9.604"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1872,6 +1872,7 @@ local function cek_grid_rf(pkgs)
 end
 
 -- Atur/fix grid RF: cek dulu tiap pkg, resize hanya yang meleset
+-- v9.604: kalau taskId belum ditemukan -> retry dump sampai 10x (jeda 1s) sebelum skip
 local function grid_rf_delta(pkgs, skip_cek)
     local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
     local wmap = parse_window_rf(dump)
@@ -1888,10 +1889,23 @@ local function grid_rf_delta(pkgs, skip_cek)
             nSkip = nSkip + 1
         else
             local tid = inf and inf.tid
+            -- v9.604: retry dump sampai taskId ketemu (maks 10x, jeda 1s)
             if not tid then
-                -- cari taskId via fallback pattern tN}
-                local t2 = dump:match(pkg:gsub("%.","%%.") .. "/[%w.]+%s+t(%d+)")
-                tid = t2 and tonumber(t2)
+                local MAX_RETRY = 10
+                for r = 1, MAX_RETRY do
+                    info(("[grid-rf] %s taskId belum ada, coba ke-%d/%d..."):format(
+                        pkg:gsub("com%.roblox%.",""), r, MAX_RETRY))
+                    os.execute("sleep 1")
+                    local dump2 = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
+                    local wmap2 = parse_window_rf(dump2)
+                    local inf2 = wmap2[pkg]
+                    tid = inf2 and inf2.tid
+                    if tid then
+                        info(("[grid-rf] %s taskId=%s ketemu di percobaan ke-%d"):format(
+                            pkg:gsub("com%.roblox%.",""), tostring(tid), r))
+                        break
+                    end
+                end
             end
             if tid then
                 local cmd = ("su -c 'am task resize %d %d %d %d %d 2>/dev/null'"):format(
@@ -1906,7 +1920,7 @@ local function grid_rf_delta(pkgs, skip_cek)
                     nOk = nOk + 1
                 end
             else
-                warn(("[grid-rf] taskId tidak ditemukan untuk %s -- skip resize"):format(
+                warn(("[grid-rf] %s taskId tetap tidak ditemukan setelah 10x retry -- skip"):format(
                     pkg:gsub("com%.roblox%.","") ))
             end
         end
