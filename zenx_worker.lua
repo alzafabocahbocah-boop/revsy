@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.606 — paksa landscape layar RF di awal open_all untuk delta_split
+-- zenx_worker v9.607 — paksa landscape sedini mungkin di setup_preset untuk delta_split
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.606"
+local VERSION = "9.607"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -4159,6 +4159,14 @@ local function setup_otomatis(namaPreset)
     cfg.script_label = pre.sc .. (timGrup and (" T" .. timGrup) or "")   -- v9.436: "UP6KG T2" -> panel baca tim dari sc (STAT_TIM)
     cfg.timGrup      = timGrup
     cfg.delta_split  = pre.delta_split or false   -- v9.591: true = split screen mode, skip paksa fullscreen
+    -- v9.607: delta_split -> paksa landscape SEDINI MUNGKIN (langsung pas preset di-load, sebelum open_all)
+    if cfg.delta_split then
+        pcall(function()
+            sh_silent("su -c 'settings put system accelerometer_rotation 0 2>/dev/null'")
+            sh_silent("su -c 'settings put system user_rotation 1 2>/dev/null'")
+            info("[grid-rf] layar dipaksa landscape (setup_preset)")
+        end)
+    end
     if timGrup then ok("Tim grup: " .. timGrup .. " (up6kg multi-device)") end
     cfg.script_url   = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/" .. pre.url
     ok("Game  : " .. cfg.game_label)
