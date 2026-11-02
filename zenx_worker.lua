@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.592 — uplevelnew-delta: sc="UPLEVELNEW-DELTA" biar panel bisa tampil badge delta
+-- zenx_worker v9.593 — PERF commands: CLEARCACHE/FREEMEM/PERFMODE dari panel (bersihkan cache Roblox, bebaskan RAM, mode performa)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.592"
+local VERSION = "9.593"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -7226,7 +7226,66 @@ local function run(cfg)
             skip_sisa = true
         end
 
+        -- v9.593: PERF commands dari panel — CLEARCACHE, FREEMEM, PERFMODE
         local isiU = isi:upper()
+        if isiU:find("^CLEARCACHE") and isi ~= lastIsi then
+            lastIsi = isi
+            info("[PERF] CLEARCACHE — hapus cache Roblox semua client")
+            tambahLog("CLEARCACHE: hapus cache Roblox...")
+            local pkgList = split(cfg.pkgs or "")
+            local nBersih = 0
+            for _, pkg in ipairs(pkgList) do
+                local r = sh("su -c 'pm clear " .. pkg .. " 2>/dev/null'") or ""
+                if r:find("Success", 1, true) then nBersih = nBersih + 1 end
+            end
+            ok(("[PERF] cache dibersihkan: %d/%d pkg"):format(nBersih, #pkgList))
+            tambahLog(("CLEARCACHE selesai: %d/%d pkg"):format(nBersih, #pkgList))
+            skip_sisa = true
+        end
+
+        if isiU:find("^FREEMEM") and isi ~= lastIsi then
+            lastIsi = isi
+            info("[PERF] FREEMEM — bebaskan memori (kill proses background)")
+            tambahLog("FREEMEM: bebaskan RAM...")
+            -- kill semua proses berat selain Roblox dan Termux
+            sh_silent("su -c 'am kill-all 2>/dev/null'")
+            -- compact memori via /proc/sys/vm/drop_caches (butuh root)
+            sh_silent("su -c 'sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null'")
+            local memInfo = sh("cat /proc/meminfo 2>/dev/null | grep MemAvailable") or ""
+            local mb = tonumber(memInfo:match("(%d+)")) or 0
+            local mbStr = mb > 0 and (math.floor(mb/1024) .. " MB bebas") or "?"
+            ok("[PERF] FREEMEM selesai — RAM sekarang: " .. mbStr)
+            tambahLog("FREEMEM selesai — " .. mbStr)
+            skip_sisa = true
+        end
+
+        if isiU:find("^PERFMODE") and isi ~= lastIsi then
+            lastIsi = isi
+            info("[PERF] PERFMODE — mode performa: bersihkan cache + bebaskan RAM + tutup app lain")
+            tambahLog("PERFMODE: mulai optimasi...")
+            -- 1) tutup app lain (selain Roblox, Termux, system)
+            local skipPkg = { ["com.termux"] = true, ["com.redfinger.global"] = true, ["android"] = true }
+            for _, pkg in ipairs(split(cfg.pkgs or "")) do skipPkg[pkg] = true end
+            local runningRaw = sh("su -c 'pm list packages 2>/dev/null | head -50'") or ""
+            -- lebih aman: kill semua kecuali skip
+            sh_silent("su -c 'am kill-all 2>/dev/null'")
+            -- 2) bersihkan cache semua Roblox
+            local pkgList = split(cfg.pkgs or "")
+            local nBersih = 0
+            for _, pkg in ipairs(pkgList) do
+                local r = sh("su -c 'pm clear " .. pkg .. " 2>/dev/null'") or ""
+                if r:find("Success", 1, true) then nBersih = nBersih + 1 end
+            end
+            -- 3) drop caches
+            sh_silent("su -c 'sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null'")
+            local memInfo2 = sh("cat /proc/meminfo 2>/dev/null | grep MemAvailable") or ""
+            local mb2 = tonumber(memInfo2:match("(%d+)")) or 0
+            local mbStr2 = mb2 > 0 and (math.floor(mb2/1024) .. " MB bebas") or "?"
+            ok(("[PERF] PERFMODE selesai — cache %d pkg bersih, RAM: %s"):format(nBersih, mbStr2))
+            tambahLog(("PERFMODE selesai — cache %d pkg, RAM %s"):format(nBersih, mbStr2))
+            skip_sisa = true
+        end
+
         local hit  = (not mati) and (
             isiU:find("FORCE") ~= nil or
             isiU:find("REJOIN") ~= nil or
