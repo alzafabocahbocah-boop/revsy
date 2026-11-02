@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.607 — paksa landscape sedini mungkin di setup_preset untuk delta_split
+-- zenx_worker v9.608 — paksa landscape setelah am start di open_one untuk delta_split
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.607"
+local VERSION = "9.608"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -2069,6 +2069,10 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- taskId baru ada setelah window Roblox terbuka, makanya dilakukan di sini
     if cfg.delta_split then
         pcall(function()
+            -- v9.608: paksa landscape SETELAH Roblox dibuka (Roblox bisa override user_rotation)
+            sh_silent("su -c 'settings put system accelerometer_rotation 0 2>/dev/null'")
+            sh_silent("su -c 'settings put system user_rotation 1 2>/dev/null'")
+            info("[grid-rf] paksa landscape setelah am start")
             local all_pkgs = split(cfg.pkgs or "")
             grid_rf_delta(all_pkgs, true)  -- skip_cek=true: langsung resize setelah buka
         end)
