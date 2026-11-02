@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.602 — fix parse_window_rf: grep per-pkg, bukan split blok
+-- zenx_worker v9.603 — fix parse_window_rf: exact match pkg (client vs clienu)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.602"
+local VERSION = "9.603"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1808,21 +1808,25 @@ local function parse_window_rf(dump)
     local map = {}
     local pkgs_rf = { "com.roblox.client", "com.roblox.clienu" }
     for _, pkg in ipairs(pkgs_rf) do
+        -- exact match: pkg diikuti karakter non-alphanum (slash, space, quote)
+        -- penting: "com.roblox.client" tidak boleh match "com.roblox.clienu"
+        local pkg_pat = pkg:gsub("%.", "%%.") .. "[^%w_]"
+
         -- taskId: cari "rootTaskId=N" yang dekat dengan nama pkg (dalam 600 char)
         local tid
         for pos, id in dump:gmatch("()rootTaskId=(%d+)") do
             local chunk = dump:sub(pos, pos + 600)
-            if chunk:find(pkg, 1, true) then
+            if chunk:find(pkg_pat) then
                 tid = id
                 break
             end
         end
-        -- fallback: cari "tN}" pola di nama class pkg
+        -- fallback: pola "pkg/Activity tN}"
         if not tid then
             tid = dump:match(pkg:gsub("%.", "%%.") .. "/[%w.]+%s+t(%d+)")
         end
-        -- mBounds: cari setelah nama pkg muncul
-        local pos_pkg = dump:find(pkg, 1, true)
+        -- mBounds: cari setelah posisi pkg exact muncul
+        local pos_pkg = dump:find(pkg_pat)
         local l, t, r, b
         if pos_pkg then
             local chunk = dump:sub(pos_pkg, pos_pkg + 1500)
