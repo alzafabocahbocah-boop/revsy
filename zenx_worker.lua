@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.591 — uplevelnew-delta: skip paksa fullscreen (biar split screen tetap hidup)
+-- zenx_worker v9.592 — uplevelnew-delta: sc="UPLEVELNEW-DELTA" biar panel bisa tampil badge delta
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.591"
+local VERSION = "9.592"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -2423,8 +2423,9 @@ local function grid_hitung(cfg, pkgsPilih)
 
     local kol, bar
     local barPaksa = tonumber(cfg.grid_kolom)
-    if cfg.script_label == "UPLEVEL" or cfg.script_label == "UPLEVELNEW" then
+    if cfg.script_label == "UPLEVEL" or tostring(cfg.script_label or ""):find("^UPLEVELNEW") then
         -- v9.520: kalau ≤2 client -> pakai SUSUNAN (2 kolom 1 baris), bukan paksa 3-baris
+        -- v9.592: match UPLEVELNEW dan UPLEVELNEW-DELTA (pakai find("^UPLEVELNEW"))
         if n <= 2 then
             barPaksa = nil  -- biar jatuh ke SUSUNAN[n] -> {2,1} landscape
         else
@@ -3912,7 +3913,7 @@ local function setup_otomatis(namaPreset)
         ["up3.8kg"] = { place = "126884695634066", game = "GAG 1 UP3.8KG", sc = "UP3.8KG", url = "up3.8kg" },
         uplevel = { place = "126884695634066", game = "GAG 1 UPLEVEL", sc = "UPLEVEL", url = "uplevel" },
         uplevelnew = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew" },
-        ["uplevelnew-delta"] = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew", delta_split = true },  -- v9.590: alias uplevelnew buat split screen kiri-kanan (2 akun per HP, grid 2 kolom 1 baris otomatis)
+        ["uplevelnew-delta"] = { place = "126884695634066", game = "GAG 1 UPLEVELNEW DELTA", sc = "UPLEVELNEW-DELTA", url = "uplevelnew", delta_split = true },  -- v9.590: alias uplevelnew buat split screen kiri-kanan (2 akun per HP, grid 2 kolom 1 baris otomatis) | v9.592: sc+game beda biar panel bisa tampil badge delta
         hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
