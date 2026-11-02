@@ -194,7 +194,7 @@ export default {
     // Cuma balikin versi backend, gak ada data sensitif.
     if (jalur === "/versi" && req.method === "GET") {
       return new Response(
-        JSON.stringify({ versi: "v8.91-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
+        JSON.stringify({ versi: "v8.93-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
         { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
       );
     }
@@ -1623,7 +1623,7 @@ export default {
         // akun leveling otomatis diarahkan ke PS-nya sendiri
         await db.prepare("UPDATE akun SET ps_nama=?1 WHERE nama=?2")
           .bind(isi ? ("lvl:" + akun) : "", akun).run();
-        // v8.92: sekalian update cookies.ps_link supaya worker bisa baca langsung tanpa getps
+        // sekalian update cookies.ps_link supaya worker bisa baca via /ps-list tanpa getps
         try { await db.prepare("UPDATE cookies SET ps_link=?1 WHERE akun=?2").bind(isi, akun).run(); } catch {}
         await tandaiPsGanti();
         return json({ ok: true, akun, link: isi });
@@ -3240,18 +3240,17 @@ export default {
       }
 
       // /ps-list : daftar akun + ps_link (buat worker & panel).
-      // v8.91: gabung cookies.ps_link (dari getps) + assignment panel (akun.ps_nama + ps_template / cfg pslink)
-      // supaya worker bisa baca PS custom yang di-assign dari panel tanpa harus getps ulang.
+      // v8.91: gabung cookies.ps_link (dari getps/assign panel) + assignment panel via akun+ps_template
       if (jalur === "/ps-list" && req.method === "GET") {
         try {
-          // 1) dari cookies.ps_link (hasil getps)
+          // 1) dari cookies.ps_link (diisi getps atau assign panel via /ps-akun)
           const rowsCk = await db.prepare(
             "SELECT akun, ps_link FROM cookies WHERE ps_link IS NOT NULL AND ps_link != ''"
           ).all();
           const peta = {};
           for (const r of (rowsCk.results || [])) peta[r.akun] = r.ps_link;
 
-          // 2) dari assignment panel: akun.ps_nama -> ps_template.link ATAU cfg pslink (lvl:<akun>)
+          // 2) akun.ps_nama -> ps_template.link (assign panel, fallback kalau cookies.ps_link kosong)
           let pslink = {};
           try {
             const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
@@ -3264,7 +3263,7 @@ export default {
                WHERE a.ps_nama IS NOT NULL AND a.ps_nama != ''`
             ).all();
             for (const r of (ra.results || [])) {
-              if (peta[r.akun]) continue;   // getps lebih prioritas
+              if (peta[r.akun]) continue;
               const nm = r.ps_nama || "";
               if (nm.startsWith("lvl:")) {
                 const lnk = pslink[nm.slice(4)] || "";
@@ -3278,8 +3277,7 @@ export default {
           const ps = Object.entries(peta).map(([akun, ps_link]) => ({ akun, ps_link }));
           return json({ ok: true, ps });
         } catch (e) {
-          return json({ ok: true, ps: [],
-            pesan: "Error ps-list: " + e.message });
+          return json({ ok: true, ps: [], pesan: "Error ps-list: " + e.message });
         }
       }
 
