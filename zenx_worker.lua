@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.604 — grid_rf_delta retry taskId sampai 10x sebelum skip
+-- zenx_worker v9.605 — cek+fix grid SETELAH am start, bukan sebelum (taskId baru ada setelah window muncul)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.604"
+local VERSION = "9.605"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1935,27 +1935,7 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     if KICK_DIURUS["captcha:" .. pkg] then
         return   -- di-skip, nunggu user solve manual
     end
-    -- v9.601: delta_split -> cek grid RF sebelum tembak/rejoin, fix kalau meleset
-    if cfg.delta_split then
-        pcall(function()
-            local all_pkgs = split(cfg.pkgs or "")
-            local idx = nil
-            for i, p in ipairs(all_pkgs) do if p == pkg then idx = i; break end end
-            local g = idx and RF_GRID[idx]
-            if g then
-                local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
-                local wmap = parse_window_rf(dump)
-                local inf  = wmap[pkg]
-                if not grid_rf_pas(inf, g) then
-                    -- posisi meleset -> fix dulu sebelum tembak
-                    info(("[grid-rf] %s posisi meleset, fix sebelum tembak..."):format(pkg:gsub("com%.roblox%.","")))
-                    grid_rf_delta(all_pkgs)
-                else
-                    -- sudah bener, skip
-                end
-            end
-        end)
-    end
+    -- v9.605: cek+fix grid SETELAH am start (window harus ada dulu baru ada taskId)
     if alasan ~= "start-bypass" then
         local _scl1 = tostring(cfg.script_label or "")
         if not (_scl1:find("UP6KG") or _scl1:find("UP3", 1, true) or _scl1:find("LEVELING")) then
@@ -2084,6 +2064,15 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
 
     local cmd = coba(WIN_OK)
     sh_silent(cmd)
+
+    -- v9.605: delta_split -> setelah am start, tunggu window muncul lalu fix grid
+    -- taskId baru ada setelah window Roblox terbuka, makanya dilakukan di sini
+    if cfg.delta_split then
+        pcall(function()
+            local all_pkgs = split(cfg.pkgs or "")
+            grid_rf_delta(all_pkgs, true)  -- skip_cek=true: langsung resize setelah buka
+        end)
+    end
 end
 
 local function pkg_hidup(pkg)
