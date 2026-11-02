@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.590 — tambah preset uplevelnew-delta (split screen kiri-kanan)
+-- zenx_worker v9.591 — uplevelnew-delta: skip paksa fullscreen (biar split screen tetap hidup)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.590"
+local VERSION = "9.591"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -3912,7 +3912,7 @@ local function setup_otomatis(namaPreset)
         ["up3.8kg"] = { place = "126884695634066", game = "GAG 1 UP3.8KG", sc = "UP3.8KG", url = "up3.8kg" },
         uplevel = { place = "126884695634066", game = "GAG 1 UPLEVEL", sc = "UPLEVEL", url = "uplevel" },
         uplevelnew = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew" },
-        ["uplevelnew-delta"] = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew" },  -- v9.590: alias uplevelnew buat split screen kiri-kanan (2 akun per HP, grid 2 kolom 1 baris otomatis)
+        ["uplevelnew-delta"] = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew", delta_split = true },  -- v9.590: alias uplevelnew buat split screen kiri-kanan (2 akun per HP, grid 2 kolom 1 baris otomatis)
         hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
@@ -3988,6 +3988,7 @@ local function setup_otomatis(namaPreset)
     cfg.game_label   = pre.game   -- "GAG 1 UP6KG" (tanpa tim)
     cfg.script_label = pre.sc .. (timGrup and (" T" .. timGrup) or "")   -- v9.436: "UP6KG T2" -> panel baca tim dari sc (STAT_TIM)
     cfg.timGrup      = timGrup
+    cfg.delta_split  = pre.delta_split or false   -- v9.591: true = split screen mode, skip paksa fullscreen
     if timGrup then ok("Tim grup: " .. timGrup .. " (up6kg multi-device)") end
     cfg.script_url   = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/" .. pre.url
     ok("Game  : " .. cfg.game_label)
@@ -5183,7 +5184,8 @@ local function run(cfg)
         TMB.cek(cfg)   -- v9.489: cek ada paste URL PS -> menu tembak client
 
         -- v9.562: tiap 10 detik cek kalau ada Roblox yang nyasar ke freeform stack -> pindah ke fullscreen
-        if os.time() - FREEFORM_CEK_TS >= 10 then
+        -- v9.591: skip kalau delta_split=true (split screen mode, biarkan freeform/split tetap hidup)
+        if not cfg.delta_split and os.time() - FREEFORM_CEK_TS >= 10 then
             FREEFORM_CEK_TS = os.time()
             pcall(function()
                 local pkgs = split(cfg.pkgs or "")
