@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.608 — paksa landscape setelah am start di open_one untuk delta_split
+-- zenx_worker v9.609 — paksa landscape via wm user-rotation lock untuk delta_split
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.608"
+local VERSION = "9.609"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -2069,10 +2069,11 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- taskId baru ada setelah window Roblox terbuka, makanya dilakukan di sini
     if cfg.delta_split then
         pcall(function()
-            -- v9.608: paksa landscape SETELAH Roblox dibuka (Roblox bisa override user_rotation)
+            -- v9.609: paksa landscape via wm user-rotation lock setelah Roblox dibuka
             sh_silent("su -c 'settings put system accelerometer_rotation 0 2>/dev/null'")
             sh_silent("su -c 'settings put system user_rotation 1 2>/dev/null'")
-            info("[grid-rf] paksa landscape setelah am start")
+            sh_silent("su -c 'wm user-rotation lock 1 2>/dev/null'")
+            info("[grid-rf] paksa landscape setelah am start (wm lock)")
             local all_pkgs = split(cfg.pkgs or "")
             grid_rf_delta(all_pkgs, true)  -- skip_cek=true: langsung resize setelah buka
         end)
@@ -4163,12 +4164,13 @@ local function setup_otomatis(namaPreset)
     cfg.script_label = pre.sc .. (timGrup and (" T" .. timGrup) or "")   -- v9.436: "UP6KG T2" -> panel baca tim dari sc (STAT_TIM)
     cfg.timGrup      = timGrup
     cfg.delta_split  = pre.delta_split or false   -- v9.591: true = split screen mode, skip paksa fullscreen
-    -- v9.607: delta_split -> paksa landscape SEDINI MUNGKIN (langsung pas preset di-load, sebelum open_all)
+    -- v9.609: delta_split -> paksa landscape via wm user-rotation lock (lebih dalam dari settings put)
     if cfg.delta_split then
         pcall(function()
             sh_silent("su -c 'settings put system accelerometer_rotation 0 2>/dev/null'")
             sh_silent("su -c 'settings put system user_rotation 1 2>/dev/null'")
-            info("[grid-rf] layar dipaksa landscape (setup_preset)")
+            sh_silent("su -c 'wm user-rotation lock 1 2>/dev/null'")
+            info("[grid-rf] layar dipaksa landscape (wm lock, setup_preset)")
         end)
     end
     if timGrup then ok("Tim grup: " .. timGrup .. " (up6kg multi-device)") end
@@ -5293,6 +5295,7 @@ local function run(cfg)
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
     local LISENSI_CEK_TS = 0   -- v9.239: kapan terakhir cek lisensi PRIORITAS (top-loop, tiap 60s)
     local lastSettingCek = 0   -- v9.34: kapan terakhir cek /setting-tim (tiap 5s)
+    local lastLandscapeCek = 0  -- v9.609: kapan terakhir enforce landscape (delta_split, tiap 10s)
     local lastCekGrafis = 0    -- v8.12: kapan terakhir cek all grafis (tiap 90s)
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
@@ -6453,6 +6456,18 @@ local function run(cfg)
                     end
                 end
             end)()
+        end
+
+        -- v9.609: delta_split -> enforce landscape via wm user-rotation lock (lebih dalam dari settings put)
+        if cfg.delta_split and (now - lastLandscapeCek) >= 10 then
+            lastLandscapeCek = now
+            local rot = tonumber((sh("su -c 'settings get system user_rotation'") or ""):match("%d+"))
+            if rot ~= 1 then
+                sh_silent("su -c 'settings put system accelerometer_rotation 0 2>/dev/null'")
+                sh_silent("su -c 'settings put system user_rotation 1 2>/dev/null'")
+                sh_silent("su -c 'wm user-rotation lock 1 2>/dev/null'")
+                info("[grid-rf] landscape di-enforce ulang (wm lock, rotasi=" .. tostring(rot) .. ")")
+            end
         end
 
         if (now - lastSettingCek) >= 5 then
