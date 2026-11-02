@@ -194,7 +194,7 @@ export default {
     // Cuma balikin versi backend, gak ada data sensitif.
     if (jalur === "/versi" && req.method === "GET") {
       return new Response(
-        JSON.stringify({ versi: "v8.94-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
+        JSON.stringify({ versi: "v8.95-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
         { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
       );
     }
@@ -2590,17 +2590,23 @@ export default {
         const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
         let pslink = {};
         if (cl) { try { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslink = d; } catch {} }
-        // v8.94: fallback ke cookies.ps_link kalau cfg pslink kosong untuk akun lvl:
+        // v8.95: fallback lvl: -> ps_template.link (nama template = nama akun tanpa prefix)
+        //        + cookies.ps_link sebagai fallback terakhir
         const ckRows = await db.prepare(
           "SELECT akun, ps_link FROM cookies WHERE ps_link IS NOT NULL AND ps_link != ''"
         ).all();
         const ckMap = {};
         for (const r of (ckRows.results || [])) ckMap[r.akun] = r.ps_link;
+        // ambil semua template link sekaligus biar gak N+1 query
+        const tplRows = await db.prepare("SELECT nama, link FROM ps_template WHERE link IS NOT NULL AND link != ''").all();
+        const tplMap = {};
+        for (const r of (tplRows.results || [])) tplMap[r.nama] = r.link;
         const assign = (rs.results || []).map((r) => {
           const nm = r.ps_nama || "";
           if (nm.startsWith("lvl:")) {
             const akunNm = nm.slice(4);
-            const lnk = pslink[akunNm] || ckMap[r.akun] || "";
+            // priority: cfg pslink > ps_template (nama = akunNm) > cookies.ps_link
+            const lnk = pslink[akunNm] || tplMap[akunNm] || ckMap[r.akun] || "";
             return { ...r, link: lnk };
           }
           return r;
