@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.600 — grid RF freeform (windowingMode 5 + am task resize) khusus delta_split
+-- zenx_worker v9.601 — cek grid RF sebelum tiap tembak/rejoin delta_split, fix kalau meleset
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.600"
+local VERSION = "9.601"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1795,51 +1795,117 @@ end
 local WIN_OK = nil   -- nil=belum dites, true=didukung, false=ditolak
 
 -- v9.600: atur grid freeform RF khusus delta_split (2 client: client kiri, clienu kanan)
+-- v9.601: cek posisi dulu sebelum resize -- kalau sudah pas, skip (gak ganggu window)
 -- Layar 1280x720 landscape. client -> 0,0,640,720 | clienu -> 640,0,1280,720
--- taskId dibaca dinamis dari dumpsys window windows
-local function grid_rf_delta(pkgs)
-    -- Baca taskId tiap pkg dari dumpsys
-    local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
-    local taskMap = {}
-    -- cari pola: rootTaskId=<N> ... package=<pkg>  (dalam 500 karakter setelah rootTaskId)
-    for taskId, after in dump:gmatch("rootTaskId=(%d+)(.-)%f[%a]mOwnerUid=") do
-        local pkg = after:match("package=(com%.roblox%.[%w_]+)")
-        if pkg and not taskMap[pkg] then
-            taskMap[pkg] = tonumber(taskId)
-        end
-    end
-    -- fallback: cari via "com.roblox.X/... tN}" pattern
-    if not next(taskMap) then
-        for pkg_m, t in dump:gmatch("(com%.roblox%.[%w_]+)/[%w.]+%s+t(%d+)") do
-            if not taskMap[pkg_m] then taskMap[pkg_m] = tonumber(t) end
-        end
-    end
+-- taskId dan posisi window dibaca dinamis dari dumpsys window windows
 
-    -- Grid layout: 2 kolom, layar 1280x720 landscape
-    -- pkg ke-1 -> kiri (0,0,640,720), pkg ke-2 -> kanan (640,0,1280,720)
-    local grid = {
-        { l=0,   t=0, r=640,  b=720 },
-        { l=640, t=0, r=1280, b=720 },
-    }
+-- Toleransi piksel posisi window (bisa ada selisih kecil karena decoration bar)
+local GRID_RF_TOL = 10
 
-    local nOk = 0
-    for i, pkg in ipairs(pkgs) do
-        local g = grid[i]
-        if not g then break end
-        local tid = taskMap[pkg]
-        if tid then
-            local cmd = ("su -c 'am task resize %d %d %d %d %d 2>/dev/null'"):format(
-                tid, g.l, g.t, g.r, g.b)
-            local out = sh(cmd) or ""
-            if out:find("[Ee]rror") or out:find("[Ff]ailed") then
-                warn(("[grid-rf] resize taskId=%d (%s) gagal: %s"):format(tid, pkg:gsub("com%.roblox%.",""), out:sub(1,80)))
-            else
-                ok(("[grid-rf] %s taskId=%d -> [%d,%d,%d,%d]"):format(pkg:gsub("com%.roblox%.",""), tid, g.l, g.t, g.r, g.b))
-                nOk = nOk + 1
+-- Parse dump window -> map[pkg] = {tid=N, l=L, t=T, r=R, b=B}
+local function parse_window_rf(dump)
+    local map = {}
+    -- Cari blok per Window: "package=com.roblox.X" dan "rootTaskId=N" dan "mBounds=Rect(L, T - R, B)"
+    -- dumpsys window output: tiap window punya rootTaskId dan mBounds di baris terpisah
+    -- Strategi: split per Window# entry, parse tiap blok
+    for blok in (dump .. "\n  Window #"):gmatch("  Window #(.-)%f[  ]  Window #") do
+        local pkg = blok:match("package=(com%.roblox%.[%w_]+)")
+        if pkg then
+            local tid = blok:match("rootTaskId=(%d+)")
+            -- mBounds=Rect(L, T - R, B)
+            local l, t, r, b = blok:match("mBounds=Rect%((%d+),%s*(%d+)%s*%-%s*(%d+),%s*(%d+)%)")
+            if not map[pkg] then
+                map[pkg] = {
+                    tid = tid and tonumber(tid) or nil,
+                    l   = l and tonumber(l) or nil,
+                    t   = t and tonumber(t) or nil,
+                    r   = r and tonumber(r) or nil,
+                    b   = b and tonumber(b) or nil,
+                }
             end
-        else
-            warn(("[grid-rf] taskId tidak ditemukan untuk %s -- skip resize"):format(pkg:gsub("com%.roblox%.","") ))
         end
+    end
+    -- fallback kalau blok split gak kena: cari rootTaskId + package berdekatan
+    for pkg, _ in pairs(map) do
+        if not map[pkg].tid then
+            local pat = "rootTaskId=(%d+)[^\n]-\n[^\n]-package=" .. pkg:gsub("%.", "%%.")
+            local tid2 = dump:match(pat)
+            if tid2 then map[pkg].tid = tonumber(tid2) end
+        end
+    end
+    return map
+end
+
+-- Cek apakah posisi window pkg sudah sesuai target (dalam toleransi)
+local function grid_rf_pas(info_pkg, g)
+    if not info_pkg or not info_pkg.l then return false end
+    return math.abs(info_pkg.l - g.l) <= GRID_RF_TOL
+       and math.abs(info_pkg.t - g.t) <= GRID_RF_TOL
+       and math.abs(info_pkg.r - g.r) <= GRID_RF_TOL
+       and math.abs(info_pkg.b - g.b) <= GRID_RF_TOL
+end
+
+-- Grid layout tetap: 2 kolom landscape 1280x720
+-- pkg ke-1 -> kiri, pkg ke-2 -> kanan
+local RF_GRID = {
+    { l=0,   t=0, r=640,  b=720 },
+    { l=640, t=0, r=1280, b=720 },
+}
+
+-- Cek grid RF delta: return true kalau SEMUA pkg sudah di posisi yang bener
+local function cek_grid_rf(pkgs)
+    local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
+    local wmap = parse_window_rf(dump)
+    for i, pkg in ipairs(pkgs) do
+        local g = RF_GRID[i]
+        if not g then break end
+        if not grid_rf_pas(wmap[pkg], g) then return false end
+    end
+    return true
+end
+
+-- Atur/fix grid RF: cek dulu tiap pkg, resize hanya yang meleset
+local function grid_rf_delta(pkgs, skip_cek)
+    local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
+    local wmap = parse_window_rf(dump)
+
+    local nOk, nSkip = 0, 0
+    for i, pkg in ipairs(pkgs) do
+        local g = RF_GRID[i]
+        if not g then break end
+        local inf = wmap[pkg]
+        -- Kalau skip_cek=true (habis buka), langsung resize tanpa cek posisi lama
+        if not skip_cek and grid_rf_pas(inf, g) then
+            info(("[grid-rf] %s sudah di posisi [%d,%d,%d,%d] -- skip"):format(
+                pkg:gsub("com%.roblox%.",""), g.l, g.t, g.r, g.b))
+            nSkip = nSkip + 1
+        else
+            local tid = inf and inf.tid
+            if not tid then
+                -- cari taskId via fallback pattern tN}
+                local t2 = dump:match(pkg:gsub("%.","%%.") .. "/[%w.]+%s+t(%d+)")
+                tid = t2 and tonumber(t2)
+            end
+            if tid then
+                local cmd = ("su -c 'am task resize %d %d %d %d %d 2>/dev/null'"):format(
+                    tid, g.l, g.t, g.r, g.b)
+                local out = sh(cmd) or ""
+                if out:find("[Ee]rror") or out:find("[Ff]ailed") then
+                    warn(("[grid-rf] resize taskId=%d (%s) gagal: %s"):format(
+                        tid, pkg:gsub("com%.roblox%.",""), out:sub(1,80)))
+                else
+                    ok(("[grid-rf] fix %s taskId=%d -> [%d,%d,%d,%d]"):format(
+                        pkg:gsub("com%.roblox%.",""), tid, g.l, g.t, g.r, g.b))
+                    nOk = nOk + 1
+                end
+            else
+                warn(("[grid-rf] taskId tidak ditemukan untuk %s -- skip resize"):format(
+                    pkg:gsub("com%.roblox%.","") ))
+            end
+        end
+    end
+    if nSkip > 0 and nOk == 0 then
+        info(("[grid-rf] semua %d client grid sudah bener, gak perlu fix"):format(nSkip))
     end
     return nOk
 end
@@ -1847,6 +1913,27 @@ end
 local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     if KICK_DIURUS["captcha:" .. pkg] then
         return   -- di-skip, nunggu user solve manual
+    end
+    -- v9.601: delta_split -> cek grid RF sebelum tembak/rejoin, fix kalau meleset
+    if cfg.delta_split then
+        pcall(function()
+            local all_pkgs = split(cfg.pkgs or "")
+            local idx = nil
+            for i, p in ipairs(all_pkgs) do if p == pkg then idx = i; break end end
+            local g = idx and RF_GRID[idx]
+            if g then
+                local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
+                local wmap = parse_window_rf(dump)
+                local inf  = wmap[pkg]
+                if not grid_rf_pas(inf, g) then
+                    -- posisi meleset -> fix dulu sebelum tembak
+                    info(("[grid-rf] %s posisi meleset, fix sebelum tembak..."):format(pkg:gsub("com%.roblox%.","")))
+                    grid_rf_delta(all_pkgs)
+                else
+                    -- sudah bener, skip
+                end
+            end
+        end)
     end
     if alasan ~= "start-bypass" then
         local _scl1 = tostring(cfg.script_label or "")
@@ -3739,7 +3826,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     if cfg.delta_split and hasil.ok > 0 then
         info("[grid-rf] delta_split: atur grid freeform 2 client (jeda 2s dulu)...")
         os.execute("sleep 2")
-        pcall(function() grid_rf_delta(list) end)
+        pcall(function() grid_rf_delta(list, true) end)  -- skip_cek=true: window baru dibuka, langsung resize
     end
 
     local scanCk = {}
