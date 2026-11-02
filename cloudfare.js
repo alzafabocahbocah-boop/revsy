@@ -194,7 +194,7 @@ export default {
     // Cuma balikin versi backend, gak ada data sensitif.
     if (jalur === "/versi" && req.method === "GET") {
       return new Response(
-        JSON.stringify({ versi: "v8.96-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
+        JSON.stringify({ versi: "v8.97-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
         { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
       );
     }
@@ -1985,6 +1985,10 @@ export default {
         for (const m of market) {
           const ps = m.ps_nama || "";
           if (!ps.startsWith("lvl:")) continue;          // gak lagi di gudang
+          // v8.97: akun leveling yang ps_nama = "lvl:<namanya sendiri>" bukan market
+          // yang nyangkut di gudang -- itu memang PS pribadi akun leveling.
+          // Skip biar ps_nama-nya gak ke-reset sama logic sapu bersih ini.
+          if (ps.toLowerCase() === "lvl:" + m.nama.toLowerCase()) continue;
           if ((m.petrule || 0) < ambangStok) continue;   // masih butuh diisi
           if (m.nama in aktif) continue;                 // lagi dipakai suplai
           if (sudahPulang.has(m.nama)) continue;         // udah dipulangin langkah 1
