@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.593 — PERF commands: CLEARCACHE/FREEMEM/PERFMODE dari panel (bersihkan cache Roblox, bebaskan RAM, mode performa)
+-- zenx_worker v9.594 — delta_split: skip close/STOP/CLOSE/RESTART/bersihin_grid untuk uplevelnew-delta (client tidak pernah ditutup, cukup kirim URL baru)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.593"
+local VERSION = "9.594"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -4375,14 +4375,19 @@ function lisensi_false_alarm(cfg)
 end
 
 function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
-    warn("RESTART dari panel -> tutup SEMUA client, mulai dari nol")
     local function batal_buka()
         if _G.__ZenxForceRestart then return false end
         return ada_perintah_baru(cfg, isi)
     end
-    local n = close_all_cepat(cfg)   -- tutup barengan (cepet)
-    ok("RESTART: " .. n .. " client ditutup -- buka ulang fresh...")
-    os.execute("sleep 3")   -- proses bener2 mati (App Cloner baca prefs pas mati total)
+    -- v9.594: delta_split -> skip close (jangan tutup client, cukup kirim URL baru)
+    if cfg.delta_split then
+        info("RESTART delta -> SKIP tutup client (delta_split: cukup kirim URL baru)")
+    else
+        warn("RESTART dari panel -> tutup SEMUA client, mulai dari nol")
+        local n = close_all_cepat(cfg)   -- tutup barengan (cepet)
+        ok("RESTART: " .. n .. " client ditutup -- buka ulang fresh...")
+        os.execute("sleep 3")   -- proses bener2 mati (App Cloner baca prefs pas mati total)
+    end
     info("Place kepakai: " .. tostring(cfg.place_id) .. " (udah keset dari denyut)")
     do
         local dR = isi:match("RESTART:([%w%.%_%-,]+)")
@@ -4460,6 +4465,11 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
         end
     end
     if not gridUdahPas then
+    -- v9.594: delta_split -> skip hapus grid (grid 2 kolom sudah fix, gak perlu reset)
+    if cfg.delta_split then
+        info("[cek-grid] delta_split -> SKIP bersihin_grid (grid 2 kolom fixed)")
+        SUDAH_GRID = false; GRID_CACHE = nil
+    else
     pcall(function() bersihin_grid_semua(cfg) end)
     SUDAH_GRID = false
     GRID_CACHE = nil
@@ -4540,6 +4550,7 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
             warn("Grid gagal dihitung (peta nil) -- open client tanpa pre-grid")
         end
     end
+    end -- tutup else (non-delta: blok bersihin_grid selesai)
     end -- v9.73: tutup 'if not gridUdahPas' (skip bersihin+tulis kalau grid udah pas)
     local daftarR = isi:match("RESTART:([%w%.%_,]+)")
     if daftarR then
@@ -6281,6 +6292,16 @@ local function run(cfg)
                 if serverBeda then
                     info("Server BEDA (" .. tostring(SERVER_TERAKHIR) .. " -> " .. sServer .. ") -- restart pakai server baru")
                 end
+                -- v9.594: delta_split -> setting panel berubah tapi SKIP RESTART (cukup update server)
+                if cfg.delta_split then
+                    info("SETTING PANEL BERUBAH (delta) -> SKIP RESTART, update server langsung")
+                    SETTING_TS_TERAKHIR = tsBaru
+                    if sPlace ~= "" then cfg.place_id = sPlace end
+                    if sGrid > 0 then cfg.grid_kolom = sGrid end
+                    pcall(function() save_config(cfg) end)
+                    refresh_ps(); pcall(refresh_ps_getps)
+                    goto lewatSetting
+                end
                 warn("SETTING PANEL BERUBAH (place/grid beda) -> RESTART sendiri pakai setting baru")
                 SETTING_TS_TERAKHIR = tsBaru
                 if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" or s:find("UPLEVEL") end)() and sPlace ~= "" and sPlace ~= "126884695634066" and sPlace ~= "129954712878723" then
@@ -6910,6 +6931,10 @@ local function run(cfg)
         elseif U:find("CLOSE") then
             if isi ~= lastIsi then
                 lastIsi = isi
+                -- v9.594: delta_split -> CLOSE diblok (jangan tutup client delta)
+                if cfg.delta_split then
+                    info("CLOSE delta -> SKIP (delta_split: client tidak di-close)")
+                else
                 local daftarC = isi:match("CLOSE:([%w%.%_%-,]+)")
                 if daftarC then
                     local onlyC = {}
@@ -6940,6 +6965,7 @@ local function run(cfg)
                     ok("CLOSE: " .. n .. " client ditutup")
                     notify("ZenX "..cfg.tim, "CLOSE -> "..n.." client ditutup")
                 end
+                end -- tutup else (non-delta blok CLOSE)
                 lapor(cfg, isi, cacheRun)
                 lastStatus = os.time()
             end
@@ -6964,9 +6990,14 @@ local function run(cfg)
                         local isHactOto = (cfg.script_label or ""):upper() == "HACT OTO"
                         if KICK_DIURUS["start_fresh"] then
                             KICK_DIURUS["start_fresh"] = nil
-                            warn("START (via TEMBAK) -> tutup SEMUA client dulu (clean start)")
-                            pcall(function() close_all_cepat(cfg) end)
-                            os.execute("sleep 3")
+                            -- v9.594: delta_split -> skip close saat start_fresh
+                            if cfg.delta_split then
+                                info("START fresh delta -> SKIP tutup client (delta_split)")
+                            else
+                                warn("START (via TEMBAK) -> tutup SEMUA client dulu (clean start)")
+                                pcall(function() close_all_cepat(cfg) end)
+                                os.execute("sleep 3")
+                            end
                         end
                         warn(("REJOIN [%s] (TEMBAK anti-skip anti-block) -> %d client"):format(labelNama, #pkgsT))
                         local nTembak, nSkip = 0, 0
@@ -7296,9 +7327,14 @@ local function run(cfg)
             setAksi("standby — gak buka client")
             local isiStop = isi:upper():find("STOP")
             if isiStop and not KICK_DIURUS["stop_killed"] then
-                warn("STOP dari panel -> tutup SEMUA client BARENGAN (cepet)")
-                local n = close_all_cepat(cfg)
-                ok("STOP: " .. n .. " client ditutup. Pencet Start buat mulai fresh.")
+                -- v9.594: delta_split -> STOP tidak tutup client (biarkan jalan)
+                if cfg.delta_split then
+                    info("STOP delta -> SKIP tutup client (delta_split: client tetap jalan)")
+                else
+                    warn("STOP dari panel -> tutup SEMUA client BARENGAN (cepet)")
+                    local n = close_all_cepat(cfg)
+                    ok("STOP: " .. n .. " client ditutup. Pencet Start buat mulai fresh.")
+                end
                 KICK_DIURUS["stop_killed"] = true
                 SUDAH_GRID = false
                 lastOpen = 0
