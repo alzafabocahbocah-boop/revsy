@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.599 — skip getps warning kalau semua akun udah punya PS link dari assign panel
+-- zenx_worker v9.600 — grid RF freeform (windowingMode 5 + am task resize) khusus delta_split
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.599"
+local VERSION = "9.600"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1794,6 +1794,56 @@ end
 
 local WIN_OK = nil   -- nil=belum dites, true=didukung, false=ditolak
 
+-- v9.600: atur grid freeform RF khusus delta_split (2 client: client kiri, clienu kanan)
+-- Layar 1280x720 landscape. client -> 0,0,640,720 | clienu -> 640,0,1280,720
+-- taskId dibaca dinamis dari dumpsys window windows
+local function grid_rf_delta(pkgs)
+    -- Baca taskId tiap pkg dari dumpsys
+    local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
+    local taskMap = {}
+    -- cari pola: rootTaskId=<N> ... package=<pkg>  (dalam 500 karakter setelah rootTaskId)
+    for taskId, after in dump:gmatch("rootTaskId=(%d+)(.-)%f[%a]mOwnerUid=") do
+        local pkg = after:match("package=(com%.roblox%.[%w_]+)")
+        if pkg and not taskMap[pkg] then
+            taskMap[pkg] = tonumber(taskId)
+        end
+    end
+    -- fallback: cari via "com.roblox.X/... tN}" pattern
+    if not next(taskMap) then
+        for pkg_m, t in dump:gmatch("(com%.roblox%.[%w_]+)/[%w.]+%s+t(%d+)") do
+            if not taskMap[pkg_m] then taskMap[pkg_m] = tonumber(t) end
+        end
+    end
+
+    -- Grid layout: 2 kolom, layar 1280x720 landscape
+    -- pkg ke-1 -> kiri (0,0,640,720), pkg ke-2 -> kanan (640,0,1280,720)
+    local grid = {
+        { l=0,   t=0, r=640,  b=720 },
+        { l=640, t=0, r=1280, b=720 },
+    }
+
+    local nOk = 0
+    for i, pkg in ipairs(pkgs) do
+        local g = grid[i]
+        if not g then break end
+        local tid = taskMap[pkg]
+        if tid then
+            local cmd = ("su -c 'am task resize %d %d %d %d %d 2>/dev/null'"):format(
+                tid, g.l, g.t, g.r, g.b)
+            local out = sh(cmd) or ""
+            if out:find("[Ee]rror") or out:find("[Ff]ailed") then
+                warn(("[grid-rf] resize taskId=%d (%s) gagal: %s"):format(tid, pkg:gsub("com%.roblox%.",""), out:sub(1,80)))
+            else
+                ok(("[grid-rf] %s taskId=%d -> [%d,%d,%d,%d]"):format(pkg:gsub("com%.roblox%.",""), tid, g.l, g.t, g.r, g.b))
+                nOk = nOk + 1
+            end
+        else
+            warn(("[grid-rf] taskId tidak ditemukan untuk %s -- skip resize"):format(pkg:gsub("com%.roblox%.","") ))
+        end
+    end
+    return nOk
+end
+
 local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     if KICK_DIURUS["captcha:" .. pkg] then
         return   -- di-skip, nunggu user solve manual
@@ -1844,7 +1894,8 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         info(("   [join] %s -> %s | url=%s"):format(
             pkg:gsub("com%.roblox%.",""), jenisJoin, url))
     end
-    local wm = 0   -- v9.319: --windowingMode DIPAKSA OFF (RF/exe udah freeform sendiri, wm bikin DOUBLE BINGKAI)
+    -- v9.600: delta_split -> paksa windowingMode 5 (freeform RF); selain itu tetap 0 (RF exe udah freeform sendiri, wm bikin DOUBLE BINGKAI)
+    local wm = (cfg.delta_split == true) and 5 or 0
 
     if false then
     do
@@ -3682,6 +3733,13 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
         SUDAH_GRID = true
         catatKirim(os.date("%H:%M:%S") .. " GRID: posisi jendela ditulis buat "
                    .. hasil.ok .. " client yang baru dibuka")
+    end
+
+    -- v9.600: delta_split -> atur grid freeform RF setelah semua client dibuka
+    if cfg.delta_split and hasil.ok > 0 then
+        info("[grid-rf] delta_split: atur grid freeform 2 client (jeda 2s dulu)...")
+        os.execute("sleep 2")
+        pcall(function() grid_rf_delta(list) end)
     end
 
     local scanCk = {}
