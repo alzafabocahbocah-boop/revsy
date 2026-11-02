@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.605 — cek+fix grid SETELAH am start, bukan sebelum (taskId baru ada setelah window muncul)
+-- zenx_worker v9.606 — paksa landscape layar RF di awal open_all untuk delta_split
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.605"
+local VERSION = "9.606"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -3232,6 +3232,15 @@ function refresh_denyut_umur(cfg)
 end
 
 local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, paksaMasuk)
+    -- v9.606: delta_split -> paksa layar landscape sebelum buka Roblox
+    -- user_rotation 1 = landscape (90 derajat)
+    if cfg.delta_split then
+        pcall(function()
+            sh_silent("su -c 'settings put system accelerometer_rotation 0 2>/dev/null'")  -- matiin auto-rotate
+            sh_silent("su -c 'settings put system user_rotation 1 2>/dev/null'")           -- paksa landscape
+            info("[grid-rf] layar dipaksa landscape (user_rotation=1)")
+        end)
+    end
     refresh_denyut_umur(cfg)   -- v9.439: baca denyut FRESH dulu -> gak reopen client yg rejoin-nya udah berhasil
     local rotTim1 = nil
     if cfg.rotasi_on then
