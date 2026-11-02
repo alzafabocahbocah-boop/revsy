@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.594 — delta_split: skip close/STOP/CLOSE/RESTART/bersihin_grid untuk uplevelnew-delta (client tidak pernah ditutup, cukup kirim URL baru)
+-- zenx_worker v9.595 — delta_split: skip close di FORCE/start_fresh juga (fix FORCE masih tutup client) (client tidak pernah ditutup, cukup kirim URL baru)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.594"
+local VERSION = "9.595"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -3413,14 +3413,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
 
     if KICK_DIURUS["start_fresh"] then
         KICK_DIURUS["start_fresh"] = nil
-        if only and next(only) then
+        if cfg.delta_split then
+            info("START FRESH delta -> SKIP tutup client (delta_split: cukup kirim URL baru)")
+        elseif only and next(only) then
             warn("START FRESH -> tutup client TARGET aja (aman multi-akun)")
             pcall(function() close_all(cfg, only, mapLink) end)
+            os.execute("sleep 3")
         else
             warn("START FRESH -> tutup SEMUA client dulu (clean start)")
             pcall(function() close_all_cepat(cfg) end)
+            os.execute("sleep 3")
         end
-        os.execute("sleep 3")
     end
     if lisensiAda and not only and not fast then
         info(">> MODE TEMBAK BARENGAN (lisensi ok / auto_key mati) -- buka cepet, gak tutup dulu")
