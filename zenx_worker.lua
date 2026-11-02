@@ -1,6 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.597 — skip getps warning kalau semua akun udah punya PS link dari assign panel
+-- zenx_worker v9.598 — refresh_ps: auto-simpan ps_link ke DB kalau link baru/beda (selalu pakai yang terbaru)
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
 local VERSION = "9.596"
 TIM1_AKHIR = 10
@@ -4840,6 +4840,8 @@ local function run(cfg)
         local r = api_get(cfg, "/assign-ps?tim=" .. cfg.tim)
         local akun2pkg = {}
         for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
+        -- v9.598: simpan link lama buat deteksi perubahan
+        local mapLinkLama = mapLink or {}
         mapLink, mapPsNama = {}, {}
         for obj in (r or ""):gmatch('{.-}') do
             local akun = obj:match('"akun"%s*:%s*"(.-)"')
@@ -4847,7 +4849,17 @@ local function run(cfg)
             local link = obj:match('"link"%s*:%s*"(.-)"')
             if akun and akun2pkg[akun] then
                 local pkg = akun2pkg[akun]
-                if link and link ~= "" then mapLink[pkg] = link end
+                if link and link ~= "" then
+                    mapLink[pkg] = link
+                    -- v9.598: kalau link beda dari sebelumnya -> update DB (hapus lama, simpan baru)
+                    local lama = mapLinkLama[pkg] or ""
+                    if link ~= lama then
+                        pcall(function()
+                            api_post(cfg, "/ps-simpan",
+                                string.format('{"akun":%s,"ps_link":%s}', jstr(akun), jstr(link)), "POST")
+                        end)
+                    end
+                end
                 if psn and psn ~= "" then mapPsNama[pkg] = psn end
             end
         end
