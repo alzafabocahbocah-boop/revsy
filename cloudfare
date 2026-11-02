@@ -2300,6 +2300,22 @@ export default {
         return json({ tim, ts: r ? r.ts : 0, link: r ? r.link : "" });
       }
 
+      // /delta-ps : simpan/load daftar PS custom per tim delta (biar persist lintas versi panel, gak hilang kalau ganti file)
+      if (jalur === "/delta-ps" && req.method === "GET") {
+        const timKey = teks(url.searchParams.get("timKey")); if (!timKey) return salah("timKey kosong");
+        const r = await db.prepare("SELECT data FROM cfg WHERE scope=?1").bind("deltaps:"+timKey).first();
+        let arr = [];
+        if (r) { try { arr = JSON.parse(r.data); if (!Array.isArray(arr)) arr = []; } catch {} }
+        return json({ timKey, ps: arr });
+      }
+      if (jalur === "/delta-ps" && req.method === "PUT") {
+        const b = await req.json();
+        const timKey = teks(b.timKey); if (!timKey) return salah("timKey kosong");
+        const arr = Array.isArray(b.ps) ? b.ps.slice(0, 20).map(x => ({ nama: teks(x.nama, 80)||"", link: teks(x.link, 300)||"" })).filter(x => x.nama && x.link) : [];
+        await db.prepare(`INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3) ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`).bind("deltaps:"+timKey, skrg, JSON.stringify(arr)).run();
+        return json({ ok: true, timKey, count: arr.length });
+      }
+
       // /ps-utama : SERVER UTAMA (home) per tim -> up6kg auto balik sini pas semua leveling full
       if (jalur === "/ps-utama" && req.method === "PUT") {
         const b = await req.json();
