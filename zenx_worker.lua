@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.598 — skip getps warning kalau semua akun udah punya PS link dari assign panel
+-- zenx_worker v9.599 — skip getps warning kalau semua akun udah punya PS link dari assign panel
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.598"
+local VERSION = "9.599"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -4838,6 +4838,8 @@ local function run(cfg)
     local mapLink, mapPsNama = {}, {}
     local function refresh_ps()
         local r = api_get(cfg, "/assign-ps?tim=" .. cfg.tim)
+        -- v9.599: debug assign-ps response
+        info(("[assign-ps] tim=%s | resp=%s"):format(tostring(cfg.tim), tostring(r):sub(1,200)))
         local akun2pkg = {}
         for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
         mapLink, mapPsNama = {}, {}
