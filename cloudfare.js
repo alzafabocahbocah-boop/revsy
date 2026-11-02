@@ -194,7 +194,7 @@ export default {
     // Cuma balikin versi backend, gak ada data sensitif.
     if (jalur === "/versi" && req.method === "GET") {
       return new Response(
-        JSON.stringify({ versi: "v8.93-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
+        JSON.stringify({ versi: "v8.94-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
         { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
       );
     }
@@ -2590,10 +2590,18 @@ export default {
         const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
         let pslink = {};
         if (cl) { try { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslink = d; } catch {} }
+        // v8.94: fallback ke cookies.ps_link kalau cfg pslink kosong untuk akun lvl:
+        const ckRows = await db.prepare(
+          "SELECT akun, ps_link FROM cookies WHERE ps_link IS NOT NULL AND ps_link != ''"
+        ).all();
+        const ckMap = {};
+        for (const r of (ckRows.results || [])) ckMap[r.akun] = r.ps_link;
         const assign = (rs.results || []).map((r) => {
           const nm = r.ps_nama || "";
           if (nm.startsWith("lvl:")) {
-            return { ...r, link: pslink[nm.slice(4)] || "" };
+            const akunNm = nm.slice(4);
+            const lnk = pslink[akunNm] || ckMap[r.akun] || "";
+            return { ...r, link: lnk };
           }
           return r;
         });
