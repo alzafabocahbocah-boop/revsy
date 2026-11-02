@@ -1623,6 +1623,8 @@ export default {
         // akun leveling otomatis diarahkan ke PS-nya sendiri
         await db.prepare("UPDATE akun SET ps_nama=?1 WHERE nama=?2")
           .bind(isi ? ("lvl:" + akun) : "", akun).run();
+        // v8.92: sekalian update cookies.ps_link supaya worker bisa baca langsung tanpa getps
+        try { await db.prepare("UPDATE cookies SET ps_link=?1 WHERE akun=?2").bind(isi, akun).run(); } catch {}
         await tandaiPsGanti();
         return json({ ok: true, akun, link: isi });
       }

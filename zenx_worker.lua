@@ -1,6 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.596 — delta_split: persist ke config file (fix delta_split=false setelah worker restart) (client tidak pernah ditutup, cukup kirim URL baru)
+-- zenx_worker v9.597 — skip getps warning kalau semua akun udah punya PS link dari assign panel
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
 local VERSION = "9.596"
 TIM1_AKHIR = 10
@@ -4858,6 +4858,16 @@ local function run(cfg)
         if cfg.pakai_ps == false then return end
         if (SERVER_TERAKHIR or ""):lower() == "custom" and cfg._ps_override and cfg._ps_override ~= "" then
             return
+        end
+        -- v9.597: kalau assign panel sudah isi mapLink (semua akun punya link), skip getps
+        do
+            local nClient, nLink = 0, 0
+            for _ in ((cfg.pkgs or "")):gmatch("[^,]+") do nClient = nClient + 1 end
+            for _ in pairs(mapLink) do nLink = nLink + 1 end
+            if nClient > 0 and nLink >= nClient then
+                info(("[ps-getps] SKIP: semua %d akun udah punya PS link dari assign panel"):format(nLink))
+                return
+            end
         end
         local r = api_get(cfg, "/ps-list") or ""
         local akun2pkg = {}
