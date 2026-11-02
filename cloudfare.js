@@ -194,7 +194,7 @@ export default {
     // Cuma balikin versi backend, gak ada data sensitif.
     if (jalur === "/versi" && req.method === "GET") {
       return new Response(
-        JSON.stringify({ versi: "v8.90-backend-2026-10-30", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil"] }),
+        JSON.stringify({ versi: "v8.91-backend-2026-11-02", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
         { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
       );
     }
@@ -2355,6 +2355,22 @@ export default {
         return json({ tim, ts: r ? r.ts : 0, link: r ? r.link : "" });
       }
 
+      // /delta-ps : simpan/load daftar PS custom per tim delta (persist lintas versi panel)
+      if (jalur === "/delta-ps" && req.method === "GET") {
+        const timKey = teks(url.searchParams.get("timKey")); if (!timKey) return salah("timKey kosong");
+        const r = await db.prepare("SELECT data FROM cfg WHERE scope=?1").bind("deltaps:"+timKey).first();
+        let arr = [];
+        if (r) { try { arr = JSON.parse(r.data); if (!Array.isArray(arr)) arr = []; } catch {} }
+        return json({ timKey, ps: arr });
+      }
+      if (jalur === "/delta-ps" && req.method === "PUT") {
+        const b = await req.json();
+        const timKey = teks(b.timKey); if (!timKey) return salah("timKey kosong");
+        const arr = Array.isArray(b.ps) ? b.ps.slice(0, 20).map(x => ({ nama: teks(x.nama, 80)||"", link: teks(x.link, 300)||"" })).filter(x => x.nama && x.link) : [];
+        await db.prepare(`INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3) ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`).bind("deltaps:"+timKey, skrg, JSON.stringify(arr)).run();
+        return json({ ok: true, timKey, count: arr.length });
+      }
+
       // /ps-utama : SERVER UTAMA (home) per tim -> up6kg auto balik sini pas semua leveling full
       if (jalur === "/ps-utama" && req.method === "PUT") {
         const b = await req.json();
@@ -3222,15 +3238,46 @@ export default {
       }
 
       // /ps-list : daftar akun + ps_link (buat worker & panel).
+      // v8.91: gabung cookies.ps_link (dari getps) + assignment panel (akun.ps_nama + ps_template / cfg pslink)
+      // supaya worker bisa baca PS custom yang di-assign dari panel tanpa harus getps ulang.
       if (jalur === "/ps-list" && req.method === "GET") {
         try {
-          const rows = await db.prepare(
+          // 1) dari cookies.ps_link (hasil getps)
+          const rowsCk = await db.prepare(
             "SELECT akun, ps_link FROM cookies WHERE ps_link IS NOT NULL AND ps_link != ''"
           ).all();
-          return json({ ok: true, ps: (rows.results || []) });
+          const peta = {};
+          for (const r of (rowsCk.results || [])) peta[r.akun] = r.ps_link;
+
+          // 2) dari assignment panel: akun.ps_nama -> ps_template.link ATAU cfg pslink (lvl:<akun>)
+          let pslink = {};
+          try {
+            const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
+            if (cl) { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslink = d; }
+          } catch {}
+          try {
+            const ra = await db.prepare(
+              `SELECT a.nama AS akun, a.ps_nama, t.link
+               FROM akun a LEFT JOIN ps_template t ON a.ps_nama = t.nama
+               WHERE a.ps_nama IS NOT NULL AND a.ps_nama != ''`
+            ).all();
+            for (const r of (ra.results || [])) {
+              if (peta[r.akun]) continue;   // getps lebih prioritas
+              const nm = r.ps_nama || "";
+              if (nm.startsWith("lvl:")) {
+                const lnk = pslink[nm.slice(4)] || "";
+                if (lnk) peta[r.akun] = lnk;
+              } else if (r.link) {
+                peta[r.akun] = r.link;
+              }
+            }
+          } catch {}
+
+          const ps = Object.entries(peta).map(([akun, ps_link]) => ({ akun, ps_link }));
+          return json({ ok: true, ps });
         } catch (e) {
           return json({ ok: true, ps: [],
-            pesan: "Kolom 'ps_link' belum ada. Jalanin: ALTER TABLE cookies ADD COLUMN ps_link TEXT;" });
+            pesan: "Error ps-list: " + e.message });
         }
       }
 
