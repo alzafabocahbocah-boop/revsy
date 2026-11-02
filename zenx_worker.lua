@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.609 — paksa landscape via wm user-rotation lock untuk delta_split
+-- zenx_worker v9.610 — debug autoexec write: tampilkan error shell + coba tulis langsung via io.open
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.609"
+local VERSION = "9.610"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -2340,10 +2340,32 @@ local function tulis_autoexec(cfg, urlPanel)
         local f = io.open(tmp, "w")
         if not f then warn("gagal bikin file tmp loader"); return false end
         f:write(loader); f:close()
-        cek = sh('su -c \'mkdir -p "' .. AUTOEXEC_DIR .. '"; ' .. bersih ..
-                 'cp "' .. tmp .. '" "' .. path .. '"' ..
-                 '; chmod 664 "' .. path .. '"' ..
-                 '; cat "' .. path .. '"' .. "'")
+        -- v9.610: pakai heredoc-style via sh script supaya quoting aman
+        -- bikin folder dulu, lalu cp; tangkap stderr juga buat debug
+        local mkdir_out = sh("su -c 'mkdir -p \"" .. AUTOEXEC_DIR .. "\" 2>&1 && echo OK_MKDIR'")
+        if not mkdir_out:find("OK_MKDIR") then
+            warn("GAGAL mkdir -p " .. AUTOEXEC_DIR .. " : " .. tostring(mkdir_out):sub(1,120))
+            warn("  cek apakah /sdcard bisa diakses root & Delta pernah diinstall")
+        end
+        cek = sh('su -c \'{ ' .. (bersih~="" and bersih or "") ..
+                 'cp "' .. tmp .. '" "' .. path .. '" 2>&1' ..
+                 ' && chmod 664 "' .. path .. '" 2>&1' ..
+                 ' && cat "' .. path .. '"' ..
+                 '; } 2>&1' .. "'")
+        -- v9.610: kalau cek kosong / gak ada loadstring, coba tulis langsung via io.open (non-root)
+        if not cek:find("loadstring", 1, true) then
+            info("  [autoexec] root cp gagal, coba tulis langsung (non-root)...")
+            local f2 = io.open(path, "w")
+            if f2 then
+                f2:write(loader); f2:close()
+                cek = sh("cat \"" .. path .. "\" 2>/dev/null") or ""
+                if cek:find("loadstring", 1, true) then
+                    info("  [autoexec] berhasil tulis non-root ke " .. path)
+                end
+            else
+                info("  [autoexec] io.open non-root juga gagal (folder belum ada / permission)")
+            end
+        end
     end
 
     local dibuang = {}
@@ -2359,6 +2381,7 @@ local function tulis_autoexec(cfg, urlPanel)
         ok("autoexec ditulis: " .. path)
         info("  isi: loadstring(...\"" .. url_script .. "\")...")
         local isiFolder = sh("su -c 'ls -l \"" .. AUTOEXEC_DIR .. "\" 2>&1 | tail -n +2'") or ""
+        if isiFolder == "" then isiFolder = sh("ls -l \"" .. AUTOEXEC_DIR .. "\" 2>&1 | tail -n +2") or "" end
         if isiFolder ~= "" then
             for baris in isiFolder:gmatch("[^\r\n]+") do
                 local nm = baris:match("(%S+)%s*$")
@@ -2371,8 +2394,15 @@ local function tulis_autoexec(cfg, urlPanel)
         return true
     else
         warn("GAGAL nulis autoexec ke " .. path)
-        warn("  yang kebaca balik: " .. tostring(cek):sub(1, 120))
+        warn("  yang kebaca balik: " .. tostring(cek):sub(1, 200))
         warn("  cek izin folder Delta / root masih jalan?")
+        -- v9.610: tampilkan info debug folder
+        local cekFolder = sh("su -c 'ls -la /sdcard/ 2>&1 | grep -i delta'") or ""
+        if cekFolder ~= "" then
+            info("  [debug] folder Delta di /sdcard: " .. cekFolder:sub(1,150))
+        else
+            info("  [debug] folder Delta TIDAK ketemu di /sdcard -- Delta belum pernah dibuka?")
+        end
         return false
     end
 end
