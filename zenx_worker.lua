@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.601 — cek grid RF sebelum tiap tembak/rejoin delta_split, fix kalau meleset
+-- zenx_worker v9.602 — fix parse_window_rf: grep per-pkg, bukan split blok
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.601"
+local VERSION = "9.602"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1803,35 +1803,38 @@ local WIN_OK = nil   -- nil=belum dites, true=didukung, false=ditolak
 local GRID_RF_TOL = 10
 
 -- Parse dump window -> map[pkg] = {tid=N, l=L, t=T, r=R, b=B}
+-- v9.602: pakai grep per-pkg langsung, lebih reliable dari split blok
 local function parse_window_rf(dump)
     local map = {}
-    -- Cari blok per Window: "package=com.roblox.X" dan "rootTaskId=N" dan "mBounds=Rect(L, T - R, B)"
-    -- dumpsys window output: tiap window punya rootTaskId dan mBounds di baris terpisah
-    -- Strategi: split per Window# entry, parse tiap blok
-    for blok in (dump .. "\n  Window #"):gmatch("  Window #(.-)%f[  ]  Window #") do
-        local pkg = blok:match("package=(com%.roblox%.[%w_]+)")
-        if pkg then
-            local tid = blok:match("rootTaskId=(%d+)")
-            -- mBounds=Rect(L, T - R, B)
-            local l, t, r, b = blok:match("mBounds=Rect%((%d+),%s*(%d+)%s*%-%s*(%d+),%s*(%d+)%)")
-            if not map[pkg] then
-                map[pkg] = {
-                    tid = tid and tonumber(tid) or nil,
-                    l   = l and tonumber(l) or nil,
-                    t   = t and tonumber(t) or nil,
-                    r   = r and tonumber(r) or nil,
-                    b   = b and tonumber(b) or nil,
-                }
+    local pkgs_rf = { "com.roblox.client", "com.roblox.clienu" }
+    for _, pkg in ipairs(pkgs_rf) do
+        -- taskId: cari "rootTaskId=N" yang dekat dengan nama pkg (dalam 600 char)
+        local tid
+        for pos, id in dump:gmatch("()rootTaskId=(%d+)") do
+            local chunk = dump:sub(pos, pos + 600)
+            if chunk:find(pkg, 1, true) then
+                tid = id
+                break
             end
         end
-    end
-    -- fallback kalau blok split gak kena: cari rootTaskId + package berdekatan
-    for pkg, _ in pairs(map) do
-        if not map[pkg].tid then
-            local pat = "rootTaskId=(%d+)[^\n]-\n[^\n]-package=" .. pkg:gsub("%.", "%%.")
-            local tid2 = dump:match(pat)
-            if tid2 then map[pkg].tid = tonumber(tid2) end
+        -- fallback: cari "tN}" pola di nama class pkg
+        if not tid then
+            tid = dump:match(pkg:gsub("%.", "%%.") .. "/[%w.]+%s+t(%d+)")
         end
+        -- mBounds: cari setelah nama pkg muncul
+        local pos_pkg = dump:find(pkg, 1, true)
+        local l, t, r, b
+        if pos_pkg then
+            local chunk = dump:sub(pos_pkg, pos_pkg + 1500)
+            l, t, r, b = chunk:match("mBounds=Rect%((%d+),%s*(%d+)%s*%-%s*(%d+),%s*(%d+)%)")
+        end
+        map[pkg] = {
+            tid = tid and tonumber(tid) or nil,
+            l   = l and tonumber(l) or nil,
+            t   = t and tonumber(t) or nil,
+            r   = r and tonumber(r) or nil,
+            b   = b and tonumber(b) or nil,
+        }
     end
     return map
 end
