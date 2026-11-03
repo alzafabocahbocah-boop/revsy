@@ -139,7 +139,29 @@ pcall(function()
                 -- SPAWN detection
                 if isPetModel(d) then
                     local uuid8 = d.Name:sub(1,10)
-                    push("SPAWN", uuid8)
+                    -- posisi & slot info
+                    local info = ""
+                    pcall(function()
+                        -- cek attribute slot/index
+                        local slot = d:GetAttribute("Slot") or d:GetAttribute("Index") or d:GetAttribute("SlotIndex") or d:GetAttribute("EquipSlot")
+                        if slot ~= nil then info = info .. " slot="..tostring(slot) end
+                        -- cek NumberValue/StringValue bernama Slot/Index di dalam model
+                        for _, v in ipairs(d:GetChildren()) do
+                            local n = v.Name:lower()
+                            if (n == "slot" or n == "index" or n == "slotindex" or n == "equipslot") and v.Value ~= nil then
+                                info = info .. " "..v.Name.."="..tostring(v.Value)
+                            end
+                        end
+                        -- posisi relatif ke karakter
+                        local char = plr.Character
+                        local root = char and char:FindFirstChild("HumanoidRootPart")
+                        local petRoot = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
+                        if root and petRoot then
+                            local rel = petRoot.Position - root.Position
+                            info = info .. string.format(" pos=(%.1f,%.1f,%.1f)", rel.X, rel.Y, rel.Z)
+                        end
+                    end)
+                    push("SPAWN", uuid8 .. info)
                     watchedModels[d] = true
                 end
             end)
@@ -183,4 +205,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "dbg_swap v1.3 ready (limit=2000)")
+push("INIT", "dbg_swap v1.4 ready (pos+slot)")
