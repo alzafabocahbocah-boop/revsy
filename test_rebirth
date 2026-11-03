@@ -1,0 +1,169 @@
+-- test_rebirth: debug GUI buat cek kenapa BuyRebirth gak jalan
+-- Paste di Delta executor, jalanin manual
+
+local RS = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local plr = Players.LocalPlayer
+local gui = plr:WaitForChild("PlayerGui")
+
+-- ===== BIKIN GUI =====
+local sg = Instance.new("ScreenGui")
+sg.Name = "RebirthDebug"
+sg.ResetOnSpawn = false
+sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+sg.Parent = gui
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 340, 0, 320)
+frame.Position = UDim2.new(0, 10, 0, 10)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = sg
+
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+title.TextColor3 = Color3.fromRGB(255, 220, 80)
+title.Text = "🔁 REBIRTH DEBUG"
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.Parent = frame
+Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+local logBox = Instance.new("ScrollingFrame")
+logBox.Size = UDim2.new(1, -10, 1, -90)
+logBox.Position = UDim2.new(0, 5, 0, 35)
+logBox.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
+logBox.BorderSizePixel = 0
+logBox.ScrollBarThickness = 4
+logBox.CanvasSize = UDim2.new(0, 0, 0, 0)
+logBox.AutomaticCanvasSize = Enum.AutomaticSize.Y
+logBox.Parent = frame
+Instance.new("UICorner", logBox).CornerRadius = UDim.new(0, 6)
+
+local layout = Instance.new("UIListLayout")
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding = UDim.new(0, 2)
+layout.Parent = logBox
+
+local btnFrame = Instance.new("Frame")
+btnFrame.Size = UDim2.new(1, -10, 0, 44)
+btnFrame.Position = UDim2.new(0, 5, 1, -50)
+btnFrame.BackgroundTransparency = 1
+btnFrame.Parent = frame
+
+local btnLayout = Instance.new("UIListLayout")
+btnLayout.FillDirection = Enum.FillDirection.Horizontal
+btnLayout.Padding = UDim.new(0, 6)
+btnLayout.Parent = btnFrame
+
+local logCount = 0
+
+local function addLog(txt, color)
+    logCount = logCount + 1
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -4, 0, 0)
+    lbl.AutomaticSize = Enum.AutomaticSize.Y
+    lbl.BackgroundTransparency = 1
+    lbl.TextColor3 = color or Color3.fromRGB(200, 200, 200)
+    lbl.Text = "[" .. logCount .. "] " .. txt
+    lbl.Font = Enum.Font.Code
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextWrapped = true
+    lbl.LayoutOrder = logCount
+    lbl.Parent = logBox
+    -- scroll ke bawah
+    task.defer(function()
+        logBox.CanvasPosition = Vector2.new(0, logBox.AbsoluteCanvasSize.Y)
+    end)
+end
+
+local function makeBtn(txt, color, fn)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 100, 0, 36)
+    btn.BackgroundColor3 = color
+    btn.TextColor3 = Color3.fromRGB(255,255,255)
+    btn.Text = txt
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    btn.MouseButton1Click:Connect(fn)
+    btn.Parent = btnFrame
+    return btn
+end
+
+-- ===== FUNGSI CEK =====
+local function cekRebirth()
+    addLog("=== CEK REBIRTH ===", Color3.fromRGB(255, 220, 80))
+
+    -- cek GameEvents
+    local ge = RS:FindFirstChild("GameEvents")
+    if not ge then
+        addLog("❌ GameEvents TIDAK ADA di ReplicatedStorage", Color3.fromRGB(255, 80, 80))
+        addLog("isi RS:", Color3.fromRGB(150,150,150))
+        for _, c in ipairs(RS:GetChildren()) do
+            addLog("  - " .. c.Name .. " (" .. c.ClassName .. ")", Color3.fromRGB(150,150,150))
+        end
+        return
+    end
+    addLog("✅ GameEvents ketemu", Color3.fromRGB(80, 255, 120))
+
+    -- cek BuyRebirth
+    local re = ge:FindFirstChild("BuyRebirth")
+    if not re then
+        addLog("❌ BuyRebirth TIDAK ADA di GameEvents", Color3.fromRGB(255, 80, 80))
+        addLog("isi GameEvents:", Color3.fromRGB(150,150,150))
+        for _, c in ipairs(ge:GetChildren()) do
+            addLog("  - " .. c.Name .. " (" .. c.ClassName .. ")", Color3.fromRGB(150,150,150))
+        end
+        return
+    end
+    addLog("✅ BuyRebirth ketemu: " .. re.ClassName, Color3.fromRGB(80, 255, 120))
+
+    -- cek sheckles
+    local stats = plr:FindFirstChild("leaderstats") or plr:FindFirstChild("Stats")
+    if stats then
+        for _, v in ipairs(stats:GetChildren()) do
+            addLog("  stat: " .. v.Name .. " = " .. tostring(v.Value), Color3.fromRGB(180,180,255))
+        end
+    end
+
+    addLog("🔥 FireServer BuyRebirth...", Color3.fromRGB(255, 180, 50))
+    local ok, err = pcall(function() re:FireServer() end)
+    if ok then
+        addLog("✅ FireServer OK!", Color3.fromRGB(80, 255, 120))
+    else
+        addLog("❌ FireServer ERROR: " .. tostring(err), Color3.fromRGB(255, 80, 80))
+    end
+end
+
+local function clearLog()
+    for _, c in ipairs(logBox:GetChildren()) do
+        if c:IsA("TextLabel") then c:Destroy() end
+    end
+    logCount = 0
+    addLog("Log dibersihkan.", Color3.fromRGB(150,150,150))
+end
+
+-- ===== BUTTONS =====
+makeBtn("▶ CEK", Color3.fromRGB(50, 150, 50), cekRebirth)
+makeBtn("🔁 AUTO 2m", Color3.fromRGB(50, 80, 180), function()
+    addLog("Auto rebirth tiap 2 menit AKTIF", Color3.fromRGB(80, 200, 255))
+    task.spawn(function()
+        while sg.Parent do
+            task.wait(120)
+            cekRebirth()
+        end
+    end)
+end)
+makeBtn("🗑 CLEAR", Color3.fromRGB(80, 80, 80), clearLog)
+
+-- jalanin cek pertama otomatis
+addLog("Script loaded. Klik CEK atau tunggu auto.", Color3.fromRGB(150,150,150))
+task.delay(1, cekRebirth)
