@@ -180,4 +180,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "dbg_swap v1.0 ready")
+push("INIT", "dbg_swap v1.2 ready (limit=2000)")
