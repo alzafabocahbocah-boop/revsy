@@ -203,7 +203,6 @@ pcall(function()
 end)
 
 -- ============ 4. LISTEN semua RemoteEvent di ReplicatedStorage ============
--- Cari event yang fire ~245ms setelah Frill ANIM → itu trigger sc lain
 pcall(function()
     local function hookRE(re, path)
         pcall(function()
@@ -220,24 +219,78 @@ pcall(function()
 
     local hooked = 0
     for _, v in pairs(RS:GetDescendants()) do
-        if v:IsA("RemoteEvent") then
-            -- skip PetsService (sudah di section 1)
-            if v.Name ~= "PetsService" then
-                local path = v:GetFullName()
-                hookRE(v, path)
-                hooked = hooked + 1
-            end
+        if v:IsA("RemoteEvent") and v.Name ~= "PetsService" then
+            hookRE(v, v:GetFullName())
+            hooked = hooked + 1
         end
     end
     push("INIT", "RE hooked: " .. hooked .. " events")
 
-    -- juga hook yang muncul belakangan
     RS.DescendantAdded:Connect(function(v)
         if v:IsA("RemoteEvent") and v.Name ~= "PetsService" then
-            local path = v:GetFullName()
-            hookRE(v, path)
-            push("INIT", "RE+ " .. path:sub(-30))
+            hookRE(v, v:GetFullName())
+            push("INIT", "RE+ " .. v:GetFullName():sub(-30))
         end
+    end)
+end)
+
+-- ============ 5. DEEP HOOK PetCooldownsUpdated ============
+-- Dump full args supaya tau isi table cooldown-nya
+pcall(function()
+    local function findRE(name)
+        for _, v in pairs(RS:GetDescendants()) do
+            if v:IsA("RemoteEvent") and v.Name == name then return v end
+        end
+        return nil
+    end
+
+    local function dumpVal(v, depth)
+        depth = depth or 0
+        if depth > 2 then return "..." end
+        local t = type(v)
+        if t == "string" then return '"'..v:sub(1,30)..'"'
+        elseif t == "number" then return tostring(v)
+        elseif t == "boolean" then return tostring(v)
+        elseif t == "table" then
+            local parts = {}
+            local n = 0
+            for k, val in pairs(v) do
+                n = n + 1
+                if n > 6 then table.insert(parts, "..."); break end
+                table.insert(parts, tostring(k):sub(1,12).."="..dumpVal(val, depth+1))
+            end
+            return "{"..table.concat(parts,",").."}"
+        else
+            return tostring(v):sub(1,20)
+        end
+    end
+
+    local pcu = findRE("PetCooldownsUpdated")
+    if not pcu then
+        -- coba tunggu sebentar
+        task.delay(3, function()
+            pcu = findRE("PetCooldownsUpdated")
+            if pcu then
+                push("INIT", "PCU found (delayed)")
+            else
+                push("INIT", "PCU NOT FOUND")
+            end
+        end)
+        push("INIT", "PCU searching...")
+        return
+    end
+
+    push("INIT", "PCU deep-hook OK @ " .. pcu:GetFullName():sub(-40))
+    pcu.OnClientEvent:Connect(function(uuid, cooldownTbl, ...)
+        local ustr = tostring(uuid):sub(1,18)
+        local cstr = dumpVal(cooldownTbl)
+        local extras = ""
+        local extra = {...}
+        for i, v in ipairs(extra) do
+            extras = extras .. "|" .. dumpVal(v)
+            if i >= 2 then break end
+        end
+        push("PCU", ustr .. " | " .. cstr .. extras)
     end)
 end)
 
@@ -250,4 +303,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "dbg_swap v1.6 ready (re-hook)")
+push("INIT", "dbg_swap v1.7 ready (pcu-deep)")
