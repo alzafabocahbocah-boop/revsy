@@ -52,7 +52,7 @@ local function push(tag, msg)
     local ms = math.floor((tick() % 1) * 1000)
     local line = string.format("%s.%03d | %-8s | %s", ts, ms, tag, msg)
     table.insert(LOG, 1, line)
-    if #LOG > 200 then table.remove(LOG) end
+    if #LOG > 2000 then table.remove(LOG) end
 end
 
 clrBtn.MouseButton1Click:Connect(function() LOG = {} end)
