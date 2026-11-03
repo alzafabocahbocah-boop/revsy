@@ -96,9 +96,11 @@ local function watchAnimations(model)
                 desc.AnimationPlayed:Connect(function(track)
                     local animId = ""
                     pcall(function() animId = track.Animation and tostring(track.Animation.AnimationId) or "?" end)
-                    -- filter: cuma log animasi yang pendek / bukan idle
-                    local name = track.Name or animId
-                    push("ANIM", name:sub(1,20).." | "..animId:sub(-8))
+                    local name = tostring(track.Name or "")
+                    -- skip Idle, Walk, WalkAnim — terlalu spam
+                    local lo = name:lower()
+                    if lo == "idle" or lo == "walk" or lo == "walkanim" or lo == "animation1" then return end
+                    push("ANIM", name:sub(1,16).." | "..animId:sub(-8))
                 end)
             end
         end
@@ -111,7 +113,14 @@ pcall(function()
     watchAnimations(char)
 end)
 
+-- UUID pattern: 8-4-4-4-12 hex dalam kurung kurawal
+local function isPetModel(d)
+    if not d:IsA("Model") then return false end
+    return d.Name:match("^{?%x%x%x%x%x%x%x%x%-") ~= nil
+end
+
 -- watch semua model di workspace (pet models)
+local watchedModels = {}
 pcall(function()
     for _, d in ipairs(workspace:GetDescendants()) do
         if d:IsA("Model") and d:FindFirstChild("Animator", true) then
@@ -119,8 +128,25 @@ pcall(function()
         end
     end
     workspace.DescendantAdded:Connect(function(d)
-        if d:IsA("Model") then
-            task.defer(function() watchAnimations(d) end)
+        task.defer(function()
+            pcall(function()
+                if d:IsA("Model") then
+                    watchAnimations(d)
+                end
+                -- SPAWN detection
+                if isPetModel(d) then
+                    local uuid8 = d.Name:sub(1,10)
+                    push("SPAWN", uuid8)
+                    watchedModels[d] = true
+                end
+            end)
+        end)
+    end)
+    workspace.DescendantRemoving:Connect(function(d)
+        if isPetModel(d) and watchedModels[d] then
+            local uuid8 = d.Name:sub(1,10)
+            push("DESPAWN", uuid8)
+            watchedModels[d] = nil
         end
     end)
 end)
