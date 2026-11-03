@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.55"
+local VERSION = "up38kg-v1.56"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1902,18 +1902,27 @@ do
         end)
     end
     -- ready-loop: swap SUPPORT doang (bahan DIEM di kedua sesi). Cek cepet 0.05s.
+    -- v1.56: bahan+support tiap 50ms, untracked tiap 1s (hemat CPU)
+    local _untrackedLastCek = {}
     task.spawn(function()
         while _G.__ZenxKgEngineGen == engGen do
             task.wait(0.05)
             if KG.aktif and not KG.reset then
+                local now = tick()
                 for uuid in pairs(modelByUuid) do
                     -- lepas busy yg NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
-                    if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
-                    -- v1.55: early continue — skip pet yg bukan bahan/support/untracked (gak ada yg perlu dikerjain)
-                    if not bahanAktif[uuid] and not supportKunci[uuid] and busy[uuid] == nil then continue end
+                    if busy[uuid] and busySince[uuid] and (now - busySince[uuid]) > 6 then busy[uuid] = nil end
+                    -- v1.56: bahan+support -> tiap 50ms. untracked -> tiap 1s aja (hemat CPU)
+                    local isBahan = bahanAktif[uuid]
+                    local isSupport = supportKunci[uuid]
+                    if not isBahan and not isSupport then
+                        -- untracked: throttle 1s
+                        if (now - (_untrackedLastCek[uuid] or 0)) < 1 then continue end
+                        _untrackedLastCek[uuid] = now
+                    end
                     -- up6kg: BAHAN -> swap (gacor) TAPI cek age tiap 0.05s. Age >= 40 -> COPOT
                     -- langsung (fast harvest, gak nunggu transition loop 3s). Support -> swap. Ele -> diem.
-                    if bahanAktif[uuid] then
+                    if isBahan then
                         local age = getAge(uuid)
                         -- DEBUG sesi 2: log level bahan tiap 1.5s (biar tau kebaca berapa / nil / stale)
                         if (KG.sesi or 1) == 2 then
@@ -1942,7 +1951,7 @@ do
                         end
                     else
                         -- SUPPORT (Dilop/Peacock/Gilded/Ele) -> swap skill SEMUA (Ele ikut swap)
-                        local supNm = supportKunci[uuid]
+                        local supNm = isSupport  -- sudah di-cache di atas (= supportKunci[uuid])
                         local swapIni = (supNm ~= nil)
                         if swapIni and not busy[uuid] then
                             -- up6kg: PEACOCK -> jeda 1.5s antar pet Peacock (uuid beda) sebelum swap.
