@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.610 — debug autoexec write: tampilkan error shell + coba tulis langsung via io.open
+-- zenx_worker v9.611 — jaga_depan pakai cfg.jaga_depan_sec (0=matiin), bukan hardcode 3 detik
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.610"
+local VERSION = "9.611"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -8148,7 +8148,8 @@ local function run(cfg)
             if npd > 0 then tambahLog("SUPLAI: " .. npd .. " akun market pindah gudang (leveling abis)") end
         end
 
-        if hit and (now - lastJagaDepan) >= 3 then
+        local _jd_sec = cfg.jaga_depan_sec or 15
+        if hit and _jd_sec > 0 and (now - lastJagaDepan) >= _jd_sec then
             lastJagaDepan = now
             jaga_depan(cfg, mapLink, cacheRun)   -- v4.63: pakai cache, gak dumpsys ulang
         end
