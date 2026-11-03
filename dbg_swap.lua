@@ -20,12 +20,25 @@ hdr.Size = UDim2.new(1,-60,0,22); hdr.Position = UDim2.new(0,8,0,4)
 hdr.BackgroundTransparency = 1; hdr.Font = Enum.Font.GothamBold; hdr.TextSize = 11
 hdr.TextColor3 = Color3.fromRGB(255,180,50); hdr.TextXAlignment = Enum.TextXAlignment.Left
 hdr.Text = "SWAP DBG  (tap 2x = salin)"
+-- tombol clear
 local clrBtn = Instance.new("TextButton", fr)
 clrBtn.Size = UDim2.new(0,42,0,16); clrBtn.Position = UDim2.new(1,-48,0,4)
 clrBtn.BackgroundColor3 = Color3.fromRGB(40,20,0); clrBtn.Text = "clear"
 clrBtn.Font = Enum.Font.GothamBold; clrBtn.TextSize = 10
 clrBtn.TextColor3 = Color3.fromRGB(255,160,50)
 Instance.new("UICorner", clrBtn).CornerRadius = UDim.new(0,4)
+-- tombol rejoin
+local rejBtn = Instance.new("TextButton", fr)
+rejBtn.Size = UDim2.new(0,46,0,16); rejBtn.Position = UDim2.new(1,-96,0,4)
+rejBtn.BackgroundColor3 = Color3.fromRGB(10,30,10); rejBtn.Text = "rejoin"
+rejBtn.Font = Enum.Font.GothamBold; rejBtn.TextSize = 10
+rejBtn.TextColor3 = Color3.fromRGB(80,255,120)
+Instance.new("UICorner", rejBtn).CornerRadius = UDim.new(0,4)
+rejBtn.MouseButton1Click:Connect(function()
+    pcall(function()
+        game:GetService("TeleportService"):Teleport(game.PlaceId, plr)
+    end)
+end)
 local tx = Instance.new("TextLabel", fr)
 tx.Size = UDim2.new(1,-10,1,-30); tx.Position = UDim2.new(0,6,0,28)
 tx.BackgroundTransparency = 1; tx.Font = Enum.Font.Code; tx.TextSize = 10
