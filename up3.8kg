@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.58"
+local VERSION = "up38kg-v1.59"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -591,16 +591,20 @@ local KG_CONFIG_PET = { ["Tim Ele"] = "" }   -- up6kg: bahan dari picker, gak di
 do
     local WS = workspace
     local function semuaFarm()
+        -- v1.59: GetChildren per subfarm (bukan GetDescendants farm besar)
         local roots = {}
         local farm = WS:FindFirstChild("Farm")
         if farm then
-            for _, f in ipairs(farm:GetDescendants()) do
-                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+            for _, sf in ipairs(farm:GetChildren()) do
+                local pp = sf:FindFirstChild("Plants_Physical")
+                if pp and (pp:IsA("Folder") or pp:IsA("Model")) then table.insert(roots, pp) end
             end
         end
         if #roots == 0 then
-            for _, f in ipairs(WS:GetDescendants()) do
-                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+            -- fallback: scan WS children langsung (bukan GetDescendants)
+            for _, sf in ipairs(WS:GetChildren()) do
+                local pp = sf:FindFirstChild("Plants_Physical")
+                if pp and (pp:IsA("Folder") or pp:IsA("Model")) then table.insert(roots, pp) end
             end
         end
         return roots
@@ -782,6 +786,7 @@ do
     end
 
     local function isElephant(obj)
+        -- v1.59: hapus GetDescendants (mahal). Cek Name + attr langsung di obj saja
         local n = obj.Name:lower()
         if n:find("elephant") then return true end
         local ok0, v0 = pcall(function() return obj:GetAttribute("f") end)
@@ -791,11 +796,6 @@ do
                 or obj:GetAttribute("type") or obj:GetAttribute("PetType")
         end)
         if ok1 and v1 and tostring(v1):lower():find("elephant") then return true end
-        for _, d in ipairs(obj:GetDescendants()) do
-            if d.Name:lower():find("elephant") then return true end
-            local ok2, v2 = pcall(function() return d:GetAttribute("f") end)
-            if ok2 and v2 and tostring(v2):lower():find("elephant") then return true end
-        end
         return false
     end
 
@@ -864,48 +864,13 @@ do
     end
 
     -- P5: skill FX allowlist di workspace root, tiap 2s
+    -- v1.59: BB di-cache sekali di dlStartup (gak GetDescendants tiap 2s)
+    local _dlBBmin, _dlBBmax, _dlMySubfarmCount = nil, nil, 0
     local function dlRun()
-        local plrName = game:GetService("Players").LocalPlayer.Name
         local fxDel = 0
         local ok, err = pcall(function()
-            local farm = workspace:FindFirstChild("Farm")
-            local mySubfarms = {}
-            local myBBmin, myBBmax = nil, nil
-            if farm then
-                for _, sf in ipairs(farm:GetChildren()) do
-                    local isMine = false
-                    pcall(function()
-                        local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
-                        local owner = sign and sign:GetAttribute("_owner")
-                        if owner == plrName then isMine = true end
-                    end)
-                    if isMine then
-                        mySubfarms[sf] = true
-                        pcall(function()
-                            for _, part in ipairs(sf:GetDescendants()) do
-                                if part:IsA("BasePart") then
-                                    local pos = part.Position
-                                    if myBBmin == nil then
-                                        myBBmin = Vector3.new(pos.X, pos.Y, pos.Z)
-                                        myBBmax = Vector3.new(pos.X, pos.Y, pos.Z)
-                                    else
-                                        myBBmin = Vector3.new(math.min(myBBmin.X,pos.X), math.min(myBBmin.Y,pos.Y), math.min(myBBmin.Z,pos.Z))
-                                        myBBmax = Vector3.new(math.max(myBBmax.X,pos.X), math.max(myBBmax.Y,pos.Y), math.max(myBBmax.Z,pos.Z))
-                                    end
-                                end
-                            end
-                        end)
-                    end
-                end
-            end
-            local bbMargin = 60
-            if myBBmin then
-                myBBmin = myBBmin - Vector3.new(bbMargin, 100, bbMargin)
-                myBBmax = myBBmax + Vector3.new(bbMargin, 100, bbMargin)
-            end
-            local mySubfarmCount = 0; for _ in pairs(mySubfarms) do mySubfarmCount = mySubfarmCount + 1 end
             local wsP5Allowlist = { WindBlastTemplate=true, SpottedEffect=true, Puddle=true }
-            if mySubfarmCount > 0 then
+            if _dlMySubfarmCount > 0 then
                 local p5Del, p5Skip = 0, 0
                 for _, obj in ipairs(workspace:GetChildren()) do
                     if wsP5Allowlist[obj.Name] then
@@ -913,7 +878,7 @@ do
                         if cls == "Model" or cls == "Part" or cls == "MeshPart"
                            or cls == "UnionOperation" or cls == "SpecialMesh" then
                             local inMyArea = false
-                            if myBBmin and myBBmax then
+                            if _dlBBmin and _dlBBmax then
                                 pcall(function()
                                     local pos = nil
                                     if obj:IsA("BasePart") then pos = obj.Position
@@ -927,8 +892,8 @@ do
                                         end
                                     end
                                     if pos then
-                                        if pos.X >= myBBmin.X and pos.X <= myBBmax.X
-                                           and pos.Z >= myBBmin.Z and pos.Z <= myBBmax.Z then
+                                        if pos.X >= _dlBBmin.X and pos.X <= _dlBBmax.X
+                                           and pos.Z >= _dlBBmin.Z and pos.Z <= _dlBBmax.Z then
                                             inMyArea = true
                                         end
                                     end
@@ -940,15 +905,13 @@ do
                     end
                 end
                 if p5Del > 0 then print("[DL-P5] destroy="..p5Del.." skip(mine)="..p5Skip) end
-            else
-                print("[DL-P5] SKIP — mySubfarms kosong")
             end
         end)
         if not ok then print("[DL] ERROR: "..(tostring(err):sub(1,120))) end
         if fxDel > 0 then print("[DL] fx="..fxDel) end
     end
 
-    -- dlStartup: P1b sekali + setup P6PP (pakai _kgContainer yang sudah in-scope)
+    -- dlStartup: P1b sekali + setup P6PP + cache BB sekali (pakai _kgContainer yang sudah in-scope)
     local function dlStartup()
         local plrName = game:GetService("Players").LocalPlayer.Name
         local farm = workspace:FindFirstChild("Farm")
@@ -964,6 +927,31 @@ do
                 if isMine then mySubfarms[sf] = true end
             end
         end
+        -- v1.59: cache BB sekali di startup (bukan tiap 2s di dlRun)
+        local bbMin, bbMax = nil, nil
+        local cnt = 0
+        for sf in pairs(mySubfarms) do
+            cnt = cnt + 1
+            pcall(function()
+                for _, part in ipairs(sf:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        local pos = part.Position
+                        if bbMin == nil then
+                            bbMin = Vector3.new(pos.X, pos.Y, pos.Z); bbMax = Vector3.new(pos.X, pos.Y, pos.Z)
+                        else
+                            bbMin = Vector3.new(math.min(bbMin.X,pos.X), math.min(bbMin.Y,pos.Y), math.min(bbMin.Z,pos.Z))
+                            bbMax = Vector3.new(math.max(bbMax.X,pos.X), math.max(bbMax.Y,pos.Y), math.max(bbMax.Z,pos.Z))
+                        end
+                    end
+                end
+            end)
+        end
+        local bbMargin = 60
+        if bbMin then
+            _dlBBmin = bbMin - Vector3.new(bbMargin, 100, bbMargin)
+            _dlBBmax = bbMax + Vector3.new(bbMargin, 100, bbMargin)
+        end
+        _dlMySubfarmCount = cnt
         task.spawn(function() pcall(dlRunOnce, plrName, farm, mySubfarms) end)
         task.spawn(function()
             local myPetUUIDs = {}; local myUUIDCount = 0
