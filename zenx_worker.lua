@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.615"
+local VERSION = "9.616"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -4067,6 +4067,7 @@ local function setup_otomatis(namaPreset)
         uplevel = { place = "126884695634066", game = "GAG 1 UPLEVEL", sc = "UPLEVEL", url = "uplevel" },
         uplevelnew = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew" },
         ["uplevelnew-delta"] = { place = "126884695634066", game = "GAG 1 UPLEVELNEW DELTA", sc = "UPLEVELNEW-DELTA", url = "uplevelnew", delta_split = true },  -- v9.590: alias uplevelnew buat split screen kiri-kanan (2 akun per HP, grid 2 kolom 1 baris otomatis) | v9.592: sc+game beda biar panel bisa tampil badge delta
+        ["up3.8kg-delta"] = { place = "126884695634066", game = "GAG 1 UP3.8KG DELTA", sc = "UP3.8KG-DELTA", url = "up3.8kg", delta_split = true },  -- v9.616: alias up3.8kg buat split screen, loadstring dari file up3.8kg
         hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
