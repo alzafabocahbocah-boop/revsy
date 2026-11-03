@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.09"
+local VERSION = "up38kg-v2.10"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1497,6 +1497,27 @@ do
         if v.Name == "GetPetCooldown" and v:IsA("RemoteFunction") then getCooldownRF = v end
     end
     if not equipRE then for _, v in pairs(RS:GetDescendants()) do if v.Name == "PetsService" then equipRE = v; break end end end
+
+    -- v2.10: hook FireServer PetsService -> log semua call dari SC manapun (KG, healer, sc lain)
+    if equipRE then
+        local origFireServer = equipRE.FireServer
+        equipRE.FireServer = function(self, ...)
+            local args = {...}
+            pcall(function()
+                local action = tostring(args[1] or "?")
+                local uuid   = tostring(args[2] or "?")
+                -- strip format biar pendek
+                local uuid8  = uuid:gsub("^{",""):gsub("}$",""):sub(1,8)
+                local ts     = os.date("%H:%M:%S")
+                local line   = ts.." | "..uuid8.." | HOOK-RE | "..action
+                table.insert(_G.ZenxAnimDbgLog, 1, line)
+                if #_G.ZenxAnimDbgLog > 30 then table.remove(_G.ZenxAnimDbgLog) end
+                _G.ZenxAnimDbgLogAll[#_G.ZenxAnimDbgLogAll+1] = line
+            end)
+            return origFireServer(self, ...)
+        end
+    end
+
     local function fmtUUID(u) local s = tostring(u); if s:sub(1,1) ~= "{" then s = "{"..s.."}" end return s end
     local function unequipPet(uuid)
         if equipRE then
