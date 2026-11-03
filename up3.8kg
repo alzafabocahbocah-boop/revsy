@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.85"
+local VERSION = "up38kg-v1.86"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2375,9 +2375,8 @@ do
         -- v1.79: DEBUG GUI mengambang kanan tengah — nampilin uuid+pet+animStr tiap hit
         local _animDbgLog = {}      -- rolling 30 entry buat ditampilin di GUI
         local _animDbgLogAll = {}   -- semua entry tanpa batas buat copy
-        local function animDbgPush(r, animStr)
-            local ts = os.date("%H:%M:%S")
-            local uuid8 = tostring(r):sub(1,8)
+        local function animDbgPush(r, animStr, marker)
+            -- v1.86: hanya log Dilop (filter biar fokus)
             local petType = "?"
             pcall(function()
                 local fmtU = "{"..r.."}"
@@ -2387,17 +2386,13 @@ do
                     if pt ~= "" then petType = stripMutation(pt) end
                 end
             end)
-            local sup = false
-            pcall(function()
-                if supportKunci[r] or supportKunci["{"..r.."}"] then sup = true end
-                if not sup then for k in pairs(supportKunci) do if tostring(k):gsub("[{}]","") == r then sup = true break end end end
-            end)
-            local entry = ts.." | "..uuid8.." | "..petType.." | "..tostring(animStr)..(sup and " [SUP]" or "")
-            -- display: rolling 30 (paling baru di atas)
-            table.insert(_animDbgLog, 1, entry)
+            if not petType:lower():find("dilophosaurus",1,true) then return end
+            local ts = os.date("%H:%M:%S")
+            local uuid8 = tostring(r):sub(1,8)
+            local line = marker and (ts.." | "..uuid8.." | >> "..marker) or (ts.." | "..uuid8.." | "..tostring(animStr))
+            table.insert(_animDbgLog, 1, line)
             if #_animDbgLog > 30 then table.remove(_animDbgLog) end
-            -- copy: semua entry tanpa batas (paling baru di bawah, urut waktu)
-            _animDbgLogAll[#_animDbgLogAll+1] = entry
+            _animDbgLogAll[#_animDbgLogAll+1] = line
         end
         task.spawn(function()
             task.wait(3)
@@ -2535,11 +2530,15 @@ do
                         ssLog("SWAP uuid="..r:sub(1,8).." anim="..animStr)
                         local raw = r
                         task.spawn(function()
+                            animDbgPush(raw, nil, "FRILL -> UNEQUIP")
                             local ok1,e1 = pcall(function() unequipPet(raw) end)
                             ssLog("UNEQUIP ok="..tostring(ok1)..(ok1 and "" or " e="..tostring(e1)))
+                            animDbgPush(raw, nil, "UNEQUIP "..(ok1 and "OK" or "FAIL"))
                             task.wait(0.03)
+                            animDbgPush(raw, nil, "EQUIP...")
                             local ok2,e2 = pcall(function() equipPet(raw) end)
                             ssLog("EQUIP ok="..tostring(ok2)..(ok2 and "" or " e="..tostring(e2)))
+                            animDbgPush(raw, nil, "EQUIP "..(ok2 and "OK" or "FAIL"))
                         end)
                     end
                 end
