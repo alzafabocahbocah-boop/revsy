@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.53"
+local VERSION = "up38kg-v1.54"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -560,7 +560,7 @@ end
 
 -- ============================================================
 -- STAT KG — total pet + belum/udah 3.8kg (dari hact PetDetect + kg.lua base weight)
--- age-1 KG = BaseWeight × 1.1 (dari sc kg stat). Container via getgc.
+-- age-1 KG = BaseWeight × 1.1 (dari sc kg stat). Container via RC (v1.54: zero getgc).
 -- ============================================================
 local KG_TARGET_STAT = 3.8   -- up3.8kg: target 3.8kg
 -- v1.31: "Rainbow " DIBUANG dari sini. Rainbow itu JENIS pet ("Rainbow Elephant",
@@ -682,68 +682,88 @@ end)
 
 
 
--- cari container getgc (cache, re-find kalau invalid) — port dari kg.lua
+-- v1.54: RC direct access — ZERO getgc (port dari up6kg v10.265)
+-- chain: RC.new("ActivePetsService_Replicator"):GetData(myName).Table.PlayerPetData[myName].PetInventory.Data
 local _kgContainer = nil
-local function findMemoryContainer()
-    if not getgc then return nil end
-    local backpackUUIDs, bpCount = {}, 0
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") then
-                local u = t:GetAttribute("PET_UUID")
-                if u then
-                    local k = tostring(u); if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
-                    backpackUUIDs[k] = true; bpCount = bpCount + 1
-                end
-            end
-        end
-    end
-    local best, bestCount, bestMatch = nil, 0, 0
+local _kgContainerDone = false
+local _kgMutableStats = nil   -- pointer langsung ke MutableStats (buat maxInv tanpa getgc)
+local _rcInst = nil           -- instance RC (cache sekali, reuse)
+
+-- RC-based maxInv (tanpa getgc, tanpa UI scan) — port dari up6kg v10.260
+local function _rcGetMaxInv()
     pcall(function()
-        for _, obj in pairs(getgc(true)) do
-            if type(obj) == "table" then
-                local uuidLike, matchCount = 0, 0
-                for k in pairs(obj) do
-                    if type(k) == "string" and #k >= 32 and k:find("-") then
-                        uuidLike = uuidLike + 1
-                        if backpackUUIDs[k] then matchCount = matchCount + 1 end
-                        if uuidLike >= 50 and matchCount == 0 then break end
-                    end
-                end
-                if uuidLike >= 5 then
-                    local sample = nil
-                    for _, v in pairs(obj) do sample = v; break end
-                    if type(sample) == "table" and rawget(sample, "PetData") then
-                        local cnt = 0; for _ in pairs(obj) do cnt = cnt + 1 end
-                        local better = false
-                        if bpCount > 0 then
-                            if matchCount > bestMatch then better = true
-                            elseif matchCount == bestMatch and cnt > bestCount then better = true end
-                        else
-                            if cnt > bestCount then better = true end
-                        end
-                        if better then best = obj; bestCount = cnt; bestMatch = matchCount end
-                    end
-                end
-            end
+        if not _rcInst then
+            local RS = game:GetService("ReplicatedStorage")
+            local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
+            if mod then _rcInst = require(mod).new("ActivePetsService_Replicator") end
         end
     end)
-    return best
+    if not _rcInst then return nil end
+    local mx = nil
+    pcall(function()
+        local data = _rcInst:GetData(player.Name)
+        if type(data) ~= "table" then return end
+        local tbl = rawget(data, "Table")
+        if type(tbl) ~= "table" then return end
+        local ppd = rawget(tbl, "PlayerPetData")
+        if type(ppd) ~= "table" then return end
+        local pd = rawget(ppd, player.Name)
+        if type(pd) ~= "table" then return end
+        local ms = rawget(pd, "MutableStats")
+        if type(ms) ~= "table" then return end
+        -- cache pointer buat reuse
+        _kgMutableStats = ms
+        local mp = rawget(ms, "MaxPetsInInventory")
+        if type(mp) == "number" and mp > 0 and mp <= 2000 then mx = mp end
+    end)
+    return mx
+end
+
+-- v1.54: findMemoryContainer → RC langsung, port dari up6kg v10.265
+-- ZERO getgc — format return sama: {uuid -> {PetData={...}, PetType="..."}}
+local function findMemoryContainer()
+    local result = nil
+    local ok, err = pcall(function()
+        local RS = game:GetService("ReplicatedStorage")
+        local RC = require(RS.Modules.ReplicationClass)
+        if not RC then return end
+        local inst = RC.new("ActivePetsService_Replicator")
+        if not inst then return end
+        local data = inst:GetData(player.Name)
+        if type(data) ~= "table" then return end
+        local tbl = data.Table
+        if type(tbl) ~= "table" then return end
+        local ppd = tbl.PlayerPetData
+        if type(ppd) ~= "table" then return end
+        local pd = ppd[player.Name]
+        if type(pd) ~= "table" then return end
+        -- cache pointer MutableStats untuk maxInv
+        pcall(function()
+            local ms = pd.MutableStats
+            if type(ms) == "table" then _kgMutableStats = ms end
+        end)
+        local pi = pd.PetInventory
+        if type(pi) ~= "table" then return end
+        local dat = pi.Data
+        if type(dat) ~= "table" then return end
+        local out = {}
+        for uuid, entry in pairs(dat) do
+            if type(entry) == "table" then
+                out[tostring(uuid)] = entry
+            end
+        end
+        if next(out) then result = out end
+    end)
+    if not ok then print("[up38kg] findMemoryContainer ERR:", tostring(err):sub(1,80)) end
+    return result
 end
 local function ambilContainer()
-    -- valid kalau masih tabel + ada PetData. re-find kalau nil.
-    if _kgContainer then
-        local ok = false
-        pcall(function()
-            for _, v in pairs(_kgContainer) do
-                if type(v) == "table" and rawget(v, "PetData") then ok = true end
-                break
-            end
-        end)
-        if ok then return _kgContainer end
+    -- RC dipanggil tiap refresh (ringan, bukan getgc)
+    local fresh = findMemoryContainer()
+    if fresh then
+        _kgContainer = fresh
+        _kgContainerDone = true
     end
-    _kgContainer = findMemoryContainer()
     return _kgContainer
 end
 
@@ -995,7 +1015,7 @@ end
 _G.ZenxKgStat = _G.ZenxKgStat or { total = 0, belum = 0, udah = 0, list = {}, tipe = {} }
 _G.__ZenxKgStatGen = (_G.__ZenxKgStatGen or 0) + 1
 local statGen = _G.__ZenxKgStatGen
--- CONTAINER-FIND loop (tiap 15s, getgc BERAT) — refresh _kgContainer aja.
+-- v1.54: CONTAINER-FIND loop (tiap 15s) — RC call ringan, ZERO getgc.
 task.spawn(function()
     while _G.__ZenxKgStatGen == statGen do
         pcall(function() ambilContainer() end)
@@ -1069,66 +1089,34 @@ task.spawn(function()
                 -- UI ini punya akun SENDIRI -> GAK ke-kontaminasi data trade (beda sama getgc yg
                 -- kecampur data akun lawan pas ViewInventory). X = jumlah pet (cocok sama totalAll).
                 -- getgc parent-find + fit CUMA fallback kalo UI belum ke-load.
-                if not _G.__ZenxMaxPetCache or (tick() - (_G.__ZenxMaxPetTime or 0)) > 30 then
-                    local maxUI = nil
+                -- v1.54: maxInv via RC (ZERO getgc) — port dari up6kg v10.260
+                do
+                    local mx = nil
+                    -- 1) RC direct (paling reliable, tanpa getgc)
                     pcall(function()
-                        local pg = player:FindFirstChild("PlayerGui")
-                        if pg then
-                            for _, d in ipairs(pg:GetDescendants()) do
-                                if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
-                                    local low = d.Text:lower()
-                                    if low:find("pet") and low:find("item") then   -- "Pet Items" (BUKAN "All Items" yg max-nya beda)
-                                        local a, b = d.Text:match("(%d+)%s*/%s*(%d+)")
-                                        if a and b then
-                                            a, b = tonumber(a), tonumber(b)
-                                            if a and b and b > 0 and math.abs(a - (totalAll or 0)) <= 10 then
-                                                maxUI = b; break     -- X cocok jumlah pet -> ini inventory akun ini
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
+                        local rcv = _rcGetMaxInv()
+                        if rcv then mx = rcv end
                     end)
-                    local mx = maxUI
-                    if not mx then                            -- FALLBACK getgc (UI belum ke-load)
-                        -- v10.64: cuma dari table PlayerData ASLI (punya MaxEggsInFarm+MaxEquippedPets+MaxPetsInInventory).
-                        -- Tally -> pilih MODE (paling sering) di antara yg >= jumlah pet skrg. Buang stale/default
-                        -- (contoh dari dump: 235 muncul 2x = bener, 60 muncul 1x = stale; di akun lain 210 = default).
-                        local tally = {}
-                        local floor = (totalAll or 0) - 5
-                        pcall(function()
-                            if getgc then
-                                for _, obj in ipairs(getgc(true)) do
-                                    if type(obj) == "table" then
-                                        local mp = rawget(obj, "MaxPetsInInventory")
-                                        if type(mp) == "number" and mp > 0
-                                            and rawget(obj, "MaxEggsInFarm") ~= nil
-                                            and rawget(obj, "MaxEquippedPets") ~= nil
-                                            and mp >= floor then
-                                            tally[mp] = (tally[mp] or 0) + 1   -- cuma config PlayerData + >= jumlah pet
-                                        end
-                                    end
-                                end
-                            end
-                        end)
-                        local bestN = 0
-                        for v, n in pairs(tally) do
-                            -- MODE; kalo seri -> pilih yg lebih KECIL (default game cenderung gede: 210/275)
-                            if n > bestN or (n == bestN and (not mx or v < mx)) then mx = v; bestN = n end
+                    -- 2) fallback pointer _kgMutableStats (by-reference, update otomatis)
+                    if not mx then pcall(function()
+                        local ms = _kgMutableStats
+                        if ms then
+                            local mp = rawget(ms, "MaxPetsInInventory")
+                            if type(mp) == "number" and mp >= 10 and mp <= 2000 then mx = mp end
                         end
+                    end) end
+                    -- 3) fallback player Attribute
+                    if not mx then pcall(function()
+                        local mp = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+                        if type(mp) == "number" and mp > 0 then mx = mp end
+                    end) end
+                    -- cache naik saja (jangan turun)
+                    if mx and mx > 0 then
+                        local cur = _G.__ZenxMaxPetCache or 0
+                        if mx > cur then _G.__ZenxMaxPetCache = mx end
                     end
-                    -- v10.64: getgc udah pake MODE heuristik (di atas) yg reliable -> mx udah bener.
-                    -- maxUI (kalo UI keload + valid) lebih reliable lagi -> override. GAK pake file lagi
-                    -- (file dari v10.61/v10.62 bisa nyimpen nilai stale/salah -> perpetuate 210). Hapus file lama.
-                    pcall(function()
-                        local fnOld = "zenx_maxinv_" .. tostring(player and player.Name or "x") .. ".txt"
-                        if isfile and delfile and isfile(fnOld) then delfile(fnOld) end
-                    end)
-                    if maxUI and maxUI > 0 then mx = maxUI end   -- UI = paling reliable, override getgc
-                    _G.__ZenxMaxPetCache = mx or _G.__ZenxMaxPetCache
                     _G.__ZenxMaxPetTime = tick()
-                    _G.__ZenxMaxPetSrc = maxUI and "ui" or "gc-mode"
+                    _G.__ZenxMaxPetSrc = _rcInst and "rc" or (_kgMutableStats and "ms" or "attr")
                     _G.__ZenxMaxPetTotal = totalAll
                 end
                 local maxInv = _G.__ZenxMaxPetCache or 200
