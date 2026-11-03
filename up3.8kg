@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.62"
+local VERSION = "up38kg-v1.63"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2366,6 +2366,68 @@ do
                 end
                 task.wait(0.5)
             end
+        end)
+        -- v1.63: SUPPORT SWAP via DataStream + CustomAnimationState (port dari uplevelnew T-Rex logic)
+        -- Tiap ada CustomAnimationState event dari ActivePets → swap pet support (unequip+equip)
+        -- Bedanya dari uplevelnew: filter UUID support (supportKunci) bukan filter tipe pet, dan gak cek animStr
+        task.spawn(function()
+            local function ssLog(msg) kgLog("[SuppSwap] " .. tostring(msg)) end
+            local ge2 = RS:WaitForChild("GameEvents", 15)
+            if not ge2 then ssLog("ERR: ge2 nil"); return end
+            local ds2 = ge2:WaitForChild("DataStream", 15)
+            if not ds2 then ssLog("ERR: DataStream nil"); return end
+            ssLog("listener ON")
+
+            local _ssLastSwap = {}  -- uuid -> tick() last swap (anti-spam 1s)
+
+            local function deepFind(t, depth, path)
+                depth = depth or 0
+                path = path or "r"
+                if depth > 12 or type(t) ~= "table" then return end
+                for k, v in pairs(t) do
+                    local ks = tostring(k):sub(1,20)
+                    if type(v) == "table" then
+                        local v1 = tostring(v[1] or "")
+                        if v1:find("CustomAnimationState",1,true) then
+                            -- ekstrak uuid dari key path
+                            local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                            local raw = uuid:gsub("[{}]","")
+                            -- cek apakah uuid ini adalah pet support
+                            if supportKunci[raw] or supportKunci["{"..raw.."}"] then
+                                -- anti-spam: skip kalau baru swap < 1s
+                                local last = _ssLastSwap[raw] or 0
+                                if (tick() - last) >= 1 then
+                                    _ssLastSwap[raw] = tick()
+                                    ssLog("SWAP support raw=" .. raw:sub(1,8) .. " animStr=" .. tostring(v[2] or "?"))
+                                    task.spawn(function()
+                                        local ok1,e1 = pcall(function() unequipPet(raw) end)
+                                        ssLog("UNEQUIP ok="..tostring(ok1)..(ok1 and "" or " err="..tostring(e1)))
+                                        task.wait(0.03)
+                                        local ok2,e2 = pcall(function() equipPet(raw, CLUSTER) end)
+                                        ssLog("EQUIP ok="..tostring(ok2)..(ok2 and "" or " err="..tostring(e2)))
+                                    end)
+                                end
+                            end
+                        else
+                            deepFind(v, depth+1, path .. "." .. ks)
+                        end
+                    end
+                end
+            end
+
+            ds2.OnClientEvent:Connect(function(...)
+                if not KG.aktif or KG.reset then return end
+                local args = {...}
+                local svc = tostring(args[2] or "")
+                if svc:find("ActivePets", 1, true) then
+                    local data3, data4 = args[3], args[4]
+                    local data = type(data3)=="table" and data3 or (type(data4)=="table" and data4 or nil)
+                    if data then
+                        local sz = 0; for _ in pairs(data) do sz=sz+1 end
+                        if sz > 0 then deepFind(data, 0, "AP") end
+                    end
+                end
+            end)
         end)
         -- HEALER cek TERUS (tiap 1s): pet tim yg model-nya ILANG -> langsung PAKSA copot->pasang
         -- HOLD di TENGAH: tahan pet tim di CLUSTER (numpuk rapet) — pivot balik kalau drift >3 stud
