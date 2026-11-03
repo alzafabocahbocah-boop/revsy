@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.69"
+local VERSION = "up38kg-v1.70"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2372,7 +2372,7 @@ do
         -- Tiap loop per-uuid: listen DataStream, detect CustomAnimationState milik uuid → swap
         -- Loop mati otomatis kalau uuid udah gak di supportKunci
         task.spawn(function()
-            local function ssLog(msg) kgLog("[SuppSwap] " .. tostring(msg)) end
+            local function ssLog(msg) local s="[SuppSwap] "..tostring(msg); kgLog(s); if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end end
             local ge2 = RS:WaitForChild("GameEvents", 15)
             if not ge2 then ssLog("ERR: ge2 nil"); return end
             local ds2 = ge2:WaitForChild("DataStream", 15)
@@ -2452,7 +2452,7 @@ do
         end)
         -- v1.66: CD WATCHDOG support — tiap 3s scan supportKunci, kalau cdEventCache nil/stale >8s → pickup
         task.spawn(function()
-            local function cdwLog(msg) kgLog("[CDWatch] " .. tostring(msg)) end
+            local function cdwLog(msg) local s="[CDWatch] "..tostring(msg); kgLog(s); if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end end
             task.wait(5)
             while KG.aktif and _G.__ZenxKgResetGen == resetGen do
                 task.wait(3)
@@ -2727,6 +2727,90 @@ local gui = mk("ScreenGui", {
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
 pcall(function() gui.Parent = (gethui and gethui()) or CoreGui end)
 if not gui.Parent then gui.Parent = player:WaitForChild("PlayerGui") end
+
+-- v1.70: SUPP DEBUG PANEL — floating kanan atas, log SuppSwap + CDWatch
+local _sdLines = {}
+local _sdBox
+do
+    local sdPanel = mk("Frame", {
+        Name = "SuppDebugPanel",
+        Size = UDim2.new(0, 310, 0, 200),
+        Position = UDim2.new(1, -318, 0, 8),
+        BackgroundColor3 = Color3.fromRGB(12, 14, 22),
+        BorderSizePixel = 0, Parent = gui })
+    pcall(function() sdPanel.BackgroundTransparency = 0.18 end)
+    corner(sdPanel, 10)
+    stroke(sdPanel, Color3.fromRGB(80, 100, 180), 1)
+
+    -- header bar
+    local sdHdr = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 24),
+        BackgroundColor3 = Color3.fromRGB(25, 30, 55),
+        BorderSizePixel = 0, Parent = sdPanel })
+    corner(sdHdr, 10)
+    mk("Frame", { Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0,0,1,-12),
+        BackgroundColor3 = Color3.fromRGB(25, 30, 55), BorderSizePixel = 0, Parent = sdHdr })
+    local sdTitle = mk("TextLabel", {
+        Size = UDim2.new(1, -8, 1, 0), Position = UDim2.new(0, 8, 0, 0),
+        BackgroundTransparency = 1, Text = "⚡ SUPP DEBUG",
+        Font = Enum.Font.GothamBold, TextSize = 11,
+        TextColor3 = Color3.fromRGB(130, 160, 255),
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = sdHdr })
+
+    -- dot status
+    local sdDot = mk("Frame", { Size = UDim2.new(0,7,0,7), Position = UDim2.new(1,-14,0.5,-3),
+        BackgroundColor3 = Color3.fromRGB(80, 220, 120), BorderSizePixel = 0, Parent = sdHdr })
+    corner(sdDot, 4)
+
+    -- log box
+    _sdBox = mk("TextLabel", {
+        Size = UDim2.new(1, -10, 1, -28),
+        Position = UDim2.new(0, 5, 0, 26),
+        BackgroundTransparency = 1, RichText = true,
+        Font = Enum.Font.Code, TextSize = 11,
+        TextColor3 = Color3.fromRGB(200, 210, 240),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        TextWrapped = true, Text = "<font color='#555'>-- menunggu event --</font>",
+        Parent = sdPanel })
+
+    -- drag support
+    local dragging, dragStart, startPos = false, nil, nil
+    sdHdr.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = inp.Position
+            startPos = sdPanel.Position
+        end
+    end)
+    game:GetService("UserInputService").InputChanged:Connect(function(inp)
+        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+            local delta = inp.Position - dragStart
+            sdPanel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    game:GetService("UserInputService").InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+_G.ZenxSuppDebug = function(msg)
+    if not _sdBox then return end
+    local sl = tostring(msg):lower()
+    local col
+    if sl:find("unequip") then col = "#ff9944"
+    elseif sl:find("equip") then col = "#44dd88"
+    elseif sl:find("swap") then col = "#ffdd44"
+    elseif sl:find("pickup") then col = "#ff7777"
+    elseif sl:find("err") or sl:find("off") then col = "#888888"
+    elseif sl:find("dbg") then col = "#aaaaff"
+    else col = "#99bbff" end
+    local esc = tostring(msg):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;")
+    table.insert(_sdLines, 1, "<font color='#445'>"..os.date("%H:%M:%S").."</font> <font color='"..col.."'>"..esc.."</font>")
+    while #_sdLines > 14 do table.remove(_sdLines) end
+    _sdBox.Text = table.concat(_sdLines, "\n")
+end
 
 -- main frame
 local main = mk("Frame", {
