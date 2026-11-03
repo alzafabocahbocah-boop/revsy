@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.77"
+local VERSION = "up38kg-v1.78"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2369,10 +2369,9 @@ do
                 task.wait(0.5)
             end
         end)
-        -- v1.65: SUPPORT SWAP via DataStream + CustomAnimationState
-        -- Tiap 10s cek supportKunci — uuid baru → spawn loop sendiri
-        -- Tiap loop per-uuid: listen DataStream, detect CustomAnimationState milik uuid → swap
-        -- Loop mati otomatis kalau uuid udah gak di supportKunci
+        -- v1.78: SUPPORT SWAP via DataStream + CustomAnimationState
+        -- SATU listener, scan semua CustomAnimationState, cocokkan ke supportKunci
+        -- Fix: sebelumnya per-uuid loop — uuid di DataStream bisa beda format dari supportKunci
         task.spawn(function()
             local function ssLog(msg) local s="[SuppSwap] "..tostring(msg); kgLog(s); if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end end
             local ge2 = RS:WaitForChild("GameEvents", 15)
@@ -2381,80 +2380,75 @@ do
             if not ds2 then ssLog("ERR: DataStream nil"); return end
             ssLog("ds2 OK")
 
-            local _ssLoops = {}  -- uuid -> true (sudah ada loop)
-
-            local function spawnUuidLoop(raw)
-                if _ssLoops[raw] then return end
-                _ssLoops[raw] = true
-                ssLog("loop ON uuid=" .. raw:sub(1,8))
-                task.spawn(function()
-                    -- deep find CustomAnimationState milik uuid ini saja
-                    local function deepFind(t, depth)
-                        depth = depth or 0
-                        if depth > 12 or type(t) ~= "table" then return false end
-                        for _, v in pairs(t) do
-                            if type(v) == "table" then
-                                local v1 = tostring(v[1] or "")
-                                if v1:find("CustomAnimationState",1,true) then
-                                    local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
-                                    local r = uuid:gsub("[{}]","")
-                                    local animStr = tostring(v[2] or "?")
-                                    -- debug: log semua CustomAnimationState yang masuk
-                                    ssLog("DBG anim uuid="..r:sub(1,8).." state="..animStr.." (raw="..raw:sub(1,8)..")")
-                                    if r == raw then return true, animStr end
-                                else
-                                    local found, anim = deepFind(v, depth+1)
-                                    if found then return true, anim end
-                                end
-                            end
+            -- deepFind: kumpulkan semua {uuid, animStr} dari CustomAnimationState
+            local function deepFind(t, depth, out)
+                depth = depth or 0; out = out or {}
+                if depth > 12 or type(t) ~= "table" then return out end
+                for _, v in pairs(t) do
+                    if type(v) == "table" then
+                        local v1 = tostring(v[1] or "")
+                        if v1:find("CustomAnimationState", 1, true) then
+                            local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                            local r = uuid:gsub("[{}]", "")
+                            local animStr = tostring(v[2] or "?")
+                            out[#out+1] = {r, animStr}
+                        else
+                            deepFind(v, depth+1, out)
                         end
-                        return false
                     end
-
-                    local conn
-                    conn = ds2.OnClientEvent:Connect(function(...)
-                        if not KG.aktif or KG.reset then return end
-                        -- cek apakah loop ini masih valid
-                        if not (supportKunci[raw] or supportKunci["{"..raw.."}"]) then
-                            conn:Disconnect()
-                            _ssLoops[raw] = nil
-                            ssLog("loop OFF uuid=" .. raw:sub(1,8))
-                            return
-                        end
-                        local args = {...}
-                        local svc = tostring(args[2] or "")
-                        if not svc:find("ActivePets", 1, true) then return end
-                        local data3, data4 = args[3], args[4]
-                        local data = type(data3)=="table" and data3 or (type(data4)=="table" and data4 or nil)
-                        if not data then return end
-                        local found, animStr = deepFind(data, 0)
-                        if found then
-                            if not _G.ZenxSuppSwapOn then
-                                ssLog("SWAP SKIP (toggle OFF) uuid="..raw:sub(1,8))
-                                return
-                            end
-                            ssLog("SWAP uuid="..raw:sub(1,8).." anim="..tostring(animStr))
-                            task.spawn(function()
-                                local ok1,e1 = pcall(function() unequipPet(raw) end)
-                                ssLog("UNEQUIP ok="..tostring(ok1)..(ok1 and "" or " e="..tostring(e1)))
-                                task.wait(0.03)
-                                local ok2,e2 = pcall(function() equipPet(raw) end)
-                                ssLog("EQUIP ok="..tostring(ok2)..(ok2 and "" or " e="..tostring(e2)))
-                            end)
-                        end
-                    end)
-                end)
-            end
-
-            -- tiap 10s cek supportKunci, spawn loop untuk uuid baru
-            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
-                for raw in pairs(supportKunci) do
-                    local r = tostring(raw):gsub("[{}]","")
-                    spawnUuidLoop(r)
                 end
-                task.wait(10)
+                return out
             end
-            ssLog("watcher OFF")
+
+            -- helper: cek apakah uuid ada di supportKunci (plain atau {uuid})
+            local function isSupport(r)
+                if supportKunci[r] then return true end
+                if supportKunci["{"..r.."}"] then return true end
+                -- cek partial match (8 char prefix)
+                for k in pairs(supportKunci) do
+                    local kk = tostring(k):gsub("[{}]","")
+                    if kk == r then return true end
+                end
+                return false
+            end
+
+            local _swapCool = {}  -- uuid -> tick() last swap, anti-spam 2s per uuid
+            local conn = ds2.OnClientEvent:Connect(function(...)
+                if not KG.aktif or KG.reset then return end
+                local args = {...}
+                local svc = tostring(args[2] or "")
+                if not svc:find("ActivePets", 1, true) then return end
+                local data3, data4 = args[3], args[4]
+                local data = type(data3)=="table" and data3 or (type(data4)=="table" and data4 or nil)
+                if not data then return end
+                local hits = deepFind(data, 0)
+                for _, hit in ipairs(hits) do
+                    local r, animStr = hit[1], hit[2]
+                    ssLog("DBG anim uuid="..r:sub(1,8).." state="..animStr)
+                    if isSupport(r) then
+                        local now = tick()
+                        if _swapCool[r] and (now - _swapCool[r]) < 2 then continue end
+                        _swapCool[r] = now
+                        if not _G.ZenxSuppSwapOn then
+                            ssLog("SKIP (toggle OFF) uuid="..r:sub(1,8))
+                            continue
+                        end
+                        ssLog("SWAP uuid="..r:sub(1,8).." anim="..animStr)
+                        local raw = r
+                        task.spawn(function()
+                            local ok1,e1 = pcall(function() unequipPet(raw) end)
+                            ssLog("UNEQUIP ok="..tostring(ok1)..(ok1 and "" or " e="..tostring(e1)))
+                            task.wait(0.03)
+                            local ok2,e2 = pcall(function() equipPet(raw) end)
+                            ssLog("EQUIP ok="..tostring(ok2)..(ok2 and "" or " e="..tostring(e2)))
+                        end)
+                    end
+                end
+            end)
+            -- tunggu sampai engine mati / reset
+            while KG.aktif and _G.__ZenxKgResetGen == resetGen do task.wait(5) end
+            conn:Disconnect()
+            ssLog("OFF")
         end)
         -- v1.66: CD WATCHDOG support — tiap 3s scan supportKunci, kalau cdEventCache nil/stale >8s → pickup
         task.spawn(function()
