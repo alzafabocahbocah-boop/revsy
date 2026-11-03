@@ -176,23 +176,32 @@ pcall(function()
     end)
 end)
 
--- ============ 3. LISTEN Sound di workspace ============
-local trackedSounds = {}
-local function watchSound(s)
-    if not s:IsA("Sound") then return end
-    if trackedSounds[s] then return end
-    trackedSounds[s] = true
-    s.Played:Connect(function()
-        push("SOUND", (s.Name or "?"):sub(1,16).." | id:"..tostring(s.SoundId):sub(-6))
-    end)
-end
-
+-- ============ 3. LISTEN Sound di PetsPhysical (cara sc lain) ============
+-- Tangkap Sound object yang MUNCUL (DescendantAdded) di PetsPhysical
+-- Ini berbeda dari .Played — sc lain detect Sound spawn, bukan play event
 pcall(function()
-    for _, d in ipairs(workspace:GetDescendants()) do
-        pcall(function() watchSound(d) end)
-    end
-    workspace.DescendantAdded:Connect(function(d)
-        task.defer(function() pcall(function() watchSound(d) end) end)
+    local pp = workspace:FindFirstChild("PetsPhysical") or workspace:WaitForChild("PetsPhysical", 10)
+    if not pp then push("INIT", "PetsPhysical NOT FOUND"); return end
+    push("INIT", "PetsPhysical listener ON")
+
+    local seenSounds = {}
+    pp.DescendantAdded:Connect(function(obj)
+        task.defer(function()
+            pcall(function()
+                if not obj:IsA("Sound") then return end
+                local sid = tostring(obj.SoundId)
+                if seenSounds[sid] then return end  -- debounce per SoundId
+                seenSounds[sid] = true
+                task.delay(0.5, function() seenSounds[sid] = nil end)  -- reset debounce 500ms
+
+                -- cari parent model (pet uuid)
+                local model = obj
+                while model and not model:IsA("Model") do model = model.Parent end
+                local uuid8 = (model and isPetModel(model)) and model.Name:sub(1,10) or "?"
+                local shortId = sid:sub(-10)
+                push("SND-SPAWN", uuid8 .. " | id:" .. shortId)
+            end)
+        end)
     end)
 end)
 
@@ -205,4 +214,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "dbg_swap v1.4 ready (pos+slot)")
+push("INIT", "dbg_swap v1.5 ready (snd-spawn)")
