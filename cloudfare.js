@@ -37,24 +37,29 @@ const json = (data, status = 200) =>
 
 const salah = (pesan, status = 400) => json({ error: pesan }, status);
 
-// v8.98: INCREMENT counter request per endpoint di background (non-blocking).
-// Disimpen di cfg scope "reqcount:<METHOD>:<jalur>" — value JSON {n, ts_first, ts_last}.
-// Dibaca via GET /req-stat (butuh kunci). Gak nambah latency response.
-async function incrementReqCount(db, jalur, method) {
+// v8.99: INCREMENT counter request per endpoint + per SC di background (non-blocking).
+// Scope "reqcount:<METHOD>:<jalur>" — value JSON {n, ts_first, ts_last, sc:{seed:N, farm:N, ...}}
+// sc = nama script yang kirim request (dari b.sc body). Dibaca via GET /req-stat.
+async function incrementReqCount(db, jalur, method, sc) {
   try {
     const scope = "reqcount:" + method + ":" + jalur;
     const row = await db.prepare("SELECT data FROM cfg WHERE scope=?1").bind(scope).first();
-    let d = { n: 0, ts_first: 0, ts_last: 0 };
-    if (row) { try { d = JSON.parse(row.data) || d; } catch {} }
+    let d = { n: 0, ts_first: 0, ts_last: 0, sc: {} };
+    if (row) { try { d = { sc: {}, ...JSON.parse(row.data) }; } catch {} }
     const now = Math.floor(Date.now() / 1000);
     d.n = (d.n || 0) + 1;
     if (!d.ts_first) d.ts_first = now;
     d.ts_last = now;
+    // catat breakdown per SC kalau ada
+    if (sc) {
+      const key = String(sc).toLowerCase().trim().slice(0, 20);
+      d.sc[key] = (d.sc[key] || 0) + 1;
+    }
     await db.prepare(
       `INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3)
        ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
     ).bind(scope, now, JSON.stringify(d)).run();
-  } catch (e) { /* silent: jangan sampai gagal log bikin request gagal */ }
+  } catch (e) { /* silent */ }
 }
 
 // perbandingan waktu-tetap, biar kunci nggak bisa ditebak dari lama respons
@@ -184,9 +189,18 @@ export default {
       if (m) { kunciDariJalur = decodeURIComponent(m[1]); jalur = m[2]; }
     }
 
-    // v8.98: catat request per endpoint di background (non-blocking via ctx.waitUntil)
+    // v8.99: catat request per endpoint + SC di background (non-blocking via ctx.waitUntil)
+    // req.clone() biar body bisa dibaca di background tanpa ganggu handler asli.
+    // SC diambil dari body JSON field "sc" (dikirim star_seed/farm/market/uplevelnew/up6kg/hact).
     if (ctx && ctx.waitUntil && env.DB && req.method !== "OPTIONS") {
-      ctx.waitUntil(incrementReqCount(env.DB, jalur, req.method));
+      const reqClone = req.clone();
+      ctx.waitUntil((async () => {
+        let sc = null;
+        if (req.method !== "GET" && req.method !== "DELETE") {
+          try { const b = await reqClone.json(); sc = b.sc || null; } catch {}
+        }
+        await incrementReqCount(env.DB, jalur, req.method, sc);
+      })());
     }
 
     const kunciDipakai = kunciDariJalur !== null
@@ -219,7 +233,7 @@ export default {
     // Cuma balikin versi backend, gak ada data sensitif.
     if (jalur === "/versi" && req.method === "GET") {
       return new Response(
-        JSON.stringify({ versi: "v8.98-backend-2026-11-03", endpoint_baru: ["req-stat", "gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
+        JSON.stringify({ versi: "v8.99-backend-2026-11-03", endpoint_baru: ["req-stat", "gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence", "delta-antri", "delta-hasil", "ps-list-panel-assign"] }),
         { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
       );
     }
@@ -321,7 +335,7 @@ export default {
           const ep = bagian.slice(2).join(":") || "/";
           const n = Number(d.n) || 0;
           total += n;
-          daftar.push({ endpoint: method + " " + ep, n, ts_first: d.ts_first || 0, ts_last: d.ts_last || 0 });
+          daftar.push({ endpoint: method + " " + ep, n, sc: d.sc || {}, ts_first: d.ts_first || 0, ts_last: d.ts_last || 0 });
         } catch {}
       }
       daftar.sort((a, b) => b.n - a.n);
