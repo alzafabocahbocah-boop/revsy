@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.612 — pkg_running pakai pidof dulu (ringan), dumpsys cuma fallback
+-- zenx_worker v9.613 — pkg_running dimatiin (return true), rejoin/status dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.612"
+local VERSION = "9.613"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1496,20 +1496,8 @@ local DETEKSI_LONGGAR = false
 local PENANDA_GAME = { "ActivityNativeMain", "MainGameActivity" }
 
 local function pkg_running(pkg)
-    -- v9.612: pakai pidof dulu (ringan), fallback dumpsys kalau perlu
-    local pid = sh("su -c 'pidof " .. pkg .. " 2>/dev/null'") or ""
-    if pid:match("%d") then return true end
-    if DETEKSI_LONGGAR then return false end
-    -- fallback: dumpsys (berat, hanya kalau pidof kosong)
-    local o = sh("su -c 'dumpsys activity activities | grep ActivityRecord | grep " .. pkg .. "'")
-    for line in o:gmatch("[^\n]+") do
-        if line:find(pkg, 1, true) then
-            for _, tanda in ipairs(PENANDA_GAME) do
-                if line:find(tanda, 1, true) then return true end
-            end
-        end
-    end
-    return false
+    -- v9.613: dimatiin -- rejoin/status dari denyut, gak perlu cek lokal
+    return true
 end
 
 local DEV_ID_CACHE
