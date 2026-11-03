@@ -591,20 +591,22 @@ local KG_CONFIG_PET = { ["Tim Ele"] = "" }   -- up6kg: bahan dari picker, gak di
 do
     local WS = workspace
     local function semuaFarm()
-        -- v1.59: GetChildren per subfarm (bukan GetDescendants farm besar)
+        -- v1.59: GetDescendants per subfarm (bukan seluruh farm). Plants_Physical bisa nested.
         local roots = {}
         local farm = WS:FindFirstChild("Farm")
         if farm then
             for _, sf in ipairs(farm:GetChildren()) do
-                local pp = sf:FindFirstChild("Plants_Physical")
-                if pp and (pp:IsA("Folder") or pp:IsA("Model")) then table.insert(roots, pp) end
+                for _, f in ipairs(sf:GetDescendants()) do
+                    if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+                end
             end
         end
         if #roots == 0 then
-            -- fallback: scan WS children langsung (bukan GetDescendants)
+            -- fallback: per child WS
             for _, sf in ipairs(WS:GetChildren()) do
-                local pp = sf:FindFirstChild("Plants_Physical")
-                if pp and (pp:IsA("Folder") or pp:IsA("Model")) then table.insert(roots, pp) end
+                for _, f in ipairs(sf:GetDescendants()) do
+                    if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+                end
             end
         end
         return roots
@@ -786,7 +788,6 @@ do
     end
 
     local function isElephant(obj)
-        -- v1.59: hapus GetDescendants (mahal). Cek Name + attr langsung di obj saja
         local n = obj.Name:lower()
         if n:find("elephant") then return true end
         local ok0, v0 = pcall(function() return obj:GetAttribute("f") end)
@@ -796,6 +797,12 @@ do
                 or obj:GetAttribute("type") or obj:GetAttribute("PetType")
         end)
         if ok1 and v1 and tostring(v1):lower():find("elephant") then return true end
+        -- v1.59: cek children saja (bukan GetDescendants full tree, sekali startup sudah lumayan)
+        for _, d in ipairs(obj:GetChildren()) do
+            if d.Name:lower():find("elephant") then return true end
+            local ok2, v2 = pcall(function() return d:GetAttribute("f") end)
+            if ok2 and v2 and tostring(v2):lower():find("elephant") then return true end
+        end
         return false
     end
 
@@ -927,31 +934,38 @@ do
                 if isMine then mySubfarms[sf] = true end
             end
         end
-        -- v1.59: cache BB sekali di startup (bukan tiap 2s di dlRun)
-        local bbMin, bbMax = nil, nil
+        -- v1.59: cache BB di background — retry tiap 3s sampai dapat (farm mungkin belum loaded)
         local cnt = 0
-        for sf in pairs(mySubfarms) do
-            cnt = cnt + 1
-            pcall(function()
-                for _, part in ipairs(sf:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        local pos = part.Position
-                        if bbMin == nil then
-                            bbMin = Vector3.new(pos.X, pos.Y, pos.Z); bbMax = Vector3.new(pos.X, pos.Y, pos.Z)
-                        else
-                            bbMin = Vector3.new(math.min(bbMin.X,pos.X), math.min(bbMin.Y,pos.Y), math.min(bbMin.Z,pos.Z))
-                            bbMax = Vector3.new(math.max(bbMax.X,pos.X), math.max(bbMax.Y,pos.Y), math.max(bbMax.Z,pos.Z))
-                        end
-                    end
-                end
-            end)
-        end
-        local bbMargin = 60
-        if bbMin then
-            _dlBBmin = bbMin - Vector3.new(bbMargin, 100, bbMargin)
-            _dlBBmax = bbMax + Vector3.new(bbMargin, 100, bbMargin)
-        end
+        for _ in pairs(mySubfarms) do cnt = cnt + 1 end
         _dlMySubfarmCount = cnt
+        task.spawn(function()
+            for _att = 1, 20 do   -- max 60s retry
+                local bbMin, bbMax = nil, nil
+                for sf in pairs(mySubfarms) do
+                    pcall(function()
+                        for _, part in ipairs(sf:GetDescendants()) do
+                            if part:IsA("BasePart") then
+                                local pos = part.Position
+                                if bbMin == nil then
+                                    bbMin = Vector3.new(pos.X, pos.Y, pos.Z); bbMax = Vector3.new(pos.X, pos.Y, pos.Z)
+                                else
+                                    bbMin = Vector3.new(math.min(bbMin.X,pos.X), math.min(bbMin.Y,pos.Y), math.min(bbMin.Z,pos.Z))
+                                    bbMax = Vector3.new(math.max(bbMax.X,pos.X), math.max(bbMax.Y,pos.Y), math.max(bbMax.Z,pos.Z))
+                                end
+                            end
+                        end
+                    end)
+                end
+                if bbMin then
+                    local bbMargin = 60
+                    _dlBBmin = bbMin - Vector3.new(bbMargin, 100, bbMargin)
+                    _dlBBmax = bbMax + Vector3.new(bbMargin, 100, bbMargin)
+                    print("[DL] BB cached att="..tostring(_att))
+                    break
+                end
+                task.wait(3)
+            end
+        end)
         task.spawn(function() pcall(dlRunOnce, plrName, farm, mySubfarms) end)
         task.spawn(function()
             local myPetUUIDs = {}; local myUUIDCount = 0
