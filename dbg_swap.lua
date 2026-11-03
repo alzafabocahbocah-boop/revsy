@@ -176,9 +176,7 @@ pcall(function()
     end)
 end)
 
--- ============ 3. LISTEN Sound di PetsPhysical (cara sc lain) ============
--- Tangkap Sound object yang MUNCUL (DescendantAdded) di PetsPhysical
--- Ini berbeda dari .Played — sc lain detect Sound spawn, bukan play event
+-- ============ 3. LISTEN Sound di PetsPhysical ============
 pcall(function()
     local pp = workspace:FindFirstChild("PetsPhysical") or workspace:WaitForChild("PetsPhysical", 10)
     if not pp then push("INIT", "PetsPhysical NOT FOUND"); return end
@@ -190,11 +188,10 @@ pcall(function()
             pcall(function()
                 if not obj:IsA("Sound") then return end
                 local sid = tostring(obj.SoundId)
-                if seenSounds[sid] then return end  -- debounce per SoundId
+                if seenSounds[sid] then return end
                 seenSounds[sid] = true
-                task.delay(0.5, function() seenSounds[sid] = nil end)  -- reset debounce 500ms
+                task.delay(0.5, function() seenSounds[sid] = nil end)
 
-                -- cari parent model (pet uuid)
                 local model = obj
                 while model and not model:IsA("Model") do model = model.Parent end
                 local uuid8 = (model and isPetModel(model)) and model.Name:sub(1,10) or "?"
@@ -202,6 +199,45 @@ pcall(function()
                 push("SND-SPAWN", uuid8 .. " | id:" .. shortId)
             end)
         end)
+    end)
+end)
+
+-- ============ 4. LISTEN semua RemoteEvent di ReplicatedStorage ============
+-- Cari event yang fire ~245ms setelah Frill ANIM → itu trigger sc lain
+pcall(function()
+    local function hookRE(re, path)
+        pcall(function()
+            re.OnClientEvent:Connect(function(a1, a2, ...)
+                local s1 = type(a1) == "string" and a1:sub(1,20)
+                         or type(a1) == "number" and tostring(a1)
+                         or type(a1) == "table"  and "tbl"
+                         or tostring(a1):sub(1,20)
+                local s2 = a2 ~= nil and ("|" .. tostring(a2):sub(1,15)) or ""
+                push("RE", path:sub(-28) .. " → " .. s1 .. s2)
+            end)
+        end)
+    end
+
+    local hooked = 0
+    for _, v in pairs(RS:GetDescendants()) do
+        if v:IsA("RemoteEvent") then
+            -- skip PetsService (sudah di section 1)
+            if v.Name ~= "PetsService" then
+                local path = v:GetFullName()
+                hookRE(v, path)
+                hooked = hooked + 1
+            end
+        end
+    end
+    push("INIT", "RE hooked: " .. hooked .. " events")
+
+    -- juga hook yang muncul belakangan
+    RS.DescendantAdded:Connect(function(v)
+        if v:IsA("RemoteEvent") and v.Name ~= "PetsService" then
+            local path = v:GetFullName()
+            hookRE(v, path)
+            push("INIT", "RE+ " .. path:sub(-30))
+        end
     end)
 end)
 
@@ -214,4 +250,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "dbg_swap v1.5 ready (snd-spawn)")
+push("INIT", "dbg_swap v1.6 ready (re-hook)")
