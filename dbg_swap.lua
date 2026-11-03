@@ -99,7 +99,10 @@ local function watchAnimations(model)
                     local name = tostring(track.Name or "")
                     -- skip Idle, Walk, WalkAnim — terlalu spam
                     local lo = name:lower()
-                    if lo == "idle" or lo == "walk" or lo == "walkanim" or lo == "animation1" then return end
+                    if lo == "idle" or lo == "walk" or lo == "walkanim" or lo == "animation1"
+                        or lo == "fallanim" or lo == "jumpanim" or lo == "climbanim"
+                        or lo == "runaniml" or lo == "runanim" or lo == "swimanim"
+                        or lo == "swimidle" or lo == "toolnone" then return end
                     push("ANIM", name:sub(1,16).." | "..animId:sub(-8))
                 end)
             end
@@ -180,4 +183,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "dbg_swap v1.2 ready (limit=2000)")
+push("INIT", "dbg_swap v1.3 ready (limit=2000)")
