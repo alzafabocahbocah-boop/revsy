@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.614 — grafis_kb/grafis_semua dimatiin, semua script udah pakai denyut
+-- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.614"
+local VERSION = "9.615"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1502,30 +1502,9 @@ end
 
 local DEV_ID_CACHE
 local function pkg_running_semua(pkgs)
+    -- v9.615: dimatiin — status dari denyut, gak perlu dumpsys activity
     local hasil, hidup = {}, {}
-    for _, p in ipairs(pkgs) do hasil[p] = false; hidup[p] = false end
-
-    local bagian = { "dumpsys activity activities | grep ActivityRecord" }
-    for _, p in ipairs(pkgs) do
-        bagian[#bagian+1] = 'echo "@PID ' .. p .. ' $(pidof ' .. p .. ')"'
-    end
-    local o = sh_tmo("su -c '" .. table.concat(bagian, "; ") .. "'", #pkgs + 15) or ""
-
-    for baris in o:gmatch("[^\r\n]+") do
-        local pkgPid, pidnya = baris:match("^@PID%s+(%S+)%s*(.*)$")
-        if pkgPid then
-            if tostring(pidnya):match("%d") then hidup[pkgPid] = true end
-        else
-            for _, p in ipairs(pkgs) do
-                if not hasil[p] and baris:find(p, 1, true) then
-                    for _, tanda in ipairs(PENANDA_GAME) do
-                        if baris:find(tanda, 1, true) then hasil[p] = true break end
-                    end
-                    if DETEKSI_LONGGAR then hasil[p] = true end
-                end
-            end
-        end
-    end
+    for _, p in ipairs(pkgs) do hasil[p] = true; hidup[p] = true end
     return hasil, hidup
 end
 
@@ -2416,13 +2395,8 @@ local function task_id_semua(pkgs)
             end
         end
     end
-    pungut(sh("su -c 'dumpsys activity activities'"))
-    local kurang = false
-    for _, p in ipairs(pkgs) do if not hasil[p] then kurang = true break end end
-    if kurang then pungut(sh("su -c 'dumpsys activity recents'")) end
-    kurang = false
-    for _, p in ipairs(pkgs) do if not hasil[p] then kurang = true break end end
-    if kurang then pungut(sh("su -c 'am stack list 2>/dev/null'")) end
+    -- v9.615: skip dumpsys activity (berat) -- langsung am stack list
+    pungut(sh("su -c 'am stack list 2>/dev/null'"))
     return hasil
 end
 
