@@ -1,8 +1,8 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.613 — pkg_running dimatiin (return true), rejoin/status dari denyut
+-- zenx_worker v9.614 — grafis_kb/grafis_semua dimatiin, semua script udah pakai denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.613"
+local VERSION = "9.614"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -2073,27 +2073,14 @@ local function pkg_hidup(pkg)
 end
 
 local function grafis_kb(pkg)
-    local o = sh("su -c 'dumpsys meminfo " .. pkg .. " 2>/dev/null | grep -i Graphics'") or ""
-    local n = o:match("[Gg]raphics:%s*(%d+)")
-    return tonumber(n)
+    -- v9.614: dimatiin — semua script pakai denyut, grafis gak diperlukan
+    return 0
 end
 
 local function grafis_semua(pkgs)
+    -- v9.614: dimatiin — semua script pakai denyut
     local hasil = {}
-    if #pkgs == 0 then return hasil end
-    local cmds = {}
-    for _, pkg in ipairs(pkgs) do
-        cmds[#cmds+1] = "echo -n '@@" .. pkg .. "@@'; dumpsys meminfo " .. pkg
-            .. " 2>/dev/null | grep -i Graphics | head -1"
-    end
-    local skrip = table.concat(cmds, "; ")
-    local out = sh("su -c \"" .. skrip .. "\"") or ""
-    for pkg, angka in out:gmatch("@@(com%.roblox%.[%w_]+)@@%s*[Gg]raphics:%s*(%d+)") do
-        hasil[pkg] = tonumber(angka)
-    end
-    for _, pkg in ipairs(pkgs) do
-        if hasil[pkg] == nil then hasil[pkg] = 0 end
-    end
+    for _, pkg in ipairs(pkgs) do hasil[pkg] = 0 end
     return hasil
 end
 
