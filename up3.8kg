@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.71"
+local VERSION = "up38kg-v1.72"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2734,70 +2734,83 @@ local gui = mk("ScreenGui", {
 pcall(function() gui.Parent = (gethui and gethui()) or CoreGui end)
 if not gui.Parent then gui.Parent = player:WaitForChild("PlayerGui") end
 
--- v1.70: SUPP DEBUG PANEL — floating kanan atas, log SuppSwap + CDWatch
+-- v1.72: SUPP DEBUG PANEL — floating kanan atas, ZIndex tinggi, tombol Copy, lebih pendek
 local _sdLines = {}
 local _sdBox
+local _sdRaw = {}  -- plain text buat copy
 do
     local sdPanel = mk("Frame", {
         Name = "SuppDebugPanel",
-        Size = UDim2.new(0, 310, 0, 200),
+        Size = UDim2.new(0, 310, 0, 148),
         Position = UDim2.new(1, -318, 0, 8),
         BackgroundColor3 = Color3.fromRGB(12, 14, 22),
-        BorderSizePixel = 0, Parent = gui })
-    pcall(function() sdPanel.BackgroundTransparency = 0.18 end)
+        BorderSizePixel = 0, ZIndex = 100, Parent = gui })
+    pcall(function() sdPanel.BackgroundTransparency = 0.12 end)
     corner(sdPanel, 10)
     stroke(sdPanel, Color3.fromRGB(80, 100, 180), 1)
 
-    -- header bar
+    -- header bar (drag)
     local sdHdr = mk("Frame", {
         Size = UDim2.new(1, 0, 0, 24),
         BackgroundColor3 = Color3.fromRGB(25, 30, 55),
-        BorderSizePixel = 0, Parent = sdPanel })
+        BorderSizePixel = 0, ZIndex = 101, Parent = sdPanel })
     corner(sdHdr, 10)
     mk("Frame", { Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0,0,1,-12),
-        BackgroundColor3 = Color3.fromRGB(25, 30, 55), BorderSizePixel = 0, Parent = sdHdr })
-    local sdTitle = mk("TextLabel", {
-        Size = UDim2.new(1, -8, 1, 0), Position = UDim2.new(0, 8, 0, 0),
+        BackgroundColor3 = Color3.fromRGB(25, 30, 55), BorderSizePixel = 0, ZIndex = 101, Parent = sdHdr })
+    mk("TextLabel", {
+        Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 8, 0, 0),
         BackgroundTransparency = 1, Text = "⚡ SUPP DEBUG",
         Font = Enum.Font.GothamBold, TextSize = 11,
         TextColor3 = Color3.fromRGB(130, 160, 255),
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = sdHdr })
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 102, Parent = sdHdr })
 
     -- dot status
-    local sdDot = mk("Frame", { Size = UDim2.new(0,7,0,7), Position = UDim2.new(1,-14,0.5,-3),
-        BackgroundColor3 = Color3.fromRGB(80, 220, 120), BorderSizePixel = 0, Parent = sdHdr })
+    local sdDot = mk("Frame", { Size = UDim2.new(0,7,0,7), Position = UDim2.new(1,-36,0.5,-3),
+        BackgroundColor3 = Color3.fromRGB(80, 220, 120), BorderSizePixel = 0, ZIndex = 102, Parent = sdHdr })
     corner(sdDot, 4)
+
+    -- tombol COPY
+    local cpBtn = mk("TextButton", {
+        Size = UDim2.new(0, 28, 0, 18), Position = UDim2.new(1,-32,0.5,-9),
+        BackgroundColor3 = Color3.fromRGB(50, 60, 100), BorderSizePixel = 0,
+        Text = "copy", Font = Enum.Font.GothamBold, TextSize = 9,
+        TextColor3 = Color3.fromRGB(180, 200, 255), ZIndex = 103, Parent = sdHdr })
+    corner(cpBtn, 5)
+    cpBtn.MouseButton1Click:Connect(function()
+        local plain = table.concat(_sdRaw, "\n")
+        pcall(function() setclipboard(plain) end)
+        pcall(function() if not setclipboard then game:GetService("GuiService"):SetClipboard(plain) end end)
+        cpBtn.Text = "✓"
+        task.delay(1.2, function() if cpBtn and cpBtn.Parent then cpBtn.Text = "copy" end end)
+    end)
 
     -- log box
     _sdBox = mk("TextLabel", {
-        Size = UDim2.new(1, -10, 1, -28),
-        Position = UDim2.new(0, 5, 0, 26),
+        Size = UDim2.new(1, -10, 1, -30),
+        Position = UDim2.new(0, 5, 0, 27),
         BackgroundTransparency = 1, RichText = true,
-        Font = Enum.Font.Code, TextSize = 11,
+        Font = Enum.Font.Code, TextSize = 10.5,
         TextColor3 = Color3.fromRGB(200, 210, 240),
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Top,
         TextWrapped = true, Text = "<font color='#555'>-- menunggu event --</font>",
-        Parent = sdPanel })
+        ZIndex = 101, Parent = sdPanel })
 
-    -- drag support
+    -- drag
     local dragging, dragStart, startPos = false, nil, nil
     sdHdr.InputBegan:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; dragStart = inp.Position
-            startPos = sdPanel.Position
+            dragging = true; dragStart = inp.Position; startPos = sdPanel.Position
         end
     end)
     game:GetService("UserInputService").InputChanged:Connect(function(inp)
         if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
-            local delta = inp.Position - dragStart
-            sdPanel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            local d = inp.Position - dragStart
+            sdPanel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
     end)
     game:GetService("UserInputService").InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then dragging = false end
     end)
 end
 
@@ -2812,9 +2825,12 @@ _G.ZenxSuppDebug = function(msg)
     elseif sl:find("err") or sl:find("off") then col = "#888888"
     elseif sl:find("dbg") then col = "#aaaaff"
     else col = "#99bbff" end
+    local ts = os.date("%H:%M:%S")
     local esc = tostring(msg):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;")
-    table.insert(_sdLines, 1, "<font color='#445'>"..os.date("%H:%M:%S").."</font> <font color='"..col.."'>"..esc.."</font>")
-    while #_sdLines > 14 do table.remove(_sdLines) end
+    table.insert(_sdLines, 1, "<font color='#445'>"..ts.."</font> <font color='"..col.."'>"..esc.."</font>")
+    table.insert(_sdRaw, 1, ts.." "..tostring(msg))
+    while #_sdLines > 10 do table.remove(_sdLines) end
+    while #_sdRaw > 10 do table.remove(_sdRaw) end
     _sdBox.Text = table.concat(_sdLines, "\n")
 end
 
