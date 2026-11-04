@@ -5825,6 +5825,27 @@ local function automationLoop()
             _G.__hactDbgExtra = ("🥚 reduce: placed %d→%d/%d"):format(nowPlaced, after, target)
         else
             -- 2) slot penuh ATAU egg habis tapi ada di garden: cek ready
+            -- v35.09: _scanHatchTim diangkat ke sini (shared antara hatch-all & hatch sebagian)
+            -- sebelumnya local function di dalam blok allReady -> nil di blok 60% -> loop hang
+            local function _scanHatchTim()
+                local td = teamData["Hatch Tim"]
+                if not td or not td.selected then return 0, 0, "" end
+                local want = {}
+                local total = 0
+                for u in pairs(td.selected) do want[tostring(u):gsub("[{}]","")]=true; total=total+1 end
+                local myName = player.Name; local myId = tostring(player.UserId)
+                local function ownMe(d) local c=d for _=1,6 do if not c or c==Workspace then break end
+                    local o=c:GetAttribute("owner") or c:GetAttribute("OWNER") or c:GetAttribute("Owner") or c:GetAttribute("UserId")
+                    if o~=nil then return tostring(o)==myName or tostring(o)==myId end c=c.Parent end return nil end
+                local n=0; local uuids={}
+                pcall(function() local pp=Workspace:FindFirstChild("PetsPhysical"); if not pp then return end
+                    local seen={} for _,m in ipairs(pp:GetDescendants()) do if m:IsA("Model") then
+                        local uuid=m:GetAttribute("PET_UUID"); local raw=uuid and tostring(uuid) or m.Name
+                        local clean=raw:gsub("[{}]","")
+                        if want[clean] and not seen[clean] and ownMe(m)~=false then
+                            seen[clean]=true; n=n+1; table.insert(uuids, clean:sub(1,8)) end end end end)
+                return n, total, table.concat(uuids, ",")
+            end
             local allReady, total, ready = allEggsReady()
             if isPausedForGift() then
                 -- v16.2: gift mulai sebelum hatch? batal, balik atas (jgn swap tim Hatch)
@@ -5858,26 +5879,7 @@ local function automationLoop()
                 equipTeam("Hatch Tim")
                 -- v34.78: polling cepat — cek Koi tiap 0.5s, kalau udah >=5 langsung lanjut
                 -- tiap 5s (kalau masih kurang): equip ulang + unequip pet salah
-                -- v34.79: debug log kuning kasih tau jumlah + uuid tiap Koi yang udah masuk
-                local function _scanHatchTim()
-                    local td = teamData["Hatch Tim"]
-                    if not td or not td.selected then return 0, 0, "" end
-                    local want = {}
-                    local total = 0
-                    for u in pairs(td.selected) do want[tostring(u):gsub("[{}]","")]=true; total=total+1 end
-                    local myName = player.Name; local myId = tostring(player.UserId)
-                    local function ownMe(d) local c=d for _=1,6 do if not c or c==Workspace then break end
-                        local o=c:GetAttribute("owner") or c:GetAttribute("OWNER") or c:GetAttribute("Owner") or c:GetAttribute("UserId")
-                        if o~=nil then return tostring(o)==myName or tostring(o)==myId end c=c.Parent end return nil end
-                    local n=0; local uuids={}
-                    pcall(function() local pp=Workspace:FindFirstChild("PetsPhysical"); if not pp then return end
-                        local seen={} for _,m in ipairs(pp:GetDescendants()) do if m:IsA("Model") then
-                            local uuid=m:GetAttribute("PET_UUID"); local raw=uuid and tostring(uuid) or m.Name
-                            local clean=raw:gsub("[{}]","")
-                            if want[clean] and not seen[clean] and ownMe(m)~=false then
-                                seen[clean]=true; n=n+1; table.insert(uuids, clean:sub(1,8)) end end end end)
-                    return n, total, table.concat(uuids, ",")
-                end
+                -- v35.09: _scanHatchTim sudah didefinisikan di atas (shared dengan hatch sebagian)
                 local _koiReady = false
                 do local t0=tick() local lastRetry=t0
                     while globalRunning and (tick()-t0)<15 do
