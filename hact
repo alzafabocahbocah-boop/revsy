@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.08"
+local VERSION = "v35.09"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5157,8 +5157,17 @@ end
 -- deteksi limit sekarang andalkan listener Auto.bpFullFlag (set via DescendantAdded+Text:Changed di bawah)
 -- v31.3: hitung total pet milik kita: backpack + character + garden, dedup UUID
 local function isBackpackFull()
-    -- v31.2: cur = backpack + garden (total pet milik kita)
-    local cur = countTotalPets()
+    -- v35.09: RC cache 1s — countTotalPets dipanggil max 1x/s, bukan tiap call
+    -- (RC bisa lambat, cache supaya gak hit RC tiap loop iteration)
+    local now = tick()
+    if not Auto._rcCountCache or not Auto._rcCountTime or (now - Auto._rcCountTime) >= 1 then
+        local ct = countTotalPets()
+        if ct and ct > 0 then
+            Auto._rcCountCache = ct
+            Auto._rcCountTime = now
+        end
+    end
+    local cur = Auto._rcCountCache or 0
     local maxPets = getMaxPets()
     if not maxPets or maxPets <= 0 then maxPets = 230 end
     -- cooldown stlh sell: abaikan notif lama (yg blm hilang) biar gak stuck di Seal
