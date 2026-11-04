@@ -137,12 +137,16 @@ local function short8(uuid)
 end
 
 local function waitSpawn(targetUUID, timeoutSec)
-    local raw8 = short8(targetUUID)
+    local raw8 = short8(targetUUID)  -- 8 char tanpa kurung kurawal
     local done, pos = false, nil
     local conn = workspace.DescendantAdded:Connect(function(d)
         if done then return end
         if not isPetModel(d) then return end
-        if d.Name:sub(1,8) ~= raw8 and d.Name:sub(2,9) ~= raw8 then return end
+        -- model name bisa "{cbec051d-..." atau "cbec051d-..."
+        -- strip { lalu ambil 8 char pertama
+        local dName = d.Name
+        local dRaw8 = dName:sub(1,1) == "{" and dName:sub(2,9) or dName:sub(1,8)
+        if dRaw8 ~= raw8 then return end
         task.defer(function()
             if done then return end
             pcall(function()
@@ -290,4 +294,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "sc_swap v2.0 ready | equipRE=" .. (equipRE and "OK" or "NIL"))
+push("INIT", "sc_swap v2.1 ready | equipRE=" .. (equipRE and "OK" or "NIL"))
