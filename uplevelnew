@@ -1,4 +1,5 @@
--- uplevelnew v8.472
+-- uplevelnew v8.473
+-- v8.473: debug healer — print activeUuids count + modelByUuid count tiap iterasi
 -- v8.472: debug nama asli model pet — log semua model masuk workspace + scan 3s setelah start
 -- v8.471: debug modelByUuid — log model added + count tiap 5s
 -- v8.470: debug healer loop (print skip reason + re-equip uuid)
@@ -68,7 +69,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.472")
+print("[UPL] VERSION: v8.473")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -175,7 +176,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.472"
+local VERSION = "v8.473"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2961,7 +2962,21 @@ task.spawn(function()
     end
 end)
 workspace.DescendantRemoving:Connect(function(d)
-    if isPetModel(d) and modelByUuid[d.Name]==d then modelByUuid[d.Name]=nil end
+    if isPetModel(d) and modelByUuid[d.Name]==d then
+        local uuid = d.Name
+        -- defer penghapusan: tunggu 1 frame, cek apakah model baru sudah masuk
+        -- (game sering respawn model pet: remove lama + add baru UUID sama)
+        task.defer(function()
+            -- kalau entry sudah diganti sama model baru (beda instance), jangan hapus
+            if modelByUuid[uuid] == d then
+                -- masih instance lama, berarti memang benar-benar hilang
+                modelByUuid[uuid] = nil
+                print("[UPLVL-DBG] model removed:", uuid)
+            else
+                print("[UPLVL-DBG] model remove IGNORED (replaced):", uuid)
+            end
+        end)
+    end
 end)
 
 -- ===================== COOLDOWN CACHE (untuk swap skill) =====================
@@ -4278,8 +4293,13 @@ task.spawn(function()
         if running and not stopRequested and not _isCollecting and not _isTransisi then
             local healed = 0
             local activeCount = 0
+            local mbuCount = 0
+            for _ in pairs(modelByUuid) do mbuCount=mbuCount+1 end
             for uuid in pairs(_activeUuids) do
                 activeCount = activeCount + 1
+            end
+            print("[UPLVL-DBG] HEALER: activeUuids="..activeCount.." modelByUuid="..mbuCount)
+            for uuid in pairs(_activeUuids) do
                 if not modelByUuid[uuid] then
                     print("[UPLVL-DBG] HEAL: re-equip uuid="..tostring(uuid))
                     -- model belum muncul/hilang -> re-equip
