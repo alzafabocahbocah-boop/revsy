@@ -1194,37 +1194,23 @@ end
 local _kgContainer = nil
 local _kgContainerDone = false
 local _kgMutableStats = nil   -- tidak dipakai lagi (RC dipakai untuk maxInv), dibiarkan nil
--- v10.265: findMemoryContainer → RC langsung, port dari uplevelnew yg sudah gacor
--- Format return sama: {uuid -> {PetData={BaseWeight,Level,...}, PetType="..."}}
+-- v10.268: findMemoryContainer → RC cache (_rcInst), port pattern uplevelnew
+-- RC.new dipanggil SEKALI lalu di-cache — tidak hang tiap loop
+local _rcInst = nil
 local function findMemoryContainer()
     local result = nil
-    dbgSet("findMem: start")
-    -- cek RS.Modules sebelum pcall
-    local RS = game:GetService("ReplicatedStorage")
-    local modPath = RS:FindFirstChild("Modules")
-    local rcMod = modPath and modPath:FindFirstChild("ReplicationClass")
-    dbgSet("findMem: modPath="..(modPath and "OK" or "NIL").." rcMod="..(rcMod and "OK" or "NIL"))
-    if not modPath then dbgSet("ERR: RS.Modules nil"); return nil end
-    if not rcMod then
-        dbgSet("ERR: ReplicationClass nil\nRS.Modules.children="..table.concat((function()
-            local k={} for _,v in ipairs(modPath:GetChildren()) do k[#k+1]=v.Name end return k
-        end)(),","):sub(1,100))
-        return nil
+    -- init _rcInst sekali (cache)
+    if not _rcInst then
+        pcall(function()
+            local RS = game:GetService("ReplicatedStorage")
+            local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
+            if mod then _rcInst = require(mod).new("ActivePetsService_Replicator") end
+        end)
+        dbgSet("findMem: init rcInst="..(type(_rcInst)))
+        if not _rcInst then return nil end
     end
-    -- cek apakah rcMod sudah ter-require sebelumnya (pakai cache getgc)
-    -- kalau require block/hang (module server-side), skip
-    local RC = nil
-    local rok, rerr = pcall(function()
-        RC = require(rcMod)
-    end)
-    dbgSet("findMem: require rok="..(rok and "OK" or "FAIL")..(not rok and ("\n"..tostring(rerr):sub(1,80)) or "").." RC="..type(RC))
-    if not rok or not RC then return nil end
     local ok, err = pcall(function()
-        dbgSet("findMem: RC.new...")
-        local inst = RC.new("ActivePetsService_Replicator")
-        if not inst then dbgSet("RC inst nil"); return end
-        dbgSet("findMem: GetData...")
-        local data = inst:GetData(player.Name)
+        local data = _rcInst:GetData(player.Name)
         if type(data) ~= "table" then dbgSet("data="..type(data)); return end
         dbgSet("findMem: got data, cek Table...")
         local tbl = rawget(data, "Table")
