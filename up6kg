@@ -1203,10 +1203,12 @@ local _kgMutableStats = nil   -- tidak dipakai lagi (RC dipakai untuk maxInv), d
 -- Format return sama: {uuid -> {PetData={BaseWeight,Level,...}, PetType="..."}}
 local function findMemoryContainer()
     local result = nil
+    dbgSet("findMem: start")
     -- cek RS.Modules sebelum pcall
     local RS = game:GetService("ReplicatedStorage")
     local modPath = RS:FindFirstChild("Modules")
     local rcMod = modPath and modPath:FindFirstChild("ReplicationClass")
+    dbgSet("findMem: modPath="..(modPath and "OK" or "NIL").." rcMod="..(rcMod and "OK" or "NIL"))
     if not modPath then dbgSet("ERR: RS.Modules nil"); return nil end
     if not rcMod then
         dbgSet("ERR: ReplicationClass nil\nRS.Modules.children="..table.concat((function()
@@ -1214,16 +1216,21 @@ local function findMemoryContainer()
         end)(),","):sub(1,100))
         return nil
     end
+    -- cek apakah rcMod sudah ter-require sebelumnya (pakai cache getgc)
+    -- kalau require block/hang (module server-side), skip
+    local RC = nil
+    local rok, rerr = pcall(function()
+        RC = require(rcMod)
+    end)
+    dbgSet("findMem: require rok="..(rok and "OK" or "FAIL")..(not rok and ("\n"..tostring(rerr):sub(1,80)) or "").." RC="..type(RC))
+    if not rok or not RC then return nil end
     local ok, err = pcall(function()
-        local RC = require(rcMod)
-        if not RC then dbgSet("RC nil"); return end
         local inst = RC.new("ActivePetsService_Replicator")
         if not inst then dbgSet("RC inst nil"); return end
         local data = inst:GetData(player.Name)
         if type(data) ~= "table" then dbgSet("data="..type(data)); return end
         local tbl = rawget(data, "Table")
         if type(tbl) ~= "table" then
-            -- coba fallback: data langsung punya keys
             dbgSet("Table="..type(tbl).."\nkeys="..table.concat((function() local k={} for kk in pairs(data) do k[#k+1]=tostring(kk) end return k end)(),","):sub(1,80))
             return
         end
