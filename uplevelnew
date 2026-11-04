@@ -161,7 +161,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.455"
+local VERSION = "v8.456"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4095,7 +4095,7 @@ local function runSesi2()
         addLog("Nightmare kebun: "..nm.." (cached) shovel="..#sd.shovel)
 
         if nm == 0 then
-            -- v8.154: nightmare habis -> LANGSUNG cadangan 2, skip collect mutasi
+            -- nightmare habis -> masuk cadangan 2
             addLog("Sesi2: nightmare 0 — masuk cadangan 2")
             setStatus("Cadangan 2 — tunggu nightmare...", Color3.fromRGB(78,200,130))
             unequipAllExceptBahan(); equipSesi(4, SESI_CADANGAN2_DEF)
@@ -4109,11 +4109,10 @@ local function runSesi2()
             while not stopRequested do
                 task.wait(CFG.loopWait)
                 enforceEquip(SESI_CADANGAN2_DEF)
-                local nmNow = _nmCached  -- baca dari fast poller
-                local d2=scanFruits()    -- scan lengkap untuk shovel saja
+                local nmNow = _nmCached
+                local d2=scanFruits()
                 addLog("Cad2(S2): nm="..nmNow.." (cached) mutasi="..#d2.shovel)
                 if #d2.shovel > 0 then
-                    -- collect mutasi langsung di cadangan 2
                     local fruits2 = d2.shovel
                     while #fruits2 > 0 and not stopRequested do
                         local collected = doCollect(fruits2)
@@ -4126,9 +4125,13 @@ local function runSesi2()
                     addLog("Nightmare muncul — balik sesi 2")
                     break
                 end
+                -- v8.456: kalau nightmare tetap 0 di cadangan 2 -> pindah sesi 1
+                if nmNow == 0 then
+                    addLog("Cad2(S2): nightmare tetap 0 — pindah sesi 1")
+                    totalNightmareCollected=0; return
+                end
             end
             unequipAllExceptBahan(); equipSesi(2, SESI2_DEF)
-            -- Bahan tidak perlu di-equip ulang, sudah tetap dari sebelumnya
             setStatus("Sesi 2 — tunggu nightmare habis", Color3.fromRGB(220,160,60))
         elseif nm < 200 then
             -- nightmare di bawah 200 -> pindah sesi 1
