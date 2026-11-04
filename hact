@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.96"
+local VERSION = "v34.97"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5689,6 +5689,22 @@ local function automationLoop()
             if not favStable then
                 -- paksa sekali lagi
                 pcall(syncFavByRules); task.wait(0.3)
+            end
+            -- v34.97: jeda 3s sambil monitor fav — kalau ada perubahan, beresin dulu
+            do local tCheck = tick()
+                while globalRunning and (tick()-tCheck) < 3 do
+                    local favOk, unfavN, favN = pcall(syncFavByRules)
+                    unfavN = favOk and (unfavN or 0) or 0
+                    favN   = favOk and (favN   or 0) or 0
+                    if unfavN > 0 or favN > 0 then
+                        _G.__hactDbgExtra = ("⏳ fav berubah unfav=%d fav=%d, beresin..."):format(unfavN, favN)
+                        -- reset timer biar 3s dihitung ulang dari perubahan terakhir
+                        tCheck = tick()
+                    else
+                        _G.__hactDbgExtra = ("✅ fav stabil, sell dalam %.1fs"):format(3-(tick()-tCheck))
+                    end
+                    task.wait(0.3)
+                end
             end
             -- garden kosong atau trade manual → batal
             if isTradingManual() or countGardenPets() == 0 then
