@@ -721,37 +721,32 @@ _G.__ZenxBootT = _G.__ZenxBootT or os.time()
 _G.__ZenxRejoinGen = (_G.__ZenxRejoinGen or 0) + 1
 local myGen = _G.__ZenxRejoinGen
 do
+    -- PORT dari up3.8kg v1.61 yang sudah gacor: sync :00 & :30 WIB
     local TS = game:GetService("TeleportService")
     task.spawn(function()
         while _G.__ZenxRejoinGen == myGen do
-            -- countdown: pakai ZenxRejoinMenit sebagai interval, sync ke boundary menit (WIB)
-            -- misal 30 menit -> tunggu sampai sisa detik di jam WIB habis bagi 30*60
-            while _G.__ZenxRejoinGen == myGen do
-                local intervalDtk = (tonumber(_G.ZenxRejoinMenit) or 30) * 60
-                local wib = os.time() + 7 * 3600
-                local sisa = intervalDtk - (wib % intervalDtk)
-                _G.ZenxRejoinSisa = sisa
-                if sisa <= 1 then break end
-                task.wait(1)
-            end
-            if _G.__ZenxRejoinGen ~= myGen then return end
-            _G.ZenxRejoinSisa = 0
-            local plr = game:GetService("Players").LocalPlayer
-            if plr then
-                local jobId = game.JobId
-                _G.ZenxRejoining = true
-                -- JANGAN pakai plr:Kick (matiin VM Arceus -> teleport abis kick gak jalan).
-                -- Teleport LANGSUNG ke server SAMA (jobId) -> leave+rejoin, VM tetap hidup.
-                -- Fallback Teleport polos kalau jobId keblok.
-                print("[Rejoin] teleport langsung ke server sama (jobId=" .. tostring(jobId) .. ")")
-                local tries = 0
-                while true do
-                    tries = tries + 1
-                    print("[Rejoin] coba teleport #" .. tries)
-                    local ok1 = pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
+            -- :00 & :30 WIB (UTC+7), tiap 30 menit — sama persis up3.8kg
+            local wib = os.time() + 7*3600
+            local dtk = wib % 3600
+            local sisa = (dtk < 1800) and (1800 - dtk) or (3600 - dtk)
+            if sisa >= 1800 then sisa = 0 end  -- langsung kalau baru join di boundary
+            _G.ZenxRejoinSisa = sisa
+            if sisa <= 1 then
+                _G.ZenxRejoinSisa = 0
+                local plr = game:GetService("Players").LocalPlayer
+                if plr then
+                    local jobId = game.JobId
+                    _G.ZenxRejoining = true
+                    print("[Rejoin] :00/:30 WIB -> teleport ke server sama (jobId=" .. tostring(jobId) .. ")")
+                    pcall(function() plr:Kick("zenx rejoin") end)
+                    task.wait(40)
+                    pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
                     task.wait(6)
-                    if not ok1 then pcall(function() TS:Teleport(game.PlaceId, plr) end); task.wait(6) end
+                    pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                    task.wait(6)
                 end
+            else
+                task.wait(1)
             end
         end
     end)
