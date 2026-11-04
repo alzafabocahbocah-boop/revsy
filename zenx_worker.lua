@@ -10688,12 +10688,16 @@ if PERINTAH == "uld" then
 end
 
 if PERINTAH == "level" then
+    local sub = arg[2] or ""
+    if sub ~= "15" then print("Pakai: zenx level 15"); return end
     print("Jalanin uplevelnew-delta...")
     os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-delta")
     return
 end
 
 if PERINTAH == "up3.8kg" then
+    local sub = arg[2] or ""
+    if sub ~= "15" then print("Pakai: zenx up3.8kg 15"); return end
     print("Jalanin up3.8kg-delta...")
     os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s up3.8kg-delta")
     return
