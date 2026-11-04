@@ -10689,9 +10689,16 @@ end
 
 if PERINTAH == "level" then
     local sub = arg[2] or ""
-    if sub ~= "15" then print("Pakai: zenx level 15"); return end
-    print("Jalanin uplevelnew-delta...")
-    os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-delta")
+    if sub == "15" then
+        print("Jalanin uplevelnew-delta...")
+        os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-delta")
+    elseif sub == "10" then
+        print("Jalanin uplevelnew-arceus...")
+        os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-arceus")
+    else
+        print("Pakai: zenx level 15  (delta)")
+        print("       zenx level 10  (arceus)")
+    end
     return
 end
 
