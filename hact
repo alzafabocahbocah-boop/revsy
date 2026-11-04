@@ -1452,15 +1452,35 @@ _G.__hactNotifPanel = notifPanel
 shared.__hactNotifPanel = notifPanel  -- v33.38: shared[] buat bypass _G isolation
 _G.__hactDbgLbl = dbgLbl  -- v33.43: simpan ke _G biar bisa diakses dari mana saja
 -- v34.63: debug panel kanan tengah — tampil fase hatch real-time
-local eggDbgLbl = mk("TextLabel", {
+local eggDbgFrame = mk("Frame", {
     AnchorPoint = Vector2.new(1, 0.5),
-    Size = UDim2.new(0, 300, 0, 90), Position = UDim2.new(1, -8, 0.5, 0),
+    Size = UDim2.new(0, 300, 0, 110), Position = UDim2.new(1, -8, 0.5, 0),
     BackgroundColor3 = Color3.fromRGB(0,0,0), BackgroundTransparency = 0.45,
+    Visible = true, Parent = pillGui })
+corner(eggDbgFrame, 6)
+local eggDbgLbl = mk("TextLabel", {
+    Size = UDim2.new(1, -8, 1, -34), Position = UDim2.new(0, 4, 0, 4),
+    BackgroundTransparency = 1,
     Text = "🥚 hact debug...", TextColor3 = Color3.fromRGB(255,230,100),
     Font = FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left,
     TextYAlignment = Enum.TextYAlignment.Top,
-    TextWrapped = true, Visible = true, Parent = pillGui })
-corner(eggDbgLbl, 6)
+    TextWrapped = true, Parent = eggDbgFrame })
+-- tombol Copy All
+local eggDbgCopy = mk("TextButton", {
+    Size = UDim2.new(1, -8, 0, 24), Position = UDim2.new(0, 4, 1, -28),
+    BackgroundColor3 = Color3.fromRGB(40, 40, 60), BackgroundTransparency = 0.1,
+    Text = "📋 Copy Log", TextColor3 = Color3.fromRGB(200,200,255),
+    Font = FONT_B, TextSize = 12, Parent = eggDbgFrame })
+corner(eggDbgCopy, 4)
+local _eggLogBuf = {}  -- buffer log untuk di-copy
+_G.__hactEggLogBuf = _eggLogBuf
+eggDbgCopy.MouseButton1Click:Connect(function()
+    local all = table.concat(_eggLogBuf, "\n")
+    if #_eggLogBuf == 0 then all = "(log kosong)" end
+    setclipboard(all)
+    eggDbgCopy.Text = "✅ Copied!"
+    task.delay(1.5, function() eggDbgCopy.Text = "📋 Copy Log" end)
+end)
 _G.__hactEggDbgLbl = eggDbgLbl
 local function pushNotifLog(tag, msg)
     local t = os.date("%H:%M:%S")
@@ -1503,7 +1523,17 @@ task.spawn(function()
                 local phase = Auto and Auto.eggPhase or "?"
                 local gr2 = tostring(_G.__hactGlobalRunning)
                 local t = os.date("%H:%M:%S")
-                _G.__hactEggDbgLbl.Text = ("[%s] gr=%s fase=%s\n%s"):format(t, gr2, phase, extra)
+                local line = ("[%s] fase=%s\n%s"):format(t, phase, extra)
+                _G.__hactEggDbgLbl.Text = line
+                -- push ke log buffer (max 50 baris)
+                local buf = _G.__hactEggLogBuf
+                if buf then
+                    local entry = ("[%s] fase=%s gr=%s | %s"):format(t, phase, gr2, extra)
+                    if entry ~= buf[#buf] then  -- skip kalau sama persis
+                        table.insert(buf, entry)
+                        if #buf > 50 then table.remove(buf, 1) end
+                    end
+                end
             end
             -- v33.45: flush pending diag ke notifPanel (dikirim dari chunk bawah via shared[])
             -- v33.63: hold 4 detik setelah flush biar gak langsung ketimpa MAX
