@@ -123,8 +123,8 @@ local SKILL_KIND = {
     frill = "FRILL",
     fan   = "FAN",
     roar  = "ROAR",
-    fly   = "FLY",    -- peryton skill 1
-    flyup = "FLY",    -- peryton skill 2
+    -- fly = skip (jangan di-swap)
+    flyup = "FLY",    -- peryton/gilded
     pee   = "PEW",    -- hotdog
     pew   = "PEW",    -- hotdog (fallback)
 }
