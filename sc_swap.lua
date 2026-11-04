@@ -297,17 +297,9 @@ task.spawn(function()
 
             local kind = animStr == "frill" and "FRILL" or "FAN"
 
-            -- log UUID yang trigger animasi (pet yang skill-nya keluar)
-            push("ANIMUUID", r8 .. " " .. kind)
-
-            -- cari uuid target swap
-            local targetUUID = findTargetUUID()
-            push("TGTUUID", targetUUID and short8(targetUUID) or "NIL")
-
-            if not targetUUID then
-                push("WARN", "no target UUID")
-                continue
-            end
+            -- swap UUID yang skillnya keluar (bukan dari backpack)
+            -- rawUUID = UUID lengkap tanpa kurung dari DataStream
+            local targetUUID = rawUUID  -- contoh: "cbec051d-cd0b-4bb7-a825-cfb776eab0ca"
 
             task.spawn(function()
                 runSwapSequence(targetUUID, kind)
@@ -327,4 +319,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "sc_swap v2.5d ready | equipRE=" .. (equipRE and "OK" or "NIL"))
+push("INIT", "sc_swap v2.6 ready | equipRE=" .. (equipRE and "OK" or "NIL"))
