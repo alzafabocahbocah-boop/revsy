@@ -39,6 +39,22 @@ clrBtn.Font = Enum.Font.GothamBold; clrBtn.TextSize = 10
 clrBtn.TextColor3 = Color3.fromRGB(80,220,120)
 Instance.new("UICorner", clrBtn).CornerRadius = UDim.new(0,4)
 
+local rejBtn = Instance.new("TextButton", fr)
+rejBtn.Size = UDim2.new(1,-12,0,22); rejBtn.Position = UDim2.new(0,6,1,-28)
+rejBtn.BackgroundColor3 = Color3.fromRGB(180,30,30); rejBtn.Text = "⟳ REJOIN"
+rejBtn.Font = Enum.Font.GothamBold; rejBtn.TextSize = 11
+rejBtn.TextColor3 = Color3.fromRGB(255,220,220)
+Instance.new("UICorner", rejBtn).CornerRadius = UDim.new(0,5)
+rejBtn.MouseButton1Click:Connect(function()
+    rejBtn.Text = "rejoining..."
+    rejBtn.BackgroundColor3 = Color3.fromRGB(100,20,20)
+    task.wait(0.3)
+    pcall(function()
+        local TS = game:GetService("TeleportService")
+        TS:Teleport(game.PlaceId, plr)
+    end)
+end)
+
 local tx = Instance.new("TextLabel", fr)
 tx.Size = UDim2.new(1,-10,1,-30); tx.Position = UDim2.new(0,6,0,28)
 tx.BackgroundTransparency = 1; tx.Font = Enum.Font.Code; tx.TextSize = 10
