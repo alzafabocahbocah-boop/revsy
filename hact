@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.81"
+local VERSION = "v34.82"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -4886,7 +4886,40 @@ local function countTotalPets()
             if cnt > 0 then rcTotal = cnt end
         end
     end)
-    if rcTotal then return rcTotal end
+    -- v34.82: hitung pet di garden (PetsPhysical) milik kita — dedup UUID
+    local function countGardenOwned()
+        local myName = player.Name; local myId = tostring(player.UserId)
+        local seen2 = {}; local ng = 0
+        pcall(function()
+            local pp = Workspace:FindFirstChild("PetsPhysical"); if not pp then return end
+            for _, m in ipairs(pp:GetDescendants()) do
+                if m:IsA("Model") then
+                    local uuid = m:GetAttribute("PET_UUID"); if not uuid then continue end
+                    local clean = tostring(uuid):gsub("[{}]","")
+                    if seen2[clean] then continue end
+                    -- cek owner
+                    local cur = m
+                    for _ = 1, 6 do
+                        if not cur or cur == Workspace then break end
+                        local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                            or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+                        if o ~= nil then
+                            if tostring(o) == myName or tostring(o) == myId then
+                                seen2[clean] = true; ng = ng + 1
+                            end
+                            break
+                        end
+                        cur = cur.Parent
+                    end
+                end
+            end
+        end)
+        return ng
+    end
+    if rcTotal then
+        -- v34.82: RC hitung inventory only, tambah garden
+        return rcTotal + countGardenOwned()
+    end
     -- 2) fallback: scan Backpack+Character via PET_UUID attribute
     local seen = {}
     local n = 0
@@ -4903,7 +4936,8 @@ local function countTotalPets()
             end
         end
     end
-    return n
+    -- v34.82: fallback juga tambah garden
+    return n + countGardenOwned()
 end
 
 local _gameDataCache, _gameDataTime = nil, 0
