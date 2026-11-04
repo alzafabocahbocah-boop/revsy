@@ -136,7 +136,6 @@ local SKILL_DELAY = {
 local SKILL_LOOKUP = {
     FLY  = { "peryton", "gilded" },
     PEW  = { "hotdog" },
-    ROAR = { "lion" },
 }
 
 -- cari UUID dari backpack/character berdasarkan keyword
