@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.76"
+local VERSION = "v34.78"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5738,14 +5738,31 @@ local function automationLoop()
                 print("[HactTelur] equip Hatch Tim: ".._htN.." pet terdaftar")
                 _G.__hactDbgExtra = ("✅ hatch ready, equip Hatch Tim (%d pet)..."):format(_htN)
                 equipTeam("Hatch Tim")
-                waitInterrupt(3)  -- v33.95: interruptible (kasih waktu Koi masuk garden)
+                -- v34.78: polling cepat — cek Koi tiap 0.5s, kalau udah >=5 langsung lanjut
+                -- tiap 5s (kalau masih kurang): equip ulang + unequip pet salah
+                do local t0=tick() local lastRetry=t0
+                    while globalRunning and (tick()-t0)<15 do
+                        if countTeamInGarden("Hatch Tim") >= 5 then break end
+                        if (tick()-lastRetry) >= 5 then
+                            -- v34.78: masih kurang -> equip ulang + keluarin yang bukan Hatch Tim
+                            _G.__hactDbgExtra = ("🔄 Koi masih kurang, equip ulang + unequip salah..."):format()
+                            Auto.currentTeam = nil
+                            equipTeam("Hatch Tim")
+                            if config.autoUnequipWrong and teamData["Hatch Tim"] then
+                                unequipWrongGardenPets(teamData["Hatch Tim"].selected)
+                            end
+                            lastRetry = tick()
+                        end
+                        task.wait(0.5)
+                    end
+                end
                 if not globalRunning then equipTeam("Reduce Tim") break end
                 -- v34.77: unequip pet yang bukan Hatch Tim (mimic, sisa Reduce, dll)
                 if config.autoUnequipWrong and teamData["Hatch Tim"] then
                     unequipWrongGardenPets(teamData["Hatch Tim"].selected)
                 end
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
-                local ok = waitTeamInGarden("Hatch Tim", 15)
+                local ok = waitTeamInGarden("Hatch Tim", 8)
                 local hd = config.hatchDelay or 3
                 -- v34.72: pakai countTeamInGarden (hitung Koi saja, bukan semua pet termasuk Bronto)
                 -- countGardenPets() hitung semua pet milik kita -> Bronto Reduce Tim yg belum keluar ikut dihitung
@@ -5806,13 +5823,30 @@ local function automationLoop()
                 -- v34.70: force re-equip Hatch Tim (sama seperti hatch-all)
                 Auto.currentTeam = nil
                 equipTeam("Hatch Tim")
-                waitInterrupt(3)  -- v33.95: interruptible (kasih waktu Koi masuk garden)
+                -- v34.78: polling cepat — cek Koi tiap 0.5s, kalau udah >=5 langsung lanjut
+                -- tiap 5s (kalau masih kurang): equip ulang + unequip pet salah
+                do local t0=tick() local lastRetry=t0
+                    while globalRunning and (tick()-t0)<15 do
+                        if countTeamInGarden("Hatch Tim") >= 5 then break end
+                        if (tick()-lastRetry) >= 5 then
+                            -- v34.78: masih kurang -> equip ulang + keluarin yang bukan Hatch Tim
+                            _G.__hactDbgExtra = ("🔄 Koi masih kurang, equip ulang + unequip salah..."):format()
+                            Auto.currentTeam = nil
+                            equipTeam("Hatch Tim")
+                            if config.autoUnequipWrong and teamData["Hatch Tim"] then
+                                unequipWrongGardenPets(teamData["Hatch Tim"].selected)
+                            end
+                            lastRetry = tick()
+                        end
+                        task.wait(0.5)
+                    end
+                end
                 if not globalRunning then equipTeam("Reduce Tim") break end
                 -- v34.77: unequip pet yang bukan Hatch Tim (mimic, sisa Reduce, dll)
                 if config.autoUnequipWrong and teamData["Hatch Tim"] then
                     unequipWrongGardenPets(teamData["Hatch Tim"].selected)
                 end
-                local ok = waitTeamInGarden("Hatch Tim", 12)
+                local ok = waitTeamInGarden("Hatch Tim", 8)
                 -- v34.72: pakai countTeamInGarden (hitung Koi saja, bukan semua pet termasuk Bronto)
                 local nKoi2 = countTeamInGarden("Hatch Tim")
                 if not ok and nKoi2 >= 5 then
