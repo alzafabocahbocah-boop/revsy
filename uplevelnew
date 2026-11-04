@@ -1,4 +1,5 @@
--- uplevelnew v8.476
+-- uplevelnew v8.480
+-- v8.480: tambah toggle AUTOLVLNEWW — 1 tim fix (4 T-Rex + 1 Baku + 2 Peacock + 1 Bahan), tanpa nightmare target, tanpa pindah kebun; default ON; mutual exclusive dengan AUTO LVL lama
 -- v8.476: fix healer nil — _activeUuids disimpan di _G._ZenxActiveUuids supaya healer baru selalu akses versi terbaru
 -- v8.475: fix healer crash — _activeUuids nil guard + kill healer lama via _G._ZenxHealerGen
 -- v8.474: healer loop bungkus pcall + print startup (trace kenapa loop tidak berjalan)
@@ -72,7 +73,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.476")
+print("[UPL] VERSION: v8.480")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -179,7 +180,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.479"
+local VERSION = "v8.480"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -207,6 +208,14 @@ local SESI_CADANGAN2_DEF = {
     {nama="Mimic Octopus", jml=4},
     {nama="Baku",          jml=1},
 }
+-- autolvlneww: 1 tim fix, tanpa target nightmare, tanpa pindah kebun
+local AUTOLVLNEWW_DEF = {
+    {nama="T-Rex",   jml=4},
+    {nama="Baku",    jml=1},
+    {nama="Peacock", jml=2},
+    {nama="Bahan",   jml=1},
+}
+
 -- v8.314: lineup equip saat AUTO MTS start
 MTS_LINEUP_DEF = {
     {nama="Mimic Octopus", jml=7},
@@ -1638,6 +1647,13 @@ end -- TAB SESI
 sectionHeader(cfgScroll,"• KONTROL",9)
 local swRow; swRow,setSw,_getSw,swEv=makeSwitch(cfgScroll,"AUTO LVL — START",10,false)  -- v8.313: setSw global
 local swLbl=swRow:FindFirstChildWhichIsA("TextLabel")
+
+-- autolvlneww toggle (default ON, mutual exclusive dengan AUTO LVL lama)
+local setSwNew, _getSwNew, swNewEv
+local swNewRow; swNewRow,setSwNew,_getSwNew,swNewEv=makeSwitch(cfgScroll,"AUTOLVLNEWW — START",10.5,true)
+local swNewLbl=swNewRow:FindFirstChildWhichIsA("TextLabel")
+local _newRunning = false
+local _newStopRequested = false
 
 local statusCard=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.card,BorderSizePixel=0,
     LayoutOrder=11,Parent=cfgScroll}); corner(statusCard,8); stroke(statusCard,C.border,1)
@@ -4435,11 +4451,57 @@ task.spawn(function()
     end
 end)
 
+-- ===================== AUTOLVLNEWW LOOP =====================
+local function runNewLoop()
+    addLog("=== AUTOLVLNEWW START ===")
+    setStatus("AUTOLVLNEWW — equip", C.accent)
+    _clusterPos = farmCenter()
+    waitForContainer(10)
+    _activeSesiNum = 1; _activeSesiDef = AUTOLVLNEWW_DEF
+    _G._UPL_SESI_NUM = 1; _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
+    unequipAll()
+    equipSesi(1, AUTOLVLNEWW_DEF)
+    setStatus("AUTOLVLNEWW — running", C.accent)
+    local _collectBusy = false
+    while not _newStopRequested do
+        local okEE, errEE = pcall(enforceEquip, AUTOLVLNEWW_DEF)
+        if not okEE then addLog("[newloop] enforceEquip ERR: "..tostring(errEE)) end
+        pcall(function()
+            unequipBahanTua()
+            equipOneBahan()
+        end)
+        local data = scanFruits()
+        updateUI(totalNightmareCollected, data.nightmareCount, 1)
+        if #data.shovel > 0 and not _collectBusy then
+            _collectBusy = true
+            task.spawn(function()
+                local fruits = data.shovel
+                while #fruits > 0 and not _newStopRequested do
+                    local collected = doCollect(fruits)
+                    totalShovel = totalShovel + collected
+                    addLog("NewLoop collect: "..collected.."/"..#fruits)
+                    task.wait(0.8)
+                    local nxt = scanFruits(); fruits = nxt.shovel
+                end
+                _collectBusy = false
+            end)
+        end
+        task.wait(3)
+    end
+    unequipAll()
+end
+
 -- ===================== SWITCH CONTROL =====================
 local sesiAktif=1
 swEv:Connect(function(nowOn)
     if nowOn then
         if running then return end
+        -- matikan autolvlneww kalau lagi jalan
+        if _newRunning then
+            _newStopRequested = true
+            setSwNew(false)
+            if swNewLbl then swNewLbl.Text="AUTOLVLNEWW — START" end
+        end
         running=true; stopRequested=false
         -- auto-start: dipanggil dari task.defer di bawah
         if swLbl then swLbl.Text="AUTO LVL — RUNNING" end
@@ -4466,45 +4528,56 @@ swEv:Connect(function(nowOn)
     end
 end)
 
--- auto-start: trigger switch ON saat script pertama jalan
-print("[UPLVL-DBG] task.defer: running=", running)
-task.defer(function()
-    print("[UPLVL-DBG] task.defer FIRED: running=", running)
-    if not running then
-        setSw(true)
-        if swLbl then swLbl.Text="AUTO LVL — RUNNING" end
-        running=true; stopRequested=false
+swNewEv:Connect(function(nowOn)
+    if nowOn then
+        if _newRunning then return end
+        -- matikan AUTO LVL lama kalau lagi jalan
+        if running then
+            stopRequested = true
+            setSw(false)
+            if swLbl then swLbl.Text="AUTO LVL — START" end
+        end
+        _newRunning = true; _newStopRequested = false
+        if swNewLbl then swNewLbl.Text="AUTOLVLNEWW — RUNNING" end
         task.spawn(function()
-            print("[UPLVL-DBG] main loop task.spawn START")
-            addLog("uplevel.lua "..VERSION.." start!")
-            setStatus("Running...",C.accent)
-            while not stopRequested do
-                print("[UPLVL-DBG] loop iter: sesiAktif=", sesiAktif)
-                if sesiAktif==1 then
-                    local ok,err = pcall(runSesi1)
-                    if not ok then
-                        print("[UPLVL-DBG] runSesi1 ERROR:", tostring(err))
-                        print("[UPLVL-DBG][ERR] Sesi1 crash: "..tostring(err))
-                        pcall(unequipAll)  -- bersihkan pet supaya tidak campur
-                        task.wait(2)
-                    end
-                    if not stopRequested then sesiAktif=2 end
-                else
-                    local ok,err = pcall(runSesi2)
-                    if not ok then
-                        print("[UPLVL-DBG] runSesi2 ERROR:", tostring(err))
-                        print("[UPLVL-DBG][ERR] Sesi2 crash: "..tostring(err))
-                        pcall(unequipAll)  -- bersihkan pet supaya tidak campur
-                        task.wait(2)
-                    end
-                    if not stopRequested then sesiAktif=1 end
-                end
-            end
-            print("[UPLVL-DBG] loop ENDED: stopRequested=", stopRequested)
-            running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=SESI1_DEF; _G._UPL_SESI_NUM=1; _G._UPL_SESI_DEF=false; addLog("Loop stop."); setStatus("Stopped")
-            setSw(false); if swLbl then swLbl.Text="AUTO LVL — START" end
+            local ok, err = pcall(runNewLoop)
+            if not ok then addLog("AUTOLVLNEWW ERR: "..tostring(err)) end
+            _newRunning = false
+            setSwNew(false)
+            if swNewLbl then swNewLbl.Text="AUTOLVLNEWW — START" end
+            setStatus("AUTOLVLNEWW stopped")
+            addLog("AUTOLVLNEWW stop.")
         end)
     else
+        _newStopRequested = true
+        setStatus("AUTOLVLNEWW menghentikan...", C.textDim)
+        addLog("AUTOLVLNEWW stop diminta...")
+        if swNewLbl then swNewLbl.Text="AUTOLVLNEWW — STOPPING..." end
+    end
+end)
+
+-- auto-start: autolvlneww default ON saat script pertama jalan
+print("[UPLVL-DBG] task.defer: running=", running, "_newRunning=", _newRunning)
+task.defer(function()
+    print("[UPLVL-DBG] task.defer FIRED: running=", running, "_newRunning=", _newRunning)
+    if not _newRunning and not running then
+        setSwNew(true)
+        if swNewLbl then swNewLbl.Text="AUTOLVLNEWW — RUNNING" end
+        _newRunning = true; _newStopRequested = false
+        task.spawn(function()
+            addLog("uplevel.lua "..VERSION.." start! (autolvlneww)")
+            local ok, err = pcall(runNewLoop)
+            if not ok then
+                addLog("AUTOLVLNEWW ERR: "..tostring(err))
+                print("[NEWLOOP] ERR:", tostring(err))
+            end
+            _newRunning = false
+            setSwNew(false)
+            if swNewLbl then swNewLbl.Text="AUTOLVLNEWW — START" end
+            setStatus("AUTOLVLNEWW stopped")
+            addLog("AUTOLVLNEWW stop.")
+        end)
+    elseif running then
         print("[UPLVL-DBG] task.defer: skip karena running=true sudah")
     end
 end)
