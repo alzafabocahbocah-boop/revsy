@@ -1,4 +1,5 @@
--- uplevelnew v8.475
+-- uplevelnew v8.476
+-- v8.476: fix healer nil — _activeUuids disimpan di _G._ZenxActiveUuids supaya healer baru selalu akses versi terbaru
 -- v8.475: fix healer crash — _activeUuids nil guard + kill healer lama via _G._ZenxHealerGen
 -- v8.474: healer loop bungkus pcall + print startup (trace kenapa loop tidak berjalan)
 -- v8.473: debug healer — print activeUuids count + modelByUuid count tiap iterasi
@@ -71,7 +72,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.475")
+print("[UPL] VERSION: v8.476")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -178,7 +179,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.475"
+local VERSION = "v8.476"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3294,7 +3295,9 @@ end
 
 -- _activeUuids: uuid yang seharusnya ada di kebun (diisi equipSesi, dibersihkan unequipAll)
 -- Healer loop pakai ini untuk re-equip pet yang modelnya hilang
-local _activeUuids = {}
+-- Disimpan di _G supaya healer loop bisa akses meski script di-re-exec
+if type(_G._ZenxActiveUuids) ~= "table" then _G._ZenxActiveUuids = {} end
+local _activeUuids = _G._ZenxActiveUuids
 local _bahanUuids = {}  -- table UUID Bahan yang sedang equip (max 2, aging bersamaan)
 local _isCollecting = false  -- pause healer saat doCollect berjalan
 local _isTransisi   = false  -- pause healer+swapLoop saat ganti sesi / unequipAll
@@ -4288,7 +4291,7 @@ end)
 -- ===================== HEALER LOOP =====================
 -- Cek tiap 2s: pet yang seharusnya di-equip tapi modelnya tidak ada di workspace -> re-equip
 -- Mirip reference uplevel asli: tiap 1s cek supportKunci + bahanAktif, kalau model ilang -> paksa re-equip
--- NOTE: _activeUuids sudah deklarasi di atas (sebelum unequipAll), jangan deklarasi lagi
+-- NOTE: _activeUuids = _G._ZenxActiveUuids (persistent), healer selalu akses versi terbaru
 -- gunakan generasi untuk kill healer lama saat script di-re-exec
 local _healerGen = (_G._ZenxHealerGen or 0) + 1
 _G._ZenxHealerGen = _healerGen
@@ -4302,17 +4305,18 @@ task.spawn(function()
                 local healed = 0
                 local activeCount = 0
                 local mbuCount = 0
-                local _au = _activeUuids  -- snapshot reference, bisa nil kalau script lama masih jalan
-                if type(_au) ~= "table" then
-                    print("[UPLVL-DBG] HEALER: _activeUuids bukan table, skip")
+                -- _activeUuids = _G._ZenxActiveUuids, selalu valid (persistent di _G)
+                local au = _G._ZenxActiveUuids
+                if type(au) ~= "table" then
+                    print("[UPLVL-DBG] HEALER: _G._ZenxActiveUuids bukan table, skip")
                     return
                 end
                 for _ in pairs(modelByUuid) do mbuCount=mbuCount+1 end
-                for uuid in pairs(_au) do
+                for uuid in pairs(au) do
                     activeCount = activeCount + 1
                 end
                 print("[UPLVL-DBG] HEALER: activeUuids="..activeCount.." modelByUuid="..mbuCount)
-                for uuid in pairs(_au) do
+                for uuid in pairs(au) do
                     if not modelByUuid[uuid] then
                         print("[UPLVL-DBG] HEAL: re-equip uuid="..tostring(uuid))
                         -- model belum muncul/hilang -> re-equip
