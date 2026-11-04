@@ -10677,6 +10677,7 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
 end
 
 -- v9.601: zenx arceus 1 / arceus 2 / arceus 1-2
+-- v9.611: fix zenx arceus -- hapus $ anchor (bukan valid Lua pattern), pakai gmatch candidate loop biar slot1 gak match _clone
 if PERINTAH == "arceus" then
     local rentang = arg[2] or ""
     local nums = {}
@@ -10692,8 +10693,8 @@ if PERINTAH == "arceus" then
 
     -- slot 1 = ori, slot 2 = clone
     local SLOT = {
-        [1] = { label = "slot1-ori",   pattern = "Roblox%.Arceus%.X%.NEO%.[%d%.]+%.apk$",       out = "/sdcard/arceus_ori.apk" },
-        [2] = { label = "slot2-clone", pattern = "Roblox%.Arceus%.X%.NEO%.[%d%.]+_clone%.apk$", out = "/sdcard/arceus_clone.apk" },
+        [1] = { label = "slot1-ori",   pattern = "Roblox%.Arceus%.X%.NEO%.[%d%.]+%.apk",       out = "/sdcard/arceus_ori.apk" },
+        [2] = { label = "slot2-clone", pattern = "Roblox%.Arceus%.X%.NEO%.[%d%.]+_clone%.apk", out = "/sdcard/arceus_clone.apk" },
     }
 
     -- validasi nomor
@@ -10713,8 +10714,20 @@ if PERINTAH == "arceus" then
 
     for _, n in ipairs(nums) do
         local s = SLOT[n]
-        -- cari URL: pattern harus cocok di akhir nama file sebelum closing quote
-        local url = rel:match('"(https://[^"]*' .. s.pattern .. ')"')
+        -- cari semua URL yang match pattern, pilih yang sesuai
+        local url = nil
+        for candidate in rel:gmatch('"(https://[^"]+)"') do
+            if candidate:match(s.pattern) then
+                -- slot 1 (ori): pastikan bukan _clone
+                if n == 1 and candidate:find("_clone") then
+                    -- skip clone
+                elseif n == 1 and not candidate:find("Arceus%.X%.NEO") then
+                    -- skip bukan NEO
+                else
+                    url = candidate; break
+                end
+            end
+        end
         if not url then
             print("[" .. s.label .. "] URL gak ketemu di rilis (skip).")
         else
