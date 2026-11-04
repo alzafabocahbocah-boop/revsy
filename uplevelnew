@@ -1,4 +1,5 @@
--- uplevelnew v8.465
+-- uplevelnew v8.466
+-- v8.466: print log di loop sesi (trace hang/crash setelah equipSesi DONE)
 -- v8.465: unequipAll setelah crash sesi1/sesi2 supaya pet gak campur
 -- v8.464: guard enforceEquip pcall+log buat trace crash di sesi1/sesi2
 -- v8.463: fix getMtsPets crash (sesiPool nil guard) + debug NMPoller log attrs
@@ -3744,8 +3745,12 @@ local function scanFruits()
             end
         end
         addLog("scanFruits OK: total="..totalScanned.." shovel="..#res.shovel.." nm="..res.nightmareCount.." collect="..#res.nightmare)
+        print("[UPLVL-DBG] scanFruits OK: total="..totalScanned.." shovel="..#res.shovel.." nm="..res.nightmareCount)
     end)
-    if not ok then addLog("scanFruits ERR: "..tostring(err)) end
+    if not ok then
+        print("[UPLVL-DBG] scanFruits ERR:", tostring(err))
+        addLog("scanFruits ERR: "..tostring(err))
+    end
     return res
 end
 
@@ -3850,22 +3855,29 @@ local function enforceEquip(allowedDef)
     -- skip kalau AUTO MTS sedang running — MTS punya lineup sendiri, jangan diusik
     if _G.ZenxMutRunning then return end
     if type(allowedDef) ~= "table" then
+        print("[UPLVL-DBG] enforceEquip SKIP: allowedDef bukan table =", tostring(allowedDef))
         addLog("[enforceEquip] SKIP: allowedDef bukan table = "..tostring(allowedDef))
         return
     end
     local allowed = {}
     for _, d in ipairs(allowedDef) do allowed[d.nama] = true end
+    print("[UPLVL-DBG] enforceEquip START: modelByUuid count="..(function() local c=0; for _ in pairs(modelByUuid) do c=c+1 end; return c end)())
     local ok2, err2 = pcall(function()
         for uuid in pairs(modelByUuid) do
             if _bahanUuids[uuid] then continue end
             local tipe = getPetTipeFromUUID(uuid)
             if tipe and not allowed[tipe] then
+                print("[UPLVL-DBG] enforceEquip unequip '"..tipe.."' uuid="..tostring(uuid))
                 addLog("Enforce: unequip '"..tipe.."' (bukan bagian sesi ini)")
                 pcall(function() unequipPet(uuid) end)
             end
         end
     end)
-    if not ok2 then addLog("[enforceEquip] ERR: "..tostring(err2)) end
+    if not ok2 then
+        print("[UPLVL-DBG] enforceEquip ERR:", tostring(err2))
+        addLog("[enforceEquip] ERR: "..tostring(err2))
+    end
+    print("[UPLVL-DBG] enforceEquip DONE")
 end
 
 local function processFruits()
@@ -4033,18 +4045,22 @@ local function runSesiUtama(sesiNum, def, label, col)
     local _targetReached = false
     local _collectBusy = false
     -- scan loop: jalan terus, update GUI + cek target
-    dbgLog("[DBG] masuk loop sesi"..sesiNum)
+    print("[UPLVL-DBG] masuk loop sesi"..sesiNum)
     while not stopRequested and not _targetReached do
-        dbgLog("[DBG] iterasi sesi"..sesiNum)
+        print("[UPLVL-DBG] loop sesi"..sesiNum.." iter: stopReq="..(tostring(stopRequested)).." targetReached="..(tostring(_targetReached)))
         local okEE, errEE = pcall(enforceEquip, def)
-        if not okEE then addLog("[loop] enforceEquip ERR: "..tostring(errEE)) end
+        if not okEE then
+            print("[UPLVL-DBG] enforceEquip ERR:", tostring(errEE))
+            addLog("[loop] enforceEquip ERR: "..tostring(errEE))
+        end
+        print("[UPLVL-DBG] sebelum scanFruits sesi"..sesiNum)
         local data = scanFruits()
+        print("[UPLVL-DBG] scanFruits done: shovel="..#data.shovel.." nm="..data.nightmareCount)
         local nm = _nmCached  -- baca dari fast poller (0.5s), lebih responsif
         _lastMutasiCount = #data.shovel
         totalNightmareCollected = nm
         updateUI(nm, nm, sesiNum)
-        -- v8.160: debug setiap iterasi
-        dbgLog("[DBG] loop sesi"..sesiNum..": nm="..nm.." shovel="..#data.shovel.." busy="..(tostring(_collectBusy)).." target="..CFG.nightmareTarget)
+        print("[UPLVL-DBG] loop sesi"..sesiNum..": nmCached="..nm.." shovel="..#data.shovel.." busy="..(tostring(_collectBusy)).." target="..CFG.nightmareTarget)
         -- cek target
         if nm >= CFG.nightmareTarget then
             addLog("Target! nm="..nm.." >= "..CFG.nightmareTarget.." — Pindah sesi 2.")
