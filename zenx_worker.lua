@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.626"
+local VERSION = "9.627"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -90,13 +90,24 @@ local function tulis_skrip_up(diam)
         "zenx stop >/dev/null 2>&1",
         'echo "narik versi baru..."',
         'URL="' .. REPO_WORKER .. '/zenx_worker.lua?v=$(date +%s)"',
-        'echo "download dari GitHub..."',
+        'echo "download dari GitHub... (timeout 60 detik)"',
         'if curl --version >/dev/null 2>&1; then',
-        '    curl -fL --progress-bar --compressed -H "Cache-Control: no-cache" -H "Pragma: no-cache" \\',
-        '      "$URL" -o "$HOME/zenx_worker.baru"',
+        '    CURL_ERR=$(curl -fL --progress-bar --compressed --connect-timeout 15 --max-time 60 \\',
+        '      -H "Cache-Control: no-cache" -H "Pragma: no-cache" \\',
+        '      "$URL" -o "$HOME/zenx_worker.baru" 2>&1); CURL_EXIT=$?',
+        '    if [ $CURL_EXIT -ne 0 ]; then',
+        '        echo "GAGAL download (exit $CURL_EXIT) -- $CURL_ERR"',
+        '        echo "Kemungkinan: koneksi lemot, GitHub down, atau timeout."',
+        '        echo "Coba lagi: up"',
+        '        exit 1',
+        '    fi',
         'elif wget --version >/dev/null 2>&1; then',
         '    echo "curl rusak -> pakai wget"',
-        '    wget --show-progress --no-cache -O "$HOME/zenx_worker.baru" "$URL"',
+        '    wget --show-progress --no-cache --timeout=60 -O "$HOME/zenx_worker.baru" "$URL"',
+        '    if [ $? -ne 0 ]; then',
+        '        echo "GAGAL download via wget. Coba lagi: up"',
+        '        exit 1',
+        '    fi',
         'else',
         '    echo "GAGAL -- curl DAN wget dua-duanya gak jalan"',
         '    echo "  betulin dulu: pkg update -y && pkg upgrade -y"',
