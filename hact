@@ -1515,7 +1515,8 @@ task.spawn(function()
                 local gcLine = ("%s fps=%d next=%ds"):format(_gcDbg, fps, gcNext)
                 local gr = tostring(_G.__hactGlobalRunning)
                 local fase = extra ~= "" and extra or ("loop idle | gr="..gr)
-                _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, gcLine)
+                local ctig = _G.__hactDbgCTIG or ""
+                _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, gcLine, ctig)
             end
             -- v34.63: update egg debug panel kanan tengah
             if _G.__hactEggDbgLbl then
@@ -4495,16 +4496,33 @@ local function countTeamInGarden(teamName)
     local n = 0
     pcall(function()
         local pp = Workspace:FindFirstChild("PetsPhysical")
-        if not pp then return end
+        if not pp then
+            -- v34.76: debug — PetsPhysical gak ketemu
+            _G.__hactDbgCTIG = "pp=NIL"
+            return
+        end
         local myId = tostring(player.UserId)
         local myFolder = pp:FindFirstChild(myId) or pp:FindFirstChild(player.Name)
-        if not myFolder then return end
+        if not myFolder then
+            -- v34.76: debug — coba scan semua child pp buat lihat strukturnya
+            local children = {}
+            for _, c in ipairs(pp:GetChildren()) do
+                table.insert(children, c.Name:sub(1,20))
+                if #children >= 5 then break end
+            end
+            _G.__hactDbgCTIG = "myFolder=NIL id="..myId.." pp.children=["..table.concat(children,",").."]"
+            return
+        end
+        -- v34.76: debug — lihat beberapa child folder
+        local firstKids = {}
         for _, m in ipairs(myFolder:GetChildren()) do
+            if #firstKids < 3 then table.insert(firstKids, m.Name:sub(1,20)) end
             if m:IsA("Model") and m.Name:sub(1,1)=="{" then
                 local clean = m.Name:gsub("[{}]","")
                 if want[clean] then n = n + 1 end
             end
         end
+        _G.__hactDbgCTIG = ("n=%d folder=%s kids=[%s]"):format(n, myFolder.Name:sub(1,10), table.concat(firstKids,","))
     end)
     return n
 end
