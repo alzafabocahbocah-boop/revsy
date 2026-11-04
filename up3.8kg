@@ -2521,67 +2521,76 @@ do
                 return true
             end
 
-            local _lastDeepFind = 0
+            -- skill → langsung swap, tanpa cek isSupport/animTriggerOk
+            local SWAP_ANIM = { frill=true, fan=true, roar=true, flyup=true, pee=true, pew=true }
+            -- kind yg UUID-nya bisa milik orang lain → lookup dari supportKunci
+            local LOOKUP_KW = {
+                flyup = { "peryton", "gilded" },
+                pee   = { "hotdog" },
+                pew   = { "hotdog" },
+                roar  = { "lion" },
+            }
+            local _lastParse = 0
+            local _debounce  = {}  -- [uuid8] = tick()
             local conn = ds2.OnClientEvent:Connect(function(...)
-                if not KG.aktif or KG.reset then return end
                 local now = tick()
-                if now - _lastDeepFind < 0.1 then return end  -- throttle: max 10x/s
-                _lastDeepFind = now
+                if now - _lastParse < 0.05 then return end
+                _lastParse = now
                 local args = {...}
                 local svc = tostring(args[2] or "")
                 if not svc:find("ActivePets", 1, true) then return end
-                local data3, data4 = args[3], args[4]
-                local data = type(data3)=="table" and data3 or (type(data4)=="table" and data4 or nil)
+                local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
                 if not data then return end
                 local hits = deepFind(data, 0)
                 for _, hit in ipairs(hits) do
                     local r, animStr = hit[1], hit[2]
-                    -- filter 5 pet hanya untuk log animasi DataStream (bukan unequip/equip)
-                    do
-                        local pt = ""
-                        pcall(function()
-                            local fmtU = "{"..r.."}"
-                            local e = _kgContainer and (_kgContainer[fmtU] or _kgContainer[r])
-                            if type(e) == "table" then
-                                pt = tostring(e.PetType or (e.PetData and e.PetData.PetType) or ""):lower()
-                            end
-                        end)
-                        local rel = pt:find("dilophosaurus",1,true) or pt:find("lion",1,true)
-                            or pt:find("peacock",1,true) or pt:find("peryton",1,true)
-                            or pt:find("daschund",1,true) or pt:find("dachshund",1,true)
-                        if rel then animDbgPush(r, animStr) end
-                    end
+                    local anim = tostring(animStr):lower()
+                    if not SWAP_ANIM[anim] then continue end
+                    if not _G.ZenxSuppSwapOn then continue end
+                    -- debounce 0.5s per uuid
+                    local r8 = r:sub(1,8)
+                    if _debounce[r8] and (now - _debounce[r8]) < 0.5 then continue end
+                    _debounce[r8] = now
+                    -- cari UUID target: dari DataStream langsung, atau lookup supportKunci
                     local targetR = r
-                    if not isSupport(r) then
-                        -- UUID bukan milik kita (pet orang lain) → cari UUID support kita
-                        -- yang animTriggerOk-nya cocok dengan animStr ini
+                    local kw = LOOKUP_KW[anim]
+                    if kw then
                         local found = nil
-                        for supUuid, supNama in pairs(supportKunci) do
-                            local cleanUuid = supUuid:gsub("[{}]","")
-                            if animTriggerOk(cleanUuid, animStr) then
-                                found = cleanUuid; break
+                        local bp = plr:FindFirstChild("Backpack")
+                        local char = plr.Character
+                        for _, container in ipairs({bp, char}) do
+                            if not container then continue end
+                            for _, t in ipairs(container:GetChildren()) do
+                                if t:IsA("Tool") then
+                                    local uuid = t:GetAttribute("PET_UUID")
+                                    local f = tostring(t:GetAttribute("f") or ""):lower()
+                                    if uuid then
+                                        for _, k in ipairs(kw) do
+                                            if f:find(k,1,true) then found = tostring(uuid); break end
+                                        end
+                                    end
+                                end
+                                if found then break end
                             end
+                            if found then break end
                         end
                         if not found then continue end
                         targetR = found
-                    else
-                        if not animTriggerOk(r, animStr) then continue end
                     end
-                    if not _G.ZenxSuppSwapOn then continue end
-                    local raw = targetR
-                    local anim = tostring(animStr):lower()
+                    animDbgPush(r, animStr)
+                    local raw = targetR:gsub("[{}]","")
                     task.spawn(function()
                         -- frill/dilop: delay 200ms sebelum swap
                         if anim == "frill" then task.wait(0.2) end
                         unequipPet(raw)
                         task.wait(0.03)
                         equipPet(raw)
-                        -- cek posisi spawn: dilop center (11,22,8), lainnya (10,3,12)
+                        -- cek posisi spawn
                         local CENTER = anim == "frill"
                             and Vector3.new(11, 22, 8)
                             or  Vector3.new(10, 3, 12)
                         local THRESH = 2.0
-                        local raw8 = raw:gsub("[{}]",""):sub(1,8)
+                        local raw8 = raw:sub(1,8)
                         local done, spawnPos = false, nil
                         local conn2 = workspace.DescendantAdded:Connect(function(d)
                             if done then return end
@@ -2605,7 +2614,6 @@ do
                         if spawnPos then
                             local dist = math.sqrt((spawnPos.X-CENTER.X)^2+(spawnPos.Y-CENTER.Y)^2+(spawnPos.Z-CENTER.Z)^2)
                             if dist > THRESH then
-                                -- miss: retry sekali
                                 unequipPet(raw); task.wait(0.03); equipPet(raw)
                             end
                         end
