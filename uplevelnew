@@ -1,4 +1,5 @@
--- uplevelnew v8.481
+-- uplevelnew v8.482
+-- v8.482: auto-shovel di runNewLoop — scan Plants_Physical, FireServer Remove_Item tiap pohon (tanpa equip shovel tool)
 -- v8.481: tambah tab NEWW di lineup pet untuk simpan tim AUTOLVLNEWW (sesiPool[5]); Auto Isi & Reset juga include sesi 5
 -- v8.480: tambah toggle AUTOLVLNEWW — 1 tim fix (4 T-Rex + 1 Baku + 2 Peacock + 1 Bahan), tanpa nightmare target, tanpa pindah kebun; default ON; mutual exclusive dengan AUTO LVL lama
 -- v8.476: fix healer nil — _activeUuids disimpan di _G._ZenxActiveUuids supaya healer baru selalu akses versi terbaru
@@ -108,6 +109,7 @@ local plantRE = gameEvents:FindFirstChild("Plant_RE")
 local sellInventoryRE = gameEvents:FindFirstChild("Sell_Inventory")
 local harvestRE = gameEvents:FindFirstChild("HarvestRemote")
 local cropsRE = gameEvents:FindFirstChild("Crops") and gameEvents.Crops:FindFirstChild("Collect")
+local removeItemRE = gameEvents:FindFirstChild("Remove_Item")
 
 -- ===== FAV BUAH — cari RemoteEvent "FavoriteFruit"/"SetFruitFavorite" di RS =====
 local _fruitFavRE = nil
@@ -4470,6 +4472,46 @@ task.spawn(function()
 end)
 
 -- ===================== AUTOLVLNEWW LOOP =====================
+-- auto-shovel: scan Plants_Physical lalu FireServer Remove_Item tiap pohon (tanpa equip tool)
+local function doShovelPlants()
+    local re = removeItemRE
+    if not re then
+        re = gameEvents and gameEvents:FindFirstChild("Remove_Item")
+        removeItemRE = re
+    end
+    if not re then addLog("[shovel] Remove_Item RE tidak ditemukan"); return 0 end
+
+    local farm = getPlayerFarm()
+    if not farm then addLog("[shovel] farm nil"); return 0 end
+    local imp = farm:FindFirstChild("Important"); if not imp then return 0 end
+    local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return 0 end
+
+    local count = 0
+    for _, pt in ipairs(plants:GetChildren()) do
+        -- hanya shovel pohon yang punya buah mutasi (ada di data.shovel)
+        local fruits = pt:FindFirstChild("Fruits")
+        local hasMut = false
+        if fruits then
+            for _, fruit in ipairs(fruits:GetChildren()) do
+                if fruitHasMutation(fruit) then hasMut = true; break end
+            end
+        end
+        if hasMut then
+            local ok, err = pcall(function()
+                re:FireServer(pt)
+            end)
+            if ok then
+                count = count + 1
+                addLog("[shovel] Remove_Item: "..pt.Name)
+            else
+                addLog("[shovel] ERR: "..tostring(err))
+            end
+            task.wait(0.3)
+        end
+    end
+    return count
+end
+
 local function runNewLoop()
     addLog("=== AUTOLVLNEWW START ===")
     setStatus("AUTOLVLNEWW — equip", C.accent)
@@ -4493,6 +4535,7 @@ local function runNewLoop()
         if #data.shovel > 0 and not _collectBusy then
             _collectBusy = true
             task.spawn(function()
+                -- collect dulu (ambil buah mutasi)
                 local fruits = data.shovel
                 while #fruits > 0 and not _newStopRequested do
                     local collected = doCollect(fruits)
@@ -4500,6 +4543,11 @@ local function runNewLoop()
                     addLog("NewLoop collect: "..collected.."/"..#fruits)
                     task.wait(0.8)
                     local nxt = scanFruits(); fruits = nxt.shovel
+                end
+                -- setelah collect, shovel pohonnya
+                local shoveled = doShovelPlants()
+                if shoveled > 0 then
+                    addLog("NewLoop shovel: "..shoveled.." pohon dihapus")
                 end
                 _collectBusy = false
             end)
