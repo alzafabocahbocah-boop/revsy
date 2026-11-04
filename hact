@@ -5636,17 +5636,25 @@ local function automationLoop()
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
                 local ok = waitTeamInGarden("Hatch Tim", 15)
                 local hd = config.hatchDelay or 3
+                -- v34.63: kalau waitTeamInGarden timeout tapi Koi >= 5 di garden, tetap hatch
+                -- (dulu langsung batal padahal Koi udah cukup, cuma 1 yang lambat masuk)
+                local nKoi = countGardenPets()
+                if not ok and nKoi >= 5 then
+                    print("[HactTelur] waitTeamInGarden timeout tapi Koi "..nKoi.." >= 5, lanjut hatch")
+                    _G.__hactDbgExtra = ("⚠ timeout tapi Koi %d>=5, hatch"):format(nKoi)
+                    ok = true
+                end
                 -- v23.0: tim Koi HARUS lengkap. kalau gak lengkap (mis gift nyempil, cuma 5 masuk) -> BATAL hatch.
                 -- v33.72: min 5 koi di garden, kalau kurang skip hatch
-                if ok and countGardenPets() < 5 then
-                    print("[HactTelur] Koi di garden cuma "..countGardenPets().." (<5), skip hatch")
-                    _G.__hactDbgExtra = ("⚠ Koi cuma %d (<5), skip hatch"):format(countGardenPets())
+                if ok and nKoi < 5 then
+                    print("[HactTelur] Koi di garden cuma "..nKoi.." (<5), skip hatch")
+                    _G.__hactDbgExtra = ("⚠ Koi cuma %d (<5), skip hatch"):format(nKoi)
                     ok = false
                 end
                 if not ok then
                     -- v24.6: balik Reduce + tunggu (jgn loop hatch terus / clearGarden async yg bentrok)
-                    print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), balik Reduce, tunggu...")
-                    _G.__hactDbgExtra = ("❌ Koi gak lengkap ("..countGardenPets().."), balik reduce")
+                    print("[HactTelur] tim Koi GAK LENGKAP ("..nKoi.."), balik Reduce, tunggu...")
+                    _G.__hactDbgExtra = ("❌ Koi gak lengkap ("..nKoi.."), balik reduce")
                     equipTeam("Reduce Tim")
                     waitInterrupt(3)  -- v33.95: interruptible
                 else
@@ -5681,21 +5689,28 @@ local function automationLoop()
                 waitInterrupt(3)  -- v33.95: interruptible (kasih waktu pet Reduce keluar garden)
                 if not globalRunning then equipTeam("Reduce Tim") break end
                 local ok = waitTeamInGarden("Hatch Tim", 12)
+                -- v34.63: kalau timeout tapi Koi >= 5 di garden, tetap hatch
+                local nKoi2 = countGardenPets()
+                if not ok and nKoi2 >= 5 then
+                    print("[HactTelur] waitTeamInGarden timeout tapi Koi "..nKoi2.." >= 5, lanjut hatch sebagian")
+                    _G.__hactDbgExtra = ("⚠ timeout tapi Koi %d>=5, hatch sebagian"):format(nKoi2)
+                    ok = true
+                end
                 -- v33.72: min 5 koi di garden
-                if ok and countGardenPets() < 5 then
-                    print("[HactTelur] Koi di garden cuma "..countGardenPets().." (<5), skip hatch sebagian")
-                    _G.__hactDbgExtra = ("⚠ Koi cuma %d (<5), skip"):format(countGardenPets())
+                if ok and nKoi2 < 5 then
+                    print("[HactTelur] Koi di garden cuma "..nKoi2.." (<5), skip hatch sebagian")
+                    _G.__hactDbgExtra = ("⚠ Koi cuma %d (<5), skip"):format(nKoi2)
                     ok = false
                 end
                 if not ok then
                     -- v24.6: tim Koi gak lengkap -> BALIK ke Reduce + TUNGGU (jgn loop hatch terus).
                     -- dulu cuma clearGarden async -> bentrok sama equipTeam berikutnya -> 0 pet -> loop.
-                    print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), balik Reduce, tunggu egg sisanya...")
+                    print("[HactTelur] tim Koi GAK LENGKAP ("..nKoi2.."), balik Reduce, tunggu egg sisanya...")
                     _G.__hactDbgExtra = ("❌ Koi gak lengkap, nunggu sisa %d egg"):format(total-ready)
                     equipTeam("Reduce Tim")
                     waitInterrupt(3)  -- v33.95: interruptible (kasih waktu egg sisa ready)
                 else
-                    print("[HactTelur] Koi LENGKAP ("..countGardenPets().."), tunggu 6 detik...")
+                    print("[HactTelur] Koi LENGKAP ("..nKoi2.."), tunggu 6 detik...")
                     do local t0=tick() while globalRunning and (tick()-t0)<6 do
                         _G.__hactDbgExtra = ("⏳ hatch sebagian: tunggu %ds"):format(math.ceil(6-(tick()-t0)))
                         task.wait(0.2)
