@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.14"
+local VERSION = "v35.15"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5684,33 +5684,49 @@ local function automationLoop()
             Auto.currentTeam = nil
             equipTeam("Sell Tim")
             -- poll seal masuk (max 20s), fav/unfav sambil tunggu
+            -- v35.15: kalau kurang dari wantN setelah 20s, retry equip (max 2x) sebelum batal
             local td = teamData["Sell Tim"]
             local wantN = td and td.selected and (function() local n=0; for _ in pairs(td.selected) do n=n+1 end; return n end)() or 8
             local sealIn = 0
             local sealReady = false
-            do local t0=tick()
-                while globalRunning and (tick()-t0)<20 do
-                    if isTradingManual() then break end
-                    -- hitung seal di garden
-                    local nIn = countTeamInGarden("Sell Tim")
-                    sealIn = nIn
-                    _G.__hactDbgExtra = ("🦭 Seal masuk: %d/%d"):format(nIn, wantN)
-                    -- fav/unfav sambil nunggu (tiap iterasi)
-                    favTeamPets()
-                    pcall(syncFavByRules)
-                    if nIn >= wantN then sealReady=true; break end
-                    task.wait(0.5)
+            local _sellRetry = 0
+            repeat
+                do local t0=tick()
+                    while globalRunning and (tick()-t0)<20 do
+                        if isTradingManual() then break end
+                        -- hitung seal di garden
+                        local nIn = countTeamInGarden("Sell Tim")
+                        sealIn = nIn
+                        _G.__hactDbgExtra = ("🦭 Seal masuk: %d/%d"):format(nIn, wantN)
+                        -- fav/unfav sambil nunggu (tiap iterasi)
+                        favTeamPets()
+                        pcall(syncFavByRules)
+                        if nIn >= wantN then sealReady=true; break end
+                        task.wait(0.5)
+                    end
                 end
-            end
+                if not globalRunning then break end
+                if not sealReady then
+                    -- cek sekali lagi sebelum retry
+                    sealIn = countTeamInGarden("Sell Tim")
+                    if sealIn >= wantN then sealReady = true; break end
+                    -- v35.15: kurang → equip ulang (max 2x retry)
+                    _sellRetry = _sellRetry + 1
+                    if _sellRetry <= 2 then
+                        print("[HactTelur] Seal kurang ("..sealIn.."/"..wantN.."), equip ulang (retry ".._sellRetry..")")
+                        _G.__hactDbgExtra = ("🔄 Seal %d/%d, equip ulang retry %d..."):format(sealIn, wantN, _sellRetry)
+                        Auto.currentTeam = nil
+                        equipTeam("Sell Tim")
+                        if config.autoUnequipWrong and teamData["Sell Tim"] then
+                            unequipWrongGardenPets(teamData["Sell Tim"].selected)
+                        end
+                    end
+                end
+            until sealReady or _sellRetry > 2 or not globalRunning or isTradingManual()
             if not globalRunning then break end
             if not sealReady then
-                -- timeout, tapi cek sekali lagi
-                sealIn = countTeamInGarden("Sell Tim")
-                if sealIn >= wantN then sealReady = true end
-            end
-            if not sealReady then
-                print("[HactTelur] Seal timeout ("..sealIn.."/"..wantN.."), batal sell")
-                _G.__hactDbgExtra = ("❌ Seal timeout %d/%d, batal"):format(sealIn, wantN)
+                print("[HactTelur] Seal timeout setelah retry ("..sealIn.."/"..wantN.."), batal sell")
+                _G.__hactDbgExtra = ("❌ Seal %d/%d timeout+retry, batal"):format(sealIn, wantN)
                 Auto.currentTeam = nil
                 task.spawn(function() pcall(clearGarden) end)
             else
