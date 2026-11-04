@@ -108,6 +108,7 @@ local SKILL_KIND = {
     fan   = "FAN",
     roar  = "ROAR",
     fly   = "FLY",
+    pew   = "PEW",    -- hotdog
 }
 -- skill yang perlu delay 200ms sebelum swap
 local SKILL_DELAY = {
