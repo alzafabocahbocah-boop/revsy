@@ -118,7 +118,6 @@ end
 
 -- ===== SKILL TRIGGERS =====
 -- animStr → kind label
--- frill = dilophosaurus, fan = peacock, roar = lion/gilded lion, fly = peryton
 local SKILL_KIND = {
     frill = "FRILL",
     fan   = "FAN",
@@ -132,6 +131,38 @@ local SKILL_KIND = {
 local SKILL_DELAY = {
     FRILL = 0.2,
 }
+-- kind yang UUID-nya harus dicari dari backpack/character (bukan dari DataStream)
+-- karena DataStream bisa berisi UUID pet orang lain
+local SKILL_LOOKUP = {
+    FLY  = { "peryton", "gilded" },
+    PEW  = { "hotdog" },
+    ROAR = { "lion" },
+}
+
+-- cari UUID dari backpack/character berdasarkan keyword
+local function findUUIDByKeywords(keywords)
+    local containers = {}
+    local bp = plr:FindFirstChild("Backpack")
+    if bp then containers[#containers+1] = bp end
+    local char = plr.Character
+    if char then containers[#containers+1] = char end
+    for _, container in ipairs(containers) do
+        for _, t in ipairs(container:GetChildren()) do
+            if t:IsA("Tool") then
+                local uuid = t:GetAttribute("PET_UUID")
+                local f = tostring(t:GetAttribute("f") or ""):lower()
+                if uuid then
+                    for _, kw in ipairs(keywords) do
+                        if f:find(kw, 1, true) then
+                            return tostring(uuid)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
 
 -- ===== SWAP LOGIC =====
 local swapBusy  = {}   -- [uuid8] = true kalau sedang sequence
@@ -277,8 +308,22 @@ task.spawn(function()
             if lastTrigger[r8] and (now - lastTrigger[r8]) < DS_DEBOUNCE then continue end
             lastTrigger[r8] = now
 
+            -- kalau kind ada di SKILL_LOOKUP, cari UUID dari backpack sendiri
+            -- (UUID dari DataStream bisa milik pet orang lain)
+            local targetUUID = rawUUID
+            local lookupKw = SKILL_LOOKUP[kind]
+            if lookupKw then
+                local found = findUUIDByKeywords(lookupKw)
+                if found then
+                    targetUUID = found
+                else
+                    push("SKIP", r8 .. " " .. kind .. " (no local pet)")
+                    continue
+                end
+            end
+
             task.spawn(function()
-                runSwapSequence(rawUUID, kind)
+                runSwapSequence(targetUUID, kind)
             end)
         end
     end)
