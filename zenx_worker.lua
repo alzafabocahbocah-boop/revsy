@@ -10677,7 +10677,7 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
 end
 
 -- v9.601: zenx arceus 1 / arceus 2 / arceus 1-2
--- v9.611: fix zenx arceus -- hapus $ anchor (bukan valid Lua pattern), pakai gmatch candidate loop biar slot1 gak match _clone
+-- v9.617: fix zenx arceus -- hapus $ anchor (bukan valid Lua pattern), pakai gmatch candidate loop biar slot1 gak match _clone
 if PERINTAH == "arceus" then
     local rentang = arg[2] or ""
     local nums = {}
