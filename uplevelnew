@@ -1,4 +1,5 @@
--- uplevelnew v8.474
+-- uplevelnew v8.475
+-- v8.475: fix healer crash — _activeUuids nil guard + kill healer lama via _G._ZenxHealerGen
 -- v8.474: healer loop bungkus pcall + print startup (trace kenapa loop tidak berjalan)
 -- v8.473: debug healer — print activeUuids count + modelByUuid count tiap iterasi
 -- v8.472: debug nama asli model pet — log semua model masuk workspace + scan 3s setelah start
@@ -70,7 +71,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.474")
+print("[UPL] VERSION: v8.475")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -177,7 +178,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.474"
+local VERSION = "v8.475"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4288,22 +4289,30 @@ end)
 -- Cek tiap 2s: pet yang seharusnya di-equip tapi modelnya tidak ada di workspace -> re-equip
 -- Mirip reference uplevel asli: tiap 1s cek supportKunci + bahanAktif, kalau model ilang -> paksa re-equip
 -- NOTE: _activeUuids sudah deklarasi di atas (sebelum unequipAll), jangan deklarasi lagi
-print("[UPLVL-DBG] HEALER LOOP: spawn")
+-- gunakan generasi untuk kill healer lama saat script di-re-exec
+local _healerGen = (_G._ZenxHealerGen or 0) + 1
+_G._ZenxHealerGen = _healerGen
+print("[UPLVL-DBG] HEALER LOOP: spawn gen="..tostring(_healerGen))
 task.spawn(function()
-    print("[UPLVL-DBG] HEALER LOOP: thread started")
-    while true do
+    print("[UPLVL-DBG] HEALER LOOP: thread started gen="..tostring(_healerGen))
+    while _G._ZenxHealerGen == _healerGen do  -- stop kalau generasi baru muncul
         local ok, err = pcall(function()
             task.wait(2)
             if running and not stopRequested and not _isCollecting and not _isTransisi then
                 local healed = 0
                 local activeCount = 0
                 local mbuCount = 0
+                local _au = _activeUuids  -- snapshot reference, bisa nil kalau script lama masih jalan
+                if type(_au) ~= "table" then
+                    print("[UPLVL-DBG] HEALER: _activeUuids bukan table, skip")
+                    return
+                end
                 for _ in pairs(modelByUuid) do mbuCount=mbuCount+1 end
-                for uuid in pairs(_activeUuids) do
+                for uuid in pairs(_au) do
                     activeCount = activeCount + 1
                 end
                 print("[UPLVL-DBG] HEALER: activeUuids="..activeCount.." modelByUuid="..mbuCount)
-                for uuid in pairs(_activeUuids) do
+                for uuid in pairs(_au) do
                     if not modelByUuid[uuid] then
                         print("[UPLVL-DBG] HEAL: re-equip uuid="..tostring(uuid))
                         -- model belum muncul/hilang -> re-equip
