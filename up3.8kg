@@ -2569,10 +2569,46 @@ do
                     end
                     if not _G.ZenxSuppSwapOn then continue end
                     local raw = targetR
+                    local anim = tostring(animStr):lower()
                     task.spawn(function()
+                        -- frill/dilop: delay 200ms sebelum swap
+                        if anim == "frill" then task.wait(0.2) end
                         unequipPet(raw)
                         task.wait(0.03)
                         equipPet(raw)
+                        -- cek posisi spawn: dilop center (11,22,8), lainnya (10,3,12)
+                        local CENTER = anim == "frill"
+                            and Vector3.new(11, 22, 8)
+                            or  Vector3.new(10, 3, 12)
+                        local THRESH = 2.0
+                        local raw8 = raw:gsub("[{}]",""):sub(1,8)
+                        local done, spawnPos = false, nil
+                        local conn2 = workspace.DescendantAdded:Connect(function(d)
+                            if done then return end
+                            if not d:IsA("Model") then return end
+                            if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
+                            local dn = d.Name
+                            local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
+                            if d8 ~= raw8 then return end
+                            task.defer(function()
+                                if done then return end
+                                pcall(function()
+                                    local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
+                                    if p then spawnPos = p.Position end
+                                end)
+                                done = true
+                            end)
+                        end)
+                        local t0 = tick()
+                        while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
+                        conn2:Disconnect()
+                        if spawnPos then
+                            local dist = math.sqrt((spawnPos.X-CENTER.X)^2+(spawnPos.Y-CENTER.Y)^2+(spawnPos.Z-CENTER.Z)^2)
+                            if dist > THRESH then
+                                -- miss: retry sekali
+                                unequipPet(raw); task.wait(0.03); equipPet(raw)
+                            end
+                        end
                     end)
                 end
             end)
