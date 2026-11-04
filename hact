@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.89"
+local VERSION = "v34.90"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5657,13 +5657,24 @@ local function automationLoop()
             if isTradingManual() then  -- v26.2: batal cuma kalau trade UI manual kebuka
                 print("[HactTelur] trade UI kebuka pas jeda fav, batal sell")
             else
-            equipTeam("Sell Tim")
-            -- v18.8: tunggu SEMUA tim Sell masuk garden + sesuai tim, baru jual
-            local okSell = waitTeamInGarden("Sell Tim", 15)
+            -- v34.89: retry equip Sell Tim sampai berhasil (max 3x, 5s jeda)
+            -- jangan langsung batal + balik loop — kalau backpack penuh, harus sell
+            local okSell = false
+            for _sellTry = 1, 3 do
+                if not globalRunning then break end
+                Auto.currentTeam = nil  -- reset biar equipTeam fresh
+                equipTeam("Sell Tim")
+                -- v18.8: tunggu tim Sell masuk garden
+                okSell = waitTeamInGarden("Sell Tim", 15)
+                if okSell then break end
+                print("[HactTelur] tim Sell belum lengkap (try ".._sellTry.."/3), clear + retry...")
+                task.spawn(function() pcall(clearGarden) end)
+                waitInterrupt(2)
+            end
             local sd = config.hatchDelay or 6
-            -- v23.0: tim Sell HARUS lengkap. kalau gak lengkap (mis. gift nyempil, cuma 5 masuk) -> BATAL jual.
+            -- v23.0: tim Sell HARUS lengkap. kalau gak lengkap setelah 3x retry -> BATAL jual.
             if not okSell then
-                print("[HactTelur] tim Sell GAK LENGKAP ("..countGardenPets().."), BATAL jual — ulang nanti")
+                print("[HactTelur] tim Sell GAK LENGKAP setelah 3x retry, BATAL jual")
                 Auto.currentTeam = nil
                 task.spawn(function() pcall(clearGarden) end)
             else
