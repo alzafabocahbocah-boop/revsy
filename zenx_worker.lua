@@ -10688,25 +10688,34 @@ if PERINTAH == "uld" then
 end
 
 if PERINTAH == "level" then
-    local sub = arg[2] or ""
-    if sub == "15" then
-        print("Jalanin uplevelnew-delta...")
-        os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-delta")
-    elseif sub == "10" then
-        print("Jalanin uplevelnew-arceus...")
-        os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-arceus")
-    else
-        print("Pakai: zenx level 15  (delta)")
-        print("       zenx level 10  (arceus)")
-    end
+    zenx_script_shortcut("level", arg and arg[2] or "")
     return
 end
 
-if PERINTAH == "up3.8kg" then
-    local sub = arg[2] or ""
-    if sub ~= "15" then print("Pakai: zenx up3.8kg 15"); return end
-    print("Jalanin up3.8kg-delta...")
-    os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s up3.8kg-delta")
+-- v9.624: shortcut script lengkap (10=arceus, 15=delta)
+local function zenx_script_shortcut(perintah, sub)
+    local MAP = {
+        ["level"]   = { ["10"]="uplevelnew-arceus", ["15"]="uplevelnew-delta" },
+        ["up3.8kg"] = { ["10"]="up3.8kg-arceus",    ["15"]="up3.8kg-delta"   },
+        ["telur"]   = { ["10"]="hact-arceus",        ["15"]="hact-delta"      },
+        ["up6kg"]   = { ["10"]="up6kg-arceus",       ["15"]="up6kg-delta"     },
+        ["market"]  = { ["10"]="market-arceus",      ["15"]="market-delta"    },
+    }
+    local m = MAP[perintah]
+    if not m then return false end
+    local script = m[sub]
+    if not script then
+        print("Pakai: zenx " .. perintah .. " 10  (arceus)")
+        print("       zenx " .. perintah .. " 15  (delta)")
+        return true
+    end
+    print("Jalanin " .. script .. "...")
+    os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s " .. script)
+    return true
+end
+
+if PERINTAH == "up3.8kg" or PERINTAH == "telur" or PERINTAH == "up6kg" or PERINTAH == "market" then
+    zenx_script_shortcut(PERINTAH, arg and arg[2] or "")
     return
 end
 
@@ -13887,7 +13896,7 @@ do
         "catat","uji","ukur","cari","pantau","rekam","dpi","grid","grafis","buka",
         "tap","lisensi","license","cekplace","getps","rejoin-log","denyut","logcat",
         "logcat-live","intip","key","status","cek","hapus","download","dl","apk",
-        "uld","level","up3.8kg","arceus","lite","delta","update","refresh","tembak",
+        "uld","level","up3.8kg","telur","up6kg","arceus","lite","delta","update","refresh","tembak",
         "loginsemua","stop","pasang","riwayat","scan","login","ganti","pantaucookie",
         "catatakun","cekcookie","cookie","captcha","ceklayar","cekcaptcha","verif",
         "cekverif","panel","script","sc","layar","full","fullscreen","mercy",
