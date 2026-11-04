@@ -10693,9 +10693,12 @@ if PERINTAH == "delta" then
     for _, n in ipairs(nums) do
         local url = nil
         if n == 1 then
-            -- Slot 1: format "Delta-x.x.x-0N.apk" (huruf besar D, nomor 2 digit di akhir, berapapun)
-            -- contoh: Delta-2.743.1136-02.apk
-            url = rel:match('"(https://[^"]*Delta%-[%d%.]+%-%d%d%.apk)"')
+            -- Slot 1: coba "Delta-x.x.x.apk" (tanpa suffix nomor) — format terbaru
+            url = rel:match('"(https://[^"]*Delta%-[%d%.]+%.apk)"')
+            if not url then
+                -- fallback: "Delta-x.x.x-0N.apk" (format lama dengan suffix nomor)
+                url = rel:match('"(https://[^"]*Delta%-[%d%.]+%-%d%d%.apk)"')
+            end
         end
         -- Slot 2+: format "delta.N_x.x.x_clone.apk"
         if not url then
