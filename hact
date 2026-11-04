@@ -5942,14 +5942,24 @@ local function automationLoop()
                         task.wait(0.2)
                     end end  -- v28.2: interruptible
                     if not globalRunning then equipTeam("Reduce Tim") break end
-                    print("[HactTelur] hatch all!")
-                    _G.__hactDbgExtra = "🐣 hatch all!"
+                    -- v35.10: cek ulang egg ready sebelum hatch (bisa berubah saat Koi masuk)
+                    local _, _tot1, _rdy1 = allEggsReady()
+                    if _rdy1 == 0 then
+                        print("[HactTelur] cek ulang: egg 0 ready, batal hatch all, balik reduce")
+                        _G.__hactDbgExtra = ("↩ egg belum ready, balik reduce")
+                        Auto.eggPhase = "reduce"
+                        Auto.currentTeam = nil
+                        equipTeam("Reduce Tim")
+                    else
+                    print("[HactTelur] hatch all! ready="..tostring(_rdy1).."/"..tostring(_tot1))
+                    _G.__hactDbgExtra = ("🐣 hatch all! %d/%d"):format(_rdy1, _tot1)
                     hatchAllEggs()
                     waitInterrupt(2)  -- v33.95: interruptible
                     equipTeam("Reduce Tim")
                     -- v25.3: balik pegang EGG tool (pet baru hasil hatch sering auto-equip ke tangan).
                     -- biar lanjut place egg, bukan nyangkut megang pet.
                     pcall(holdEggTool)
+                    end  -- v35.10: tutup cek ulang egg ready
                 end
                 end  -- v33.75: tutup else (jeda trade guard)
             elseif ready > 0 and ready >= math.floor(total * 0.6) then
@@ -6026,17 +6036,28 @@ local function automationLoop()
                     _G.__hactDbgExtra = ("❌ Koi gak lengkap, tunggu coba lagi sisa %d egg"):format(total-ready)
                     waitInterrupt(3)  -- v33.95: interruptible (kasih waktu egg sisa ready)
                 else
+                    -- v35.10: cek ulang egg ready sebelum hatch (bisa berubah sejak cek awal)
+                    local _, _tot2, _rdy2 = allEggsReady()
+                    if _rdy2 == 0 then
+                        -- egg belum ready sama sekali -> batal, balik reduce
+                        print("[HactTelur] cek ulang: egg 0 ready, batal hatch sebagian, balik reduce")
+                        _G.__hactDbgExtra = ("↩ egg belum ready, balik reduce")
+                        Auto.eggPhase = "reduce"
+                        Auto.currentTeam = nil
+                        equipTeam("Reduce Tim")
+                    else
                     print("[HactTelur] Koi LENGKAP ("..nKoi2.."), tunggu 6 detik...")
                     do local t0=tick() while globalRunning and (tick()-t0)<6 do
-                        _G.__hactDbgExtra = ("⏳ hatch sebagian: tunggu %ds"):format(math.ceil(6-(tick()-t0)))
+                        _G.__hactDbgExtra = ("⏳ hatch sebagian: tunggu %ds | egg ready %d/%d"):format(math.ceil(6-(tick()-t0)), _rdy2, _tot2)
                         task.wait(0.2)
                     end end  -- v28.2: interruptible
                     if not globalRunning then equipTeam("Reduce Tim") break end
-                    _G.__hactDbgExtra = ("🐣 hatch sebagian %d/%d"):format(ready, total)
+                    _G.__hactDbgExtra = ("🐣 hatch sebagian %d/%d"):format(_rdy2, _tot2)
                     hatchAllEggs()
                     waitInterrupt(2)  -- v33.95: interruptible
                     equipTeam("Reduce Tim")
                     pcall(holdEggTool)  -- v25.3: balik pegang egg
+                    end  -- v35.10: tutup cek ulang egg ready
                 end
                 end  -- v33.77: tutup else (jeda trade guard 60%)
             else
