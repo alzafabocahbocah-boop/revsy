@@ -1520,7 +1520,8 @@ task.spawn(function()
             -- v34.63: update egg debug panel kanan tengah
             if _G.__hactEggDbgLbl then
                 local extra = _G.__hactDbgExtra or "idle"
-                local phase = Auto and Auto.eggPhase or "?"
+                local _Auto = _G.__hactAuto
+                local phase = _Auto and _Auto.eggPhase or "?"
                 local gr2 = tostring(_G.__hactGlobalRunning)
                 local t = os.date("%H:%M:%S")
                 local line = ("[%s] fase=%s\n%s"):format(t, phase, extra)
@@ -4484,6 +4485,30 @@ local function waitTeamInGarden(teamName, timeout)
     return false  -- timeout: tim belum lengkap
 end
 
+-- v34.72: hitung pet dari tim tertentu yg ada di garden (uuid harus match dengan teamData[teamName].selected)
+-- lebih akurat dari countGardenPets() yg hitung semua pet termasuk Reduce Tim yg belum keluar
+local function countTeamInGarden(teamName)
+    local td = teamData[teamName]
+    if not td or not td.selected then return 0 end
+    local want = {}
+    for u in pairs(td.selected) do want[tostring(u):gsub("[{}]","")] = true end
+    local n = 0
+    pcall(function()
+        local pp = Workspace:FindFirstChild("PetsPhysical")
+        if not pp then return end
+        local myId = tostring(player.UserId)
+        local myFolder = pp:FindFirstChild(myId) or pp:FindFirstChild(player.Name)
+        if not myFolder then return end
+        for _, m in ipairs(myFolder:GetChildren()) do
+            if m:IsA("Model") and m.Name:sub(1,1)=="{" then
+                local clean = m.Name:gsub("[{}]","")
+                if want[clean] then n = n + 1 end
+            end
+        end
+    end)
+    return n
+end
+
 -- hitung pet yg ada di garden (PetsPhysical) MILIK KITA — buat cek tim hatch udah full
 local function countGardenPets()
     local n = 0
@@ -5689,9 +5714,9 @@ local function automationLoop()
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
                 local ok = waitTeamInGarden("Hatch Tim", 15)
                 local hd = config.hatchDelay or 3
-                -- v34.63: kalau waitTeamInGarden timeout tapi Koi >= 5 di garden, tetap hatch
-                -- (dulu langsung batal padahal Koi udah cukup, cuma 1 yang lambat masuk)
-                local nKoi = countGardenPets()
+                -- v34.72: pakai countTeamInGarden (hitung Koi saja, bukan semua pet termasuk Bronto)
+                -- countGardenPets() hitung semua pet milik kita -> Bronto Reduce Tim yg belum keluar ikut dihitung
+                local nKoi = countTeamInGarden("Hatch Tim")
                 if not ok and nKoi >= 5 then
                     print("[HactTelur] waitTeamInGarden timeout tapi Koi "..nKoi.." >= 5, lanjut hatch")
                     _G.__hactDbgExtra = ("⚠ timeout tapi Koi %d>=5, hatch"):format(nKoi)
@@ -5712,9 +5737,10 @@ local function automationLoop()
                     _G.__hactDbgExtra = ("❌ Koi gak lengkap ("..nKoi.."), tunggu coba lagi...")
                     waitInterrupt(3)  -- v33.95: interruptible
                 else
-                    print("[HactTelur] tim Koi LENGKAP ("..countGardenPets().."), tunggu "..hd.." detik...")
+                    local nKoiNow = countTeamInGarden("Hatch Tim")
+                    print("[HactTelur] tim Koi LENGKAP ("..nKoiNow.."), tunggu "..hd.." detik...")
                     do local t0=tick() while globalRunning and (tick()-t0)<hd do
-                        _G.__hactDbgExtra = ("⏳ hatch: tunggu %ds | Koi %d masuk"):format(math.ceil(hd-(tick()-t0)), countGardenPets())
+                        _G.__hactDbgExtra = ("⏳ hatch: tunggu %ds | Koi %d masuk"):format(math.ceil(hd-(tick()-t0)), countTeamInGarden("Hatch Tim"))
                         task.wait(0.2)
                     end end  -- v28.2: interruptible
                     if not globalRunning then equipTeam("Reduce Tim") break end
@@ -5745,8 +5771,8 @@ local function automationLoop()
                 waitInterrupt(3)  -- v33.95: interruptible (kasih waktu pet Reduce keluar garden)
                 if not globalRunning then equipTeam("Reduce Tim") break end
                 local ok = waitTeamInGarden("Hatch Tim", 12)
-                -- v34.63: kalau timeout tapi Koi >= 5 di garden, tetap hatch
-                local nKoi2 = countGardenPets()
+                -- v34.72: pakai countTeamInGarden (hitung Koi saja, bukan semua pet termasuk Bronto)
+                local nKoi2 = countTeamInGarden("Hatch Tim")
                 if not ok and nKoi2 >= 5 then
                     print("[HactTelur] waitTeamInGarden timeout tapi Koi "..nKoi2.." >= 5, lanjut hatch sebagian")
                     _G.__hactDbgExtra = ("⚠ timeout tapi Koi %d>=5, hatch sebagian"):format(nKoi2)
@@ -10357,6 +10383,8 @@ _G.__hactPromptBuy = PromptBuy
 _G.__hactWebhook = Webhook
 _G.__hactMiscToggleRefreshers = miscToggleRefreshers
 _G.__hactFruitData = fruitData
+-- v34.72: expose Auto biar debug panel bisa baca eggPhase
+_G.__hactAuto = Auto
 end __hactMain()  -- v34.63: tutup __hactMain lebih awal, save/load di scope terpisah
 
 -- ============ SAVE / LOAD CONFIG (biar gak pilih ulang pas rejoin) ============
