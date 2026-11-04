@@ -1,4 +1,5 @@
--- uplevelnew v8.471
+-- uplevelnew v8.472
+-- v8.472: debug nama asli model pet — log semua model masuk workspace + scan 3s setelah start
 -- v8.471: debug modelByUuid — log model added + count tiap 5s
 -- v8.470: debug healer loop (print skip reason + re-equip uuid)
 -- v8.468: fix enforceEquip crash (_bahanUuids nil guard)
@@ -67,7 +68,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.471")
+print("[UPL] VERSION: v8.472")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -174,7 +175,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.471"
+local VERSION = "v8.472"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2921,11 +2922,36 @@ local function regModel(m) if isPetModel(m) then modelByUuid[m.Name]=m end end
 pcall(function() for _,d in ipairs(workspace:GetDescendants()) do regModel(d) end end)
 workspace.DescendantAdded:Connect(function(d) task.defer(function()
     pcall(regModel,d)
-    -- debug: log model baru yang masuk workspace dengan nama {
-    if d:IsA("Model") and tostring(d.Name):sub(1,1) == "{" then
-        print("[UPLVL-DBG] model added:", d.Name)
+    -- debug: log semua model yang masuk workspace (bukan hanya yg lolos isPetModel)
+    if d:IsA("Model") then
+        local nm = tostring(d.Name)
+        if nm:sub(1,1) == "{" then
+            print("[UPLVL-DBG] model added (registered):", nm)
+        elseif nm:find("Pet") or nm:find("pet") or nm:find("Equip") then
+            -- mungkin nama model beda format, log buat cek
+            print("[UPLVL-DBG] model added (NOT registered, name='"..nm.."')")
+        end
     end
 end) end)
+-- debug: log SEMUA model di workspace saat startup (cek nama asli pet model)
+task.spawn(function()
+    task.wait(3)  -- tunggu sebentar setelah equip awal
+    local petNames = {}
+    pcall(function()
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d:IsA("Model") then
+                local nm = tostring(d.Name)
+                if nm:sub(1,1) == "{" or nm:find("Pet") or nm:find("pet") then
+                    petNames[nm] = (petNames[nm] or 0) + 1
+                end
+            end
+        end
+    end)
+    print("[UPLVL-DBG] model scan 3s after start:")
+    for nm, cnt in pairs(petNames) do
+        print("  name='"..nm.."' count="..cnt)
+    end
+end)
 -- debug: log count modelByUuid setiap 5s
 task.spawn(function()
     while true do
