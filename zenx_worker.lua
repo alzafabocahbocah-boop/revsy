@@ -10676,6 +10676,41 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
     return
 end
 
+-- v9.600: zenx arceus -- download & install Roblox.Arceus.X.NEO (ori + clone)
+if PERINTAH == "arceus" then
+    print("== DOWNLOAD ARCEUS NEO ==")
+    print("ambil daftar rilis GitHub...")
+    local rel = sh_tmo("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null", 30) or ""
+    if rel == "" or not rel:find("assets") then
+        print("GAGAL ambil daftar rilis. Cek koneksi."); return
+    end
+
+    local function dl_install(label, pattern, outApk)
+        local url = rel:match('"(https://[^"]*' .. pattern .. '[^"]*%.apk)"')
+        if not url then
+            print("[" .. label .. "] URL gak ketemu di rilis (skip). Cek nama asset di worker_64.")
+            return
+        end
+        print("[" .. label .. "] download (~144MB, sabar)...")
+        os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 30 '" .. url .. "' -o '" .. outApk .. "' 2>/dev/null")
+        local szRaw = sh("su -c 'stat -c%s \"" .. outApk .. "\" 2>/dev/null' 2>/dev/null") or "0"
+        local sz = tonumber((szRaw:gsub("%s", ""))) or 0
+        if sz < 50000000 then
+            print("[" .. label .. "] download GAGAL/partial (" .. math.floor(sz/1048576) .. "MB) -> SKIP")
+        else
+            print("[" .. label .. "] " .. math.floor(sz/1048576) .. "MB, install...")
+            local r = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -S " .. sz .. "' 2>&1") or ""
+            print("[" .. label .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
+        end
+        sh("rm -f '" .. outApk .. "' 2>/dev/null")
+    end
+
+    dl_install("ori",   "Roblox%.Arceus%.X%.NEO%.[%d%.]+%.apk",        "/sdcard/arceus_ori.apk")
+    dl_install("clone", "Roblox%.Arceus%.X%.NEO%.[%d%.]+_clone%.apk",  "/sdcard/arceus_clone.apk")
+    print("== SELESAI arceus ==")
+    return
+end
+
 if PERINTAH == "delta" then
     local rentang = arg[2] or ""
     local nums = {}
