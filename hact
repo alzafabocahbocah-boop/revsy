@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.11"
+local VERSION = "v35.12"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5910,15 +5910,8 @@ local function automationLoop()
                         task.wait(0.5)
                     end
                 end
-                -- v35.11: egg abort -> balik reduce langsung
-                if _eggAbort then
-                    Auto.eggPhase = "reduce"
-                    Auto.currentTeam = nil
-                    equipTeam("Reduce Tim")
-                    task.wait(0.5)
-                    -- lanjut ke iterasi berikutnya (lewati sisa hatch logic)
-                    goto hactTelurContinue
-                end
+                -- v35.12: egg abort -> balik reduce, skip sisa hatch logic pakai flag
+                if not _eggAbort then
                 if not globalRunning then equipTeam("Reduce Tim") break end
                 -- v34.77: unequip pet yang bukan Hatch Tim (mimic, sisa Reduce, dll)
                 if config.autoUnequipWrong and teamData["Hatch Tim"] then
@@ -5958,7 +5951,7 @@ local function automationLoop()
                 else
                     local nKoiNow = countTeamInGarden("Hatch Tim")
                     print("[HactTelur] tim Koi LENGKAP ("..nKoiNow.."), tunggu "..hd.." detik...")
-                    -- v35.11: cek egg ready tiap tick countdown — kalau ada egg CD tiba-tiba, abort ke reduce
+                    -- v35.12: cek egg ready tiap tick countdown — kalau ada egg CD tiba-tiba, abort ke reduce
                     local _hdAbort = false
                     do local t0=tick() while globalRunning and (tick()-t0)<hd do
                         local _arHd, _totHd, _rdyHd = allEggsReady()
@@ -5970,13 +5963,13 @@ local function automationLoop()
                         _G.__hactDbgExtra = ("⏳ hatch: tunggu %ds | Koi %d | egg %d/%d"):format(math.ceil(hd-(tick()-t0)), countTeamInGarden("Hatch Tim"), _rdyHd, _totHd)
                         task.wait(0.2)
                     end end  -- v28.2: interruptible
-                    if _hdAbort or not globalRunning then
+                    if _hdAbort then
                         Auto.eggPhase = "reduce"
                         Auto.currentTeam = nil
                         equipTeam("Reduce Tim")
-                        if not globalRunning then break end
-                        goto hactTelurContinue
-                    end
+                    elseif not globalRunning then
+                        equipTeam("Reduce Tim") break
+                    else
                     -- v35.10: cek ulang egg ready sebelum hatch (bisa berubah saat Koi masuk)
                     local _, _tot1, _rdy1 = allEggsReady()
                     if _rdy1 == 0 then
@@ -5995,7 +5988,14 @@ local function automationLoop()
                     -- biar lanjut place egg, bukan nyangkut megang pet.
                     pcall(holdEggTool)
                     end  -- v35.10: tutup cek ulang egg ready
+                    end  -- v35.12: tutup else (bukan _hdAbort)
                 end
+                else  -- v35.12: _eggAbort = true
+                    Auto.eggPhase = "reduce"
+                    Auto.currentTeam = nil
+                    equipTeam("Reduce Tim")
+                    task.wait(0.5)
+                end  -- v35.12: tutup if not _eggAbort
                 end  -- v33.75: tutup else (jeda trade guard)
             else
                 -- masih banyak CD -> Reduce, tunggu
@@ -6021,7 +6021,6 @@ local function automationLoop()
             end
         end
         task.wait(0.5)
-        ::hactTelurContinue::  -- v35.11: goto target untuk abort egg-CD saat fase hatch
         end  -- tutup else (pause terima pet)
     end
     print("[HactTelur] automation loop STOP")
