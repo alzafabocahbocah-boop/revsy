@@ -4,7 +4,7 @@
 -- ============================================================
 local URL     = "https://dry-glitter-63e4.petagee5.workers.dev"
 local KUNCI   = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
-local REPO    = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/"
+local REPO    = "https://raw.githack.com/alzafabocahbocah-boop/ronihub/main/"
 local DEFAULT = "hact"   -- kalau akun belum di-assign / backend gagal -> pakai ini
 
 local Players = game:GetService("Players")
@@ -52,7 +52,7 @@ local IJO  = Color3.fromRGB(120, 255, 140)
 local MERAH= Color3.fromRGB(255, 110, 110)
 
 -- fetch + jalanin script
-local ok, src = pcall(function() return game:HttpGet(REPO .. sc .. "?cb=" .. os.time()) end)
+local ok, src = pcall(function() return game:HttpGet(REPO .. sc) end)
 if ok and src and #src > 100 then
     -- ekstrak versi dari baris pertama src (cari "vXX.XX")
     local ver = src:match('VERSION%s*=%s*"([^"]+)"') or src:match('"(v%d+%.%d+)"') or "?"

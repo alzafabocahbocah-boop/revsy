@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.16"
+local VERSION = "v35.17"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5996,17 +5996,25 @@ local function automationLoop()
                     waitInterrupt(2)
                     if not globalRunning then equipTeam("Reduce Tim") break end
                 end
-                -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
-                _G.__hactDbgExtra = ("⏳ hatch: tunggu Koi stabil (8s)...")
-                local ok = waitTeamInGarden("Hatch Tim", 8)
+                -- v35.16: kalau _koiReady (5 Koi confirmed masuk via _scanHatchTim), skip waitTeamInGarden
+                -- waitTeamInGarden tunggu semua 8 pet (termasuk Bronto) -> selalu timeout 8s, buang waktu
                 local hd = config.hatchDelay or 3
-                -- v34.72: pakai countTeamInGarden (hitung Koi saja, bukan semua pet termasuk Bronto)
-                -- countGardenPets() hitung semua pet milik kita -> Bronto Reduce Tim yg belum keluar ikut dihitung
                 local nKoi = countTeamInGarden("Hatch Tim")
-                if not ok and nKoi >= 5 then
-                    print("[HactTelur] waitTeamInGarden timeout tapi Koi "..nKoi.." >= 5, lanjut hatch")
-                    _G.__hactDbgExtra = ("⚠ timeout tapi Koi %d>=5, hatch"):format(nKoi)
+                local ok
+                if _koiReady then
                     ok = true
+                    print("[HactTelur] 5 Koi confirmed masuk ("..nKoi.." di garden), skip waitTeamInGarden")
+                    _G.__hactDbgExtra = ("✅ Koi %d masuk, lanjut hatch"):format(nKoi)
+                else
+                    -- fallback: Koi belum ke-detect lewat _scanHatchTim, pakai countTeamInGarden
+                    _G.__hactDbgExtra = ("⏳ hatch: tunggu Koi stabil (8s)...")
+                    ok = waitTeamInGarden("Hatch Tim", 8)
+                    nKoi = countTeamInGarden("Hatch Tim")
+                    if not ok and nKoi >= 5 then
+                        print("[HactTelur] waitTeamInGarden timeout tapi Koi "..nKoi.." >= 5, lanjut hatch")
+                        _G.__hactDbgExtra = ("⚠ timeout tapi Koi %d>=5, hatch"):format(nKoi)
+                        ok = true
+                    end
                 end
                 -- v23.0: tim Koi HARUS lengkap. kalau gak lengkap (mis gift nyempil, cuma 5 masuk) -> BATAL hatch.
                 -- v33.72: min 5 koi di garden, kalau kurang skip hatch
