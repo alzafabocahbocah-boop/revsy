@@ -10680,9 +10680,22 @@ end
 -- v9.617: fix zenx arceus -- hapus $ anchor (bukan valid Lua pattern), pakai gmatch candidate loop biar slot1 gak match _clone
 -- v9.618: zenx arceus pm install pakai -d (allow downgrade)
 -- v9.619: zenx uld -- shortcut jalanin uplevelnew-delta langsung
+-- v9.620: zenx level <delta> / zenx up3.8kg <delta> -- jalanin script dengan nilai delta
 if PERINTAH == "uld" then
     print("Jalanin uplevelnew-delta...")
     os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-delta")
+    return
+end
+
+if PERINTAH == "level" then
+    print("Jalanin uplevelnew-delta...")
+    os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-delta")
+    return
+end
+
+if PERINTAH == "up3.8kg" then
+    print("Jalanin up3.8kg-delta...")
+    os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s up3.8kg-delta")
     return
 end
 
