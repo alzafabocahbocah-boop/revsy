@@ -1,4 +1,5 @@
--- uplevelnew v8.462
+-- uplevelnew v8.463
+-- v8.463: fix getMtsPets crash (sesiPool nil guard) + debug NMPoller log attrs
 -- v8.462: debug log attribute buah buat cek kenapa nightmare gak ke-detect
 -- v8.461: startup 10s tap kanan atas layar (lewatin loading screen)
 -- v8.460: sesi 2 nm < 200 masuk cadangan 2 (bukan langsung sesi 1 — fix bolak balik)
@@ -3666,6 +3667,7 @@ end
 -- Main loop baca _nmCached, gak perlu scan ulang tiap iterasi
 local _nmCached = 0
 local _nmCachedAt = 0
+local _nmPollerDebugDone = false
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -3674,13 +3676,30 @@ task.spawn(function()
             local imp = farm:FindFirstChild("Important"); if not imp then return end
             local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
             local count = 0
+            local totalFruit = 0
+            local firstAttrs = nil
             for _, pt in ipairs(plants:GetChildren()) do
                 local fruits = pt:FindFirstChild("Fruits"); if fruits then
                     for _, fruit in ipairs(fruits:GetChildren()) do
+                        totalFruit = totalFruit + 1
+                        if not firstAttrs then
+                            firstAttrs = {}
+                            for k, v in pairs(fruit:GetAttributes()) do
+                                table.insert(firstAttrs, k.."="..tostring(v))
+                            end
+                        end
                         if fruit:GetAttribute("Nightmare") == true then
                             count = count + 1
                         end
                     end
+                end
+            end
+            -- debug sekali: log attribute buah + hasil count
+            if not _nmPollerDebugDone and totalFruit > 0 then
+                _nmPollerDebugDone = true
+                addLog("[NMPoller] total="..totalFruit.." nm="..count)
+                if firstAttrs then
+                    addLog("[NMPoller] attrs: "..table.concat(firstAttrs, ", "))
                 end
             end
             _nmCached = count
@@ -7520,10 +7539,14 @@ local function getMtsPets()
     for uuid in pairs(_G.ZenxSupportKunci or {}) do _prot(uuid) end
     for uuid in pairs(_G.__ZenxSupProtect or {}) do _prot(uuid) end
     -- v8.438: tambah sesiPool (tim auto lvl) ke protected
-    for _, pool in pairs(sesiPool) do
-        for _, slots in pairs(pool) do
-            for _, entry in pairs(slots) do
-                if entry and entry.uuid then _prot(entry.uuid) end
+    for _, pool in pairs(sesiPool or _G.UPL_POOL or {}) do
+        if type(pool) == "table" then
+            for _, slots in pairs(pool) do
+                if type(slots) == "table" then
+                    for _, entry in pairs(slots) do
+                        if entry and entry.uuid then _prot(entry.uuid) end
+                    end
+                end
             end
         end
     end
