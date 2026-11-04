@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.78"
+local VERSION = "v34.79"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5740,12 +5740,32 @@ local function automationLoop()
                 equipTeam("Hatch Tim")
                 -- v34.78: polling cepat — cek Koi tiap 0.5s, kalau udah >=5 langsung lanjut
                 -- tiap 5s (kalau masih kurang): equip ulang + unequip pet salah
+                -- v34.79: debug log kuning kasih tau jumlah + uuid tiap Koi yang udah masuk
+                local function _scanHatchTim()
+                    local td = teamData["Hatch Tim"]
+                    if not td or not td.selected then return 0, "" end
+                    local want = {}
+                    for u in pairs(td.selected) do want[tostring(u):gsub("[{}]","")]=true end
+                    local myName = player.Name; local myId = tostring(player.UserId)
+                    local function ownMe(d) local c=d for _=1,6 do if not c or c==Workspace then break end
+                        local o=c:GetAttribute("owner") or c:GetAttribute("OWNER") or c:GetAttribute("Owner") or c:GetAttribute("UserId")
+                        if o~=nil then return tostring(o)==myName or tostring(o)==myId end c=c.Parent end return nil end
+                    local n=0; local uuids={}
+                    pcall(function() local pp=Workspace:FindFirstChild("PetsPhysical"); if not pp then return end
+                        local seen={} for _,m in ipairs(pp:GetDescendants()) do if m:IsA("Model") then
+                            local uuid=m:GetAttribute("PET_UUID"); local raw=uuid and tostring(uuid) or m.Name
+                            local clean=raw:gsub("[{}]","")
+                            if want[clean] and not seen[clean] and ownMe(m)~=false then
+                                seen[clean]=true; n=n+1; table.insert(uuids, clean:sub(1,8)) end end end end)
+                    return n, table.concat(uuids, ",")
+                end
                 do local t0=tick() local lastRetry=t0
                     while globalRunning and (tick()-t0)<15 do
-                        if countTeamInGarden("Hatch Tim") >= 5 then break end
+                        local nIn, uStr = _scanHatchTim()
+                        _G.__hactDbgExtra = ("🐟 Koi masuk: %d/%d [%s]"):format(nIn, _htN, uStr)
+                        if nIn >= 5 then break end
                         if (tick()-lastRetry) >= 5 then
                             -- v34.78: masih kurang -> equip ulang + keluarin yang bukan Hatch Tim
-                            _G.__hactDbgExtra = ("🔄 Koi masih kurang, equip ulang + unequip salah..."):format()
                             Auto.currentTeam = nil
                             equipTeam("Hatch Tim")
                             if config.autoUnequipWrong and teamData["Hatch Tim"] then
@@ -5761,6 +5781,9 @@ local function automationLoop()
                 if config.autoUnequipWrong and teamData["Hatch Tim"] then
                     unequipWrongGardenPets(teamData["Hatch Tim"].selected)
                 end
+                -- v34.79: yakin Koi >= 5, tunggu 2s stabilisasi sebelum hatch
+                waitInterrupt(2)
+                if not globalRunning then equipTeam("Reduce Tim") break end
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
                 local ok = waitTeamInGarden("Hatch Tim", 8)
                 local hd = config.hatchDelay or 3
@@ -5825,12 +5848,16 @@ local function automationLoop()
                 equipTeam("Hatch Tim")
                 -- v34.78: polling cepat — cek Koi tiap 0.5s, kalau udah >=5 langsung lanjut
                 -- tiap 5s (kalau masih kurang): equip ulang + unequip pet salah
+                -- v34.79: debug log kuning kasih tau jumlah + uuid tiap Koi yang udah masuk
+                local _htN2 = 0; if teamData["Hatch Tim"] and teamData["Hatch Tim"].selected then
+                    for _ in pairs(teamData["Hatch Tim"].selected) do _htN2=_htN2+1 end end
                 do local t0=tick() local lastRetry=t0
                     while globalRunning and (tick()-t0)<15 do
-                        if countTeamInGarden("Hatch Tim") >= 5 then break end
+                        local nIn2, uStr2 = _scanHatchTim()
+                        _G.__hactDbgExtra = ("🐟 Koi masuk: %d/%d [%s]"):format(nIn2, _htN2, uStr2)
+                        if nIn2 >= 5 then break end
                         if (tick()-lastRetry) >= 5 then
                             -- v34.78: masih kurang -> equip ulang + keluarin yang bukan Hatch Tim
-                            _G.__hactDbgExtra = ("🔄 Koi masih kurang, equip ulang + unequip salah..."):format()
                             Auto.currentTeam = nil
                             equipTeam("Hatch Tim")
                             if config.autoUnequipWrong and teamData["Hatch Tim"] then
@@ -5846,6 +5873,9 @@ local function automationLoop()
                 if config.autoUnequipWrong and teamData["Hatch Tim"] then
                     unequipWrongGardenPets(teamData["Hatch Tim"].selected)
                 end
+                -- v34.79: yakin Koi >= 5, tunggu 2s stabilisasi sebelum hatch
+                waitInterrupt(2)
+                if not globalRunning then equipTeam("Reduce Tim") break end
                 local ok = waitTeamInGarden("Hatch Tim", 8)
                 -- v34.72: pakai countTeamInGarden (hitung Koi saja, bukan semua pet termasuk Bronto)
                 local nKoi2 = countTeamInGarden("Hatch Tim")
