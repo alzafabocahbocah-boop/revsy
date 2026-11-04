@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.10"
+local VERSION = "v35.11"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5827,12 +5827,13 @@ local function automationLoop()
             -- 2) slot penuh ATAU egg habis tapi ada di garden: cek ready
             -- v35.09: _scanHatchTim diangkat ke sini (shared antara hatch-all & hatch sebagian)
             -- sebelumnya local function di dalam blok allReady -> nil di blok 60% -> loop hang
+            -- v35.11: filter Koi only — nIn hanya hitung model yang namanya mengandung "Koi"
+            -- nWant = 5 (target Koi), bukan total Hatch Tim (yang include Bronto)
             local function _scanHatchTim()
                 local td = teamData["Hatch Tim"]
-                if not td or not td.selected then return 0, 0, "" end
+                if not td or not td.selected then return 0, 5, "" end
                 local want = {}
-                local total = 0
-                for u in pairs(td.selected) do want[tostring(u):gsub("[{}]","")]=true; total=total+1 end
+                for u in pairs(td.selected) do want[tostring(u):gsub("[{}]","")]=true end
                 local myName = player.Name; local myId = tostring(player.UserId)
                 local function ownMe(d) local c=d for _=1,6 do if not c or c==Workspace then break end
                     local o=c:GetAttribute("owner") or c:GetAttribute("OWNER") or c:GetAttribute("Owner") or c:GetAttribute("UserId")
@@ -5842,9 +5843,11 @@ local function automationLoop()
                     local seen={} for _,m in ipairs(pp:GetDescendants()) do if m:IsA("Model") then
                         local uuid=m:GetAttribute("PET_UUID"); local raw=uuid and tostring(uuid) or m.Name
                         local clean=raw:gsub("[{}]","")
-                        if want[clean] and not seen[clean] and ownMe(m)~=false then
+                        -- v35.11: hanya hitung Koi (bukan Bronto dll), cek nama model
+                        local isKoi = m.Name:lower():find("koi") ~= nil
+                        if want[clean] and isKoi and not seen[clean] and ownMe(m)~=false then
                             seen[clean]=true; n=n+1; table.insert(uuids, clean:sub(1,8)) end end end end)
-                return n, total, table.concat(uuids, ",")
+                return n, 5, table.concat(uuids, ",")  -- nWant selalu 5 (target Koi)
             end
             local allReady, total, ready = allEggsReady()
             if isPausedForGift() then
@@ -5880,11 +5883,20 @@ local function automationLoop()
                 -- v34.78: polling cepat — cek Koi tiap 0.5s, kalau udah >=5 langsung lanjut
                 -- tiap 5s (kalau masih kurang): equip ulang + unequip pet salah
                 -- v35.09: _scanHatchTim sudah didefinisikan di atas (shared dengan hatch sebagian)
+                -- v35.11: cek egg ready tiap iterasi — kalau ada egg CD tiba-tiba, abort ke reduce
                 local _koiReady = false
+                local _eggAbort = false
                 do local t0=tick() local lastRetry=t0
                     while globalRunning and (tick()-t0)<15 do
+                        -- v35.11: cek egg masih ready semua, kalau ada yang CD balik reduce
+                        local _ar2, _tot2, _rdy2 = allEggsReady()
+                        if not _ar2 then
+                            print("[HactTelur] egg tiba-tiba CD saat tunggu Koi masuk (ready="..tostring(_rdy2).."/"..tostring(_tot2).."), abort ke reduce")
+                            _G.__hactDbgExtra = ("↩ egg CD saat Koi masuk %d/%d, balik reduce"):format(_rdy2, _tot2)
+                            _eggAbort = true; break
+                        end
                         local nIn, nWant, uStr = _scanHatchTim()
-                        _G.__hactDbgExtra = ("🐟 Koi masuk: %d/%d [%s]"):format(nIn, nWant, uStr)
+                        _G.__hactDbgExtra = ("🐟 Koi masuk: %d/%d egg:%d/%d [%s]"):format(nIn, nWant, _rdy2, _tot2, uStr)
                         if nIn >= 5 then _koiReady=true; break end
                         if (tick()-lastRetry) >= 5 then
                             -- v34.78: masih kurang -> equip ulang + keluarin yang bukan Hatch Tim
@@ -5897,6 +5909,15 @@ local function automationLoop()
                         end
                         task.wait(0.5)
                     end
+                end
+                -- v35.11: egg abort -> balik reduce langsung
+                if _eggAbort then
+                    Auto.eggPhase = "reduce"
+                    Auto.currentTeam = nil
+                    equipTeam("Reduce Tim")
+                    task.wait(0.5)
+                    -- lanjut ke iterasi berikutnya (lewati sisa hatch logic)
+                    goto hactTelurContinue
                 end
                 if not globalRunning then equipTeam("Reduce Tim") break end
                 -- v34.77: unequip pet yang bukan Hatch Tim (mimic, sisa Reduce, dll)
@@ -5937,11 +5958,25 @@ local function automationLoop()
                 else
                     local nKoiNow = countTeamInGarden("Hatch Tim")
                     print("[HactTelur] tim Koi LENGKAP ("..nKoiNow.."), tunggu "..hd.." detik...")
+                    -- v35.11: cek egg ready tiap tick countdown — kalau ada egg CD tiba-tiba, abort ke reduce
+                    local _hdAbort = false
                     do local t0=tick() while globalRunning and (tick()-t0)<hd do
-                        _G.__hactDbgExtra = ("⏳ hatch: tunggu %ds | Koi %d masuk"):format(math.ceil(hd-(tick()-t0)), countTeamInGarden("Hatch Tim"))
+                        local _arHd, _totHd, _rdyHd = allEggsReady()
+                        if not _arHd then
+                            print("[HactTelur] egg tiba-tiba CD saat hatchDelay (ready="..tostring(_rdyHd).."/"..tostring(_totHd).."), abort ke reduce")
+                            _G.__hactDbgExtra = ("↩ egg CD saat delay %d/%d, balik reduce"):format(_rdyHd, _totHd)
+                            _hdAbort = true; break
+                        end
+                        _G.__hactDbgExtra = ("⏳ hatch: tunggu %ds | Koi %d | egg %d/%d"):format(math.ceil(hd-(tick()-t0)), countTeamInGarden("Hatch Tim"), _rdyHd, _totHd)
                         task.wait(0.2)
                     end end  -- v28.2: interruptible
-                    if not globalRunning then equipTeam("Reduce Tim") break end
+                    if _hdAbort or not globalRunning then
+                        Auto.eggPhase = "reduce"
+                        Auto.currentTeam = nil
+                        equipTeam("Reduce Tim")
+                        if not globalRunning then break end
+                        goto hactTelurContinue
+                    end
                     -- v35.10: cek ulang egg ready sebelum hatch (bisa berubah saat Koi masuk)
                     local _, _tot1, _rdy1 = allEggsReady()
                     if _rdy1 == 0 then
@@ -5986,6 +6021,7 @@ local function automationLoop()
             end
         end
         task.wait(0.5)
+        ::hactTelurContinue::  -- v35.11: goto target untuk abort egg-CD saat fase hatch
         end  -- tutup else (pause terima pet)
     end
     print("[HactTelur] automation loop STOP")
