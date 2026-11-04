@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.03"
+local VERSION = "v35.04"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -3758,9 +3758,10 @@ do
                         local ct = countTotalPets()
                         if ct and ct > 0 then curTotal = ct; _ctSrc = "RC" end
                     end)
-                    -- v35.02: debug sumber di label kanan tengah kalau idle
+                    -- v35.04: debug sumber + RC error di label kanan tengah kalau idle
                     if not globalRunning then
-                        _G.__hactDbgExtra = ("🔢 total: %d [src=%s] BP=%d"):format(curTotal, _ctSrc, total)
+                        local rcDbg = _G.__hactRcDbg or "?"
+                        _G.__hactDbgExtra = ("🔢 total: %d [src=%s] rc=%s BP=%d"):format(curTotal, _ctSrc, rcDbg, total)
                     end
                     local maxTotal = nil
                     -- 1) dari _G.HactTelurGetMaxPets (return number atau table {maxPets=n})
@@ -4882,25 +4883,32 @@ local function countTotalPets()
         end)
     end
     local rcTotal = nil
-    pcall(function()
-        if _rcInst then
+    local _rcDbg = "?"
+    if not _rcInst then
+        _rcDbg = "noInst"
+    else
+        local ok, err = pcall(function()
             local data = _rcInst:GetData(player.Name)
-            if type(data) ~= "table" then return end
+            if type(data) ~= "table" then _rcDbg = "data="..type(data); return end
             local tbl = rawget(data, "Table")
-            if type(tbl) ~= "table" then return end
+            if type(tbl) ~= "table" then _rcDbg = "tbl="..type(tbl); return end
             local ppd = rawget(tbl, "PlayerPetData")
-            if type(ppd) ~= "table" then return end
+            if type(ppd) ~= "table" then _rcDbg = "ppd="..type(ppd); return end
             local pd = rawget(ppd, player.Name)
-            if type(pd) ~= "table" then return end
+            if type(pd) ~= "table" then _rcDbg = "pd="..type(pd); return end
             local pi = rawget(pd, "PetInventory")
-            if type(pi) ~= "table" then return end
+            if type(pi) ~= "table" then _rcDbg = "pi="..type(pi); return end
             local dat = rawget(pi, "Data")
-            if type(dat) ~= "table" then return end
+            if type(dat) ~= "table" then _rcDbg = "dat="..type(dat); return end
             local cnt = 0
             for _ in pairs(dat) do cnt = cnt + 1 end
-            if cnt > 0 then rcTotal = cnt end
-        end
-    end)
+            if cnt > 0 then rcTotal = cnt; _rcDbg = "ok="..cnt
+            else _rcDbg = "cnt=0" end
+        end)
+        if not ok then _rcDbg = "err="..tostring(err):sub(1,40) end
+    end
+    -- v35.04: expose ke _G buat debug
+    _G.__hactRcDbg = _rcDbg
     -- v34.82: hitung pet di garden (PetsPhysical) milik kita — dedup UUID
     local function countGardenOwned()
         local myName = player.Name; local myId = tostring(player.UserId)
