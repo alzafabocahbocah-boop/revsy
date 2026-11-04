@@ -1515,8 +1515,7 @@ task.spawn(function()
                 local gcLine = ("%s fps=%d next=%ds"):format(_gcDbg, fps, gcNext)
                 local gr = tostring(_G.__hactGlobalRunning)
                 local fase = extra ~= "" and extra or ("loop idle | gr="..gr)
-                local ctig = _G.__hactDbgCTIG or ""
-                _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, gcLine, ctig)
+                _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, gcLine)
             end
             -- v34.63: update egg debug panel kanan tengah
             if _G.__hactEggDbgLbl then
@@ -4489,40 +4488,42 @@ end
 -- v34.72: hitung pet dari tim tertentu yg ada di garden (uuid harus match dengan teamData[teamName].selected)
 -- lebih akurat dari countGardenPets() yg hitung semua pet termasuk Reduce Tim yg belum keluar
 local function countTeamInGarden(teamName)
+    -- v34.76: pakai scan descendant + owner check (sama kayak countGardenPets)
+    -- bukan FindFirstChild(myId) karena PetsPhysical gak punya subfolder per player
     local td = teamData[teamName]
     if not td or not td.selected then return 0 end
     local want = {}
     for u in pairs(td.selected) do want[tostring(u):gsub("[{}]","")] = true end
+    local myName = player.Name
+    local myId = tostring(player.UserId)
+    local function ownerMine(d)
+        local cur = d
+        for _ = 1, 6 do
+            if not cur or cur == Workspace then break end
+            local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+            if o ~= nil then return (tostring(o) == myName or tostring(o) == myId) end
+            cur = cur.Parent
+        end
+        return nil
+    end
     local n = 0
     pcall(function()
         local pp = Workspace:FindFirstChild("PetsPhysical")
-        if not pp then
-            -- v34.76: debug — PetsPhysical gak ketemu
-            _G.__hactDbgCTIG = "pp=NIL"
-            return
-        end
-        local myId = tostring(player.UserId)
-        local myFolder = pp:FindFirstChild(myId) or pp:FindFirstChild(player.Name)
-        if not myFolder then
-            -- v34.76: debug — coba scan semua child pp buat lihat strukturnya
-            local children = {}
-            for _, c in ipairs(pp:GetChildren()) do
-                table.insert(children, c.Name:sub(1,20))
-                if #children >= 5 then break end
-            end
-            _G.__hactDbgCTIG = "myFolder=NIL id="..myId.." pp.children=["..table.concat(children,",").."]"
-            return
-        end
-        -- v34.76: debug — lihat beberapa child folder
-        local firstKids = {}
-        for _, m in ipairs(myFolder:GetChildren()) do
-            if #firstKids < 3 then table.insert(firstKids, m.Name:sub(1,20)) end
-            if m:IsA("Model") and m.Name:sub(1,1)=="{" then
-                local clean = m.Name:gsub("[{}]","")
-                if want[clean] then n = n + 1 end
+        if not pp then return end
+        local seen = {}
+        for _, m in ipairs(pp:GetDescendants()) do
+            if m:IsA("Model") then
+                local uuid = m:GetAttribute("PET_UUID")
+                local nm = m.Name
+                local rawKey = uuid and tostring(uuid) or nm
+                local clean = rawKey:gsub("[{}]","")
+                if want[clean] and not seen[clean] and ownerMine(m) ~= false then
+                    seen[clean] = true
+                    n = n + 1
+                end
             end
         end
-        _G.__hactDbgCTIG = ("n=%d folder=%s kids=[%s]"):format(n, myFolder.Name:sub(1,10), table.concat(firstKids,","))
     end)
     return n
 end
