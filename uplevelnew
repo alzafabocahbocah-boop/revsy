@@ -161,7 +161,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.454"
+local VERSION = "v8.455"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -1303,11 +1303,12 @@ do
                 end
                 age500plusL.Text  = tostring(plus)
                 age500minusL.Text = tostring(minus)
-                if _bahanUuid then
-                    local ba = getAgeFallback(_bahanUuid)
-                    bahanAgeL.Text = tostring(ba)
-                else
-                    bahanAgeL.Text = "—"
+                do
+                    local ages = {}
+                    for uuid in pairs(_bahanUuids) do
+                        table.insert(ages, tostring(getAgeFallback(uuid)))
+                    end
+                    bahanAgeL.Text = #ages > 0 and table.concat(ages, "/") or "—"
                 end
                 -- TOTAL PET / MAX INVENTORY:
                 -- Prioritas 1: baca dari _G.ZenxKgStat (up6kg sudah jalan -> akurat)
@@ -1411,14 +1412,16 @@ do
                     end
                     return "{" .. table.concat(parts, ",") .. "}"
                 end
-                -- bahan: tipe bahan yang sedang dipakai (ambil dari container via _bahanUuid)
+                -- bahan: tipe bahan yang sedang dipakai (ambil dari container via _bahanUuids)
                 local bahan = {}
-                if _bahanUuid and c then
-                    local e = c[fmtUUID(_bahanUuid)] or c[tostring(_bahanUuid)]
-                    if type(e) == "table" then
-                        local t = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
-                        t = t:match("^(.-)%s*%[") or t; t = t:gsub("%s+$", "")
-                        if t ~= "" then bahan[1] = t end
+                if c then
+                    for uuid in pairs(_bahanUuids) do
+                        local e = c[fmtUUID(uuid)] or c[tostring(uuid)]
+                        if type(e) == "table" then
+                            local t = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+                            t = t:match("^(.-)%s*%[") or t; t = t:gsub("%s+$", "")
+                            if t ~= "" then table.insert(bahan, t) end
+                        end
                     end
                 end
                 local bahanStr = ""
@@ -2259,11 +2262,12 @@ local function updateUI(collected,kebun,sesiNum)
             end
             age500plusL.Text=tostring(plus); age500minusL.Text=tostring(minus)
             -- bahan age
-            if _bahanUuid then
-                local ba=getAgeFallback(_bahanUuid)
-                bahanAgeL.Text=tostring(ba)
-            else
-                bahanAgeL.Text="—"
+            do
+                local ages = {}
+                for uuid in pairs(_bahanUuids) do
+                    table.insert(ages, tostring(getAgeFallback(uuid)))
+                end
+                bahanAgeL.Text = #ages > 0 and table.concat(ages, "/") or "—"
             end
         end)
         if sesiNum then
@@ -3221,7 +3225,7 @@ end
 -- _activeUuids: uuid yang seharusnya ada di kebun (diisi equipSesi, dibersihkan unequipAll)
 -- Healer loop pakai ini untuk re-equip pet yang modelnya hilang
 local _activeUuids = {}
-local _bahanUuid = nil  -- UUID Bahan yang sedang equip (biar tidak di-unequip saat ganti sesi)
+local _bahanUuids = {}  -- table UUID Bahan yang sedang equip (max 2, aging bersamaan)
 local _isCollecting = false  -- pause healer saat doCollect berjalan
 local _isTransisi   = false  -- pause healer+swapLoop saat ganti sesi / unequipAll
 local _geLogged = false      -- gameEvents log cukup sekali
@@ -3268,7 +3272,7 @@ unequipAllExceptBahan = function()
         end)
         local any = false
         for uuid in pairs(uuids) do
-            if _bahanUuid and uuid == _bahanUuid then
+            if _bahanUuids[uuid] then
                 -- skip Bahan, biarkan tetap equip
             else
                 unequipPet(uuid); any = true; task.wait(0.05)
@@ -3394,63 +3398,91 @@ equipSesi = function(sesiNum, defs)
     _isTransisi = false  -- equip selesai, healer + swap-loop boleh jalan lagi
 end
 
+-- v8.455: equipOneBahan -> equipBahans, support 2 slot bahan aging bersamaan
 equipOneBahan = function()
-    -- Prioritas 0: lanjutkan Bahan yang sedang dikunci (_bahanUuid) sampai age 500
-    if _bahanUuid then
-        local age = getAgeFallback(_bahanUuid)
-        if age < CFG.bahanMaxAge then
-            equipPet(_bahanUuid)
-            addLog("Equip bahan (kunci) age="..age)
-            return
-        else
-            addLog("Bahan kunci age="..age.." >= "..CFG.bahanMaxAge.." — ganti bahan baru")
-            _bahanUuid = nil
-        end
-    end
-    -- Prioritas 1: pakai uuid dari pool sesi 2 slot "Bahan" (diset manual user)
+    local BAHAN_SLOT = 2  -- jumlah slot bahan (sesuai SESI2_DEF jml=2)
     local pool2 = sesiPool[2] or {}
-    local slotBahan = (pool2["Bahan"] or {})[1]
-    if slotBahan and slotBahan.uuid then
-        local age = getAgeFallback(slotBahan.uuid)
-        if age < CFG.bahanMaxAge then
-            equipPet(slotBahan.uuid)
-            _bahanUuid = tostring(slotBahan.uuid)
-            addLog("Equip bahan (pool) "..tostring(slotBahan.tipe or "?").." age="..age)
-            return
-        else
-            addLog("Bahan pool umur "..age.." >= "..CFG.bahanMaxAge.." — skip")
+
+    -- bersihkan _bahanUuids: hapus uuid yang sudah age >= max
+    for uuid in pairs(_bahanUuids) do
+        local age = getAgeFallback(uuid)
+        if age >= CFG.bahanMaxAge then
+            addLog("Bahan kunci age="..age.." >= "..CFG.bahanMaxAge.." — lepas slot")
+            _bahanUuids[uuid] = nil
         end
     end
-    -- Prioritas 2: pet manapun dari backpack yang bukan bagian pool sesi 2 (Mimic/Baku)
+
+    -- hitung berapa slot bahan yang masih aktif
+    local function countBahan()
+        local n = 0; for _ in pairs(_bahanUuids) do n = n + 1 end; return n
+    end
+
+    -- re-equip yang masih valid
+    for uuid in pairs(_bahanUuids) do
+        local age = getAgeFallback(uuid)
+        equipPet(uuid)
+        addLog("Equip bahan (kunci) age="..age)
+    end
+
+    -- isi slot yang kosong sampai BAHAN_SLOT
+    if countBahan() >= BAHAN_SLOT then return end
+
+    -- pooledUuids: uuid dari pool sesi 2 non-Bahan (jangan dipakai sebagai bahan)
     local pooledUuids = {}
     for tipe, slots in pairs(pool2) do
         if tipe ~= "Bahan" then
             for _, e in pairs(slots) do if e and e.uuid then pooledUuids[tostring(e.uuid)] = true end end
         end
     end
-    local bp = plr:FindFirstChild("Backpack"); if not bp then return end
-    local all = listPetsAll()
-    table.sort(all, function(a,b) return (a.kg or 0) < (b.kg or 0) end)  -- ambil kg terkecil dulu
-    for _, p in ipairs(all) do
-        local ustr = tostring(p.uuid)
-        if not pooledUuids[ustr] then
-            -- skip Gigantic/Mega/Transenden — jangan masuk mesin mutasi
-            local dn = (p.displayName or p.fullName or p.tipe or ""):lower()
-            local mt = p.mutationType or ""
-            if mt == "GG" or dn:find("gigantic") or dn:find("mega") or dn:find("transenden") then
-                addLog("Skip bahan size tier: "..(p.tipe or "?").." ("..dn..")")
-            else
-                local age = getAgeFallback(p.uuid)
+
+    -- Prioritas 1: pakai dari pool slot "Bahan" (diset manual user)
+    local slotBahanPool = pool2["Bahan"] or {}
+    for i = 1, #slotBahanPool do
+        if countBahan() >= BAHAN_SLOT then break end
+        local slotBahan = slotBahanPool[i]
+        if slotBahan and slotBahan.uuid then
+            local ustr = tostring(slotBahan.uuid)
+            if not _bahanUuids[ustr] then
+                local age = getAgeFallback(slotBahan.uuid)
                 if age < CFG.bahanMaxAge then
-                    equipPet(p.uuid)
-                    _bahanUuid = tostring(p.uuid)
-                    addLog("Equip bahan (auto) "..tostring(p.tipe).." age="..age.." kg="..string.format("%.1f", p.kg or 0))
-                    return
+                    equipPet(slotBahan.uuid)
+                    _bahanUuids[ustr] = true
+                    addLog("Equip bahan (pool#"..i..") "..tostring(slotBahan.tipe or "?").." age="..age)
+                else
+                    addLog("Bahan pool#"..i.." umur "..age.." >= "..CFG.bahanMaxAge.." — skip")
                 end
             end
         end
     end
-    addLog("Tidak ada bahan tersedia (umur < "..CFG.bahanMaxAge..")")
+
+    -- Prioritas 2: auto dari backpack (bukan pool, bukan GG/Mega/Transenden)
+    if countBahan() < BAHAN_SLOT then
+        local bp = plr:FindFirstChild("Backpack"); if not bp then return end
+        local all = listPetsAll()
+        table.sort(all, function(a,b) return (a.kg or 0) < (b.kg or 0) end)
+        for _, p in ipairs(all) do
+            if countBahan() >= BAHAN_SLOT then break end
+            local ustr = tostring(p.uuid)
+            if not pooledUuids[ustr] and not _bahanUuids[ustr] then
+                local dn = (p.displayName or p.fullName or p.tipe or ""):lower()
+                local mt = p.mutationType or ""
+                if mt == "GG" or dn:find("gigantic") or dn:find("mega") or dn:find("transenden") then
+                    addLog("Skip bahan size tier: "..(p.tipe or "?").." ("..dn..")")
+                else
+                    local age = getAgeFallback(p.uuid)
+                    if age < CFG.bahanMaxAge then
+                        equipPet(p.uuid)
+                        _bahanUuids[ustr] = true
+                        addLog("Equip bahan (auto) "..tostring(p.tipe).." age="..age.." kg="..string.format("%.1f", p.kg or 0))
+                    end
+                end
+            end
+        end
+    end
+
+    if countBahan() == 0 then
+        addLog("Tidak ada bahan tersedia (umur < "..CFG.bahanMaxAge..")")
+    end
 end
 
 unequipBahanTua = function()
@@ -3461,8 +3493,12 @@ unequipBahanTua = function()
             if stripMutation(tostring(rawTipe))==CFG.bahanType then
                 local uuid=getUUIDAlt(t)
                 if uuid then
+                    local ustr = tostring(uuid)
                     local age=getAgeFallback(uuid)
-                    if age>=CFG.bahanMaxAge then unequipPet(uuid); _bahanUuid=nil; addLog("Unequip bahan tua age="..age); task.wait(CFG.equipWait) end
+                    if age>=CFG.bahanMaxAge then
+                        unequipPet(uuid); _bahanUuids[ustr]=nil
+                        addLog("Unequip bahan tua age="..age); task.wait(CFG.equipWait)
+                    end
                 end
             end
         end
@@ -3781,7 +3817,7 @@ local function enforceEquip(allowedDef)
     local allowed = {}
     for _, d in ipairs(allowedDef) do allowed[d.nama] = true end
     for uuid in pairs(modelByUuid) do
-        if uuid == _bahanUuid then continue end
+        if _bahanUuids[uuid] then continue end
         local tipe = getPetTipeFromUUID(uuid)
         if tipe and not allowed[tipe] then
             addLog("Enforce: unequip '"..tipe.."' (bukan bagian sesi ini)")
@@ -4040,9 +4076,15 @@ local function runSesi2()
     while not stopRequested do
         enforceEquip(SESI2_DEF)
         -- cek bahan age SEBELUM equip baru, biar tidak ganti bahan dulu
-        if _bahanUuid and getAgeFallback(_bahanUuid) >= CFG.bahanMaxAge then
-            addLog("Sesi2: bahan age>="..CFG.bahanMaxAge.." — unequip bahan, pindah sesi 1")
-            unequipPet(_bahanUuid); _bahanUuid = nil; task.wait(CFG.equipWait)
+        local _allBahanTua = true
+        for uuid in pairs(_bahanUuids) do
+            if getAgeFallback(uuid) < CFG.bahanMaxAge then _allBahanTua = false; break end
+        end
+        if next(_bahanUuids) ~= nil and _allBahanTua then
+            addLog("Sesi2: semua bahan age>="..CFG.bahanMaxAge.." — unequip bahan, pindah sesi 1")
+            for uuid in pairs(_bahanUuids) do unequipPet(uuid) end
+            for k in pairs(_bahanUuids) do _bahanUuids[k] = nil end
+            task.wait(CFG.equipWait)
             totalNightmareCollected=0; return
         end
         unequipBahanTua(); equipOneBahan()
@@ -4092,10 +4134,15 @@ local function runSesi2()
             -- nightmare di bawah 200 -> pindah sesi 1
             addLog("Sesi2: nm="..nm.." < 200 — pindah sesi 1")
             totalNightmareCollected=0; return
-        elseif _bahanUuid and getAgeFallback(_bahanUuid) >= CFG.bahanMaxAge then
-            -- bahan sudah age >= 500 -> unequip dulu, langsung pindah sesi 1
-            addLog("Sesi2: bahan age>="..CFG.bahanMaxAge.." — unequip bahan, pindah sesi 1")
-            unequipPet(_bahanUuid); _bahanUuid = nil; task.wait(CFG.equipWait)
+        elseif next(_bahanUuids) ~= nil and (function()
+            for uuid in pairs(_bahanUuids) do
+                if getAgeFallback(uuid) < CFG.bahanMaxAge then return false end
+            end; return true end)() then
+            -- semua bahan sudah age >= max -> unequip dulu, langsung pindah sesi 1
+            addLog("Sesi2: semua bahan age>="..CFG.bahanMaxAge.." — unequip bahan, pindah sesi 1")
+            for uuid in pairs(_bahanUuids) do unequipPet(uuid) end
+            for k in pairs(_bahanUuids) do _bahanUuids[k] = nil end
+            task.wait(CFG.equipWait)
             totalNightmareCollected=0; return
         elseif #sd.shovel > 0 then
             -- ada mutasi, nightmare masih ada -> collect langsung
