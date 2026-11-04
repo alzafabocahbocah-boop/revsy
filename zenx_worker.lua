@@ -10724,7 +10724,8 @@ local function zenx_script_shortcut(perintah, sub)
     end
     print("Jalanin " .. script .. "...")
     local lua = os.getenv("PREFIX") and (os.getenv("PREFIX") .. "/bin/lua5.4") or "lua5.4"
-    os.execute(lua .. " " .. (arg and arg[0] or "zenx_worker.lua") .. " pasang " .. script)
+    local worker = arg and arg[0] or "zenx_worker.lua"
+    os.execute(lua .. " " .. worker .. " pasang " .. script)
     return true
 end
 
