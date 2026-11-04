@@ -179,7 +179,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.476"
+local VERSION = "v8.477"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3733,8 +3733,10 @@ end
 -- ===================== NIGHTMARE FAST POLLER =====================
 -- Poll nightmareCount tiap 0.5s di background, disimpan ke _nmCached
 -- Main loop baca _nmCached, gak perlu scan ulang tiap iterasi
+-- v8.477: anti-flicker — kalau count=0 tapi sebelumnya >0, tunggu 3 poll (~1.5s) sebelum tulis 0
 local _nmCached = 0
 local _nmCachedAt = 0
+local _nmZeroStreak = 0
 local _nmPollerDebugDone = false
 task.spawn(function()
     while true do
@@ -3769,6 +3771,12 @@ task.spawn(function()
                 if firstAttrs then
                     print("[UPLVL-DBG][NMPoller] attrs: "..table.concat(firstAttrs, ", "))
                 end
+            end
+            if count == 0 and _nmCached > 0 then
+                _nmZeroStreak = _nmZeroStreak + 1
+                if _nmZeroStreak < 3 then return end  -- tunggu 3x poll (~1.5s) baru tulis 0
+            else
+                _nmZeroStreak = 0
             end
             _nmCached = count
             _nmCachedAt = tick()
