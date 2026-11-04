@@ -297,8 +297,13 @@ task.spawn(function()
 
             local kind = animStr == "frill" and "FRILL" or "FAN"
 
+            -- log UUID yang trigger animasi (pet yang skill-nya keluar)
+            push("ANIMUUID", r8 .. " " .. kind)
+
             -- cari uuid target swap
             local targetUUID = findTargetUUID()
+            push("TGTUUID", targetUUID and short8(targetUUID) or "NIL")
+
             if not targetUUID then
                 push("WARN", "no target UUID")
                 continue
@@ -322,4 +327,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "sc_swap v2.4d ready | equipRE=" .. (equipRE and "OK" or "NIL"))
+push("INIT", "sc_swap v2.5d ready | equipRE=" .. (equipRE and "OK" or "NIL"))
