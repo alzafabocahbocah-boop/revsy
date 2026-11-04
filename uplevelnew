@@ -1,4 +1,5 @@
--- uplevelnew v8.468
+-- uplevelnew v8.469
+-- v8.469: enforceEquip skip pet yang masih di _activeUuids (jangan unequip pet sesi sendiri)
 -- v8.468: fix enforceEquip crash (_bahanUuids nil guard)
 -- v8.467: semua debug ke print/console (bukan addLog)
 -- v8.466: print log di loop sesi (trace hang/crash setelah equipSesi DONE)
@@ -3863,13 +3864,18 @@ local function enforceEquip(allowedDef)
     end
     local allowed = {}
     for _, d in ipairs(allowedDef) do allowed[d.nama] = true end
-    print("[UPLVL-DBG] enforceEquip START: modelByUuid count="..(function() local c=0; for _ in pairs(modelByUuid) do c=c+1 end; return c end)())
     local ok2, err2 = pcall(function()
         local bahanCheck = _bahanUuids or {}
+        local inActive = _activeUuids or {}
         for uuid in pairs(modelByUuid) do
             if bahanCheck[uuid] then continue end
             local tipe = getPetTipeFromUUID(uuid)
             if tipe and not allowed[tipe] then
+                -- jangan unequip kalau masih di _activeUuids (pet sesi ini)
+                if inActive[uuid] then
+                    print("[UPLVL-DBG] enforceEquip SKIP active '"..tipe.."' uuid="..tostring(uuid))
+                    continue
+                end
                 print("[UPLVL-DBG] enforceEquip unequip '"..tipe.."' uuid="..tostring(uuid))
                 addLog("Enforce: unequip '"..tipe.."' (bukan bagian sesi ini)")
                 pcall(function() unequipPet(uuid) end)
