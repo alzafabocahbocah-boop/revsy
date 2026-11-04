@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v34.90"
+local VERSION = "v34.91"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5643,84 +5643,90 @@ local function automationLoop()
             if isTradingManual() then  -- v26.2: cuma batal kalau trade UI manual KEBUKA (bukan trade complete timer)
                 task.wait(0.3)
             else
-            print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
-            Auto.eggPhase = "sell"  -- v26.5: fase sell -> pencet egg tiap 6s
-            favTeamPets()  -- fav pet tim (proteksi)
-            pcall(syncFavByRules)  -- atur fav/unfav sesuai rule SEKARANG (real-time, gak nunggu)
-            -- v16.4: JEDA biar favorit bener-bener tercatat server SEBELUM jual.
-            -- (dulu habis fav langsung sell, kadang fav blm masuk -> pet keep ikut kejual)
-            print("[HactTelur] tunggu favorit tercatat (3 detik)...")
-            waitInterrupt(3)  -- v33.96: interruptible
-            if not globalRunning then break end
-            pcall(syncFavByRules)  -- pastikan sekali lagi (pet baru / yg ke-skip)
-            task.wait(0.5)
-            if isTradingManual() then  -- v26.2: batal cuma kalau trade UI manual kebuka
-                print("[HactTelur] trade UI kebuka pas jeda fav, batal sell")
+            -- v34.91: ALUR SELL BARU
+            -- 1) langsung equip Sell Tim (sambil nanti fav berjalan paralel)
+            -- 2) poll seal masuk X/8, fav/unfav sambil tunggu
+            -- 3) 8 seal masuk → cek fav stabil (0.3s, kalau ada perubahan → fav lagi)
+            -- 4) doAutoSell
+            print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), masuk fase sell")
+            _G.__hactDbgExtra = "🛒 Fase Sell — equip tim Seal..."
+            Auto.eggPhase = "sell"
+            if isTradingManual() then task.wait(0.3)
             else
-            -- v34.89: retry equip Sell Tim sampai berhasil (max 3x, 5s jeda)
-            -- jangan langsung batal + balik loop — kalau backpack penuh, harus sell
-            local okSell = false
-            for _sellTry = 1, 3 do
-                if not globalRunning then break end
-                Auto.currentTeam = nil  -- reset biar equipTeam fresh
-                equipTeam("Sell Tim")
-                -- v18.8: tunggu tim Sell masuk garden
-                okSell = waitTeamInGarden("Sell Tim", 15)
-                if okSell then break end
-                print("[HactTelur] tim Sell belum lengkap (try ".._sellTry.."/3), clear + retry...")
-                task.spawn(function() pcall(clearGarden) end)
-                waitInterrupt(2)
+            -- langsung pasang Sell Tim
+            Auto.currentTeam = nil
+            equipTeam("Sell Tim")
+            -- poll seal masuk (max 20s), fav/unfav sambil tunggu
+            local td = teamData["Sell Tim"]
+            local wantN = td and td.selected and (function() local n=0; for _ in pairs(td.selected) do n=n+1 end; return n end)() or 8
+            local sealIn = 0
+            local sealReady = false
+            do local t0=tick()
+                while globalRunning and (tick()-t0)<20 do
+                    if isTradingManual() then break end
+                    -- hitung seal di garden
+                    local nIn = countTeamInGarden("Sell Tim")
+                    sealIn = nIn
+                    _G.__hactDbgExtra = ("🦭 Seal masuk: %d/%d"):format(nIn, wantN)
+                    -- fav/unfav sambil nunggu (tiap iterasi)
+                    favTeamPets()
+                    pcall(syncFavByRules)
+                    if nIn >= wantN then sealReady=true; break end
+                    task.wait(0.5)
+                end
             end
-            local sd = config.hatchDelay or 6
-            -- v23.0: tim Sell HARUS lengkap. kalau gak lengkap setelah 3x retry -> BATAL jual.
-            if not okSell then
-                print("[HactTelur] tim Sell GAK LENGKAP setelah 3x retry, BATAL jual")
+            if not globalRunning then break end
+            if not sealReady then
+                -- timeout, tapi cek sekali lagi
+                sealIn = countTeamInGarden("Sell Tim")
+                if sealIn >= wantN then sealReady = true end
+            end
+            if not sealReady then
+                print("[HactTelur] Seal timeout ("..sealIn.."/"..wantN.."), batal sell")
+                _G.__hactDbgExtra = ("❌ Seal timeout %d/%d, batal"):format(sealIn, wantN)
                 Auto.currentTeam = nil
                 task.spawn(function() pcall(clearGarden) end)
             else
-            print("[HactTelur] tim Sell LENGKAP ("..countGardenPets().."), tunggu "..sd.." detik...")
-            -- v26.2: udah commit sell (backpack penuh) -> cuma batal kalau trade UI MANUAL kebuka,
-            -- bukan trade complete timer (biar sell gak ke-block terus pas gift on + penuh).
-            local sellAborted = false
-            local tEnd = tick() + sd
-            while tick() < tEnd do
-                if isTradingManual() then
-                    print("[HactTelur] trade UI kebuka pas tunggu sell -> batal, unequip garden")
-                    Auto.currentTeam = nil
-                    task.spawn(function() pcall(clearGarden) end)
-                    sellAborted = true
-                    break
+            -- seal lengkap → cek fav stabil
+            _G.__hactDbgExtra = ("✅ Seal %d/%d — cek fav..."):format(sealIn, wantN)
+            print("[HactTelur] Seal lengkap, cek fav sebelum sell...")
+            -- cek fav + tunggu stabil (kalau ada perubahan, fav lagi)
+            local favStable = false
+            for _favTry = 1, 5 do
+                if not globalRunning then break end
+                local favOk, unfavN, favN = pcall(syncFavByRules)
+                unfavN = favOk and (unfavN or 0) or 0
+                favN   = favOk and (favN   or 0) or 0
+                task.wait(0.3)
+                if unfavN == 0 and favN == 0 then
+                    favStable = true; break
                 end
-                task.wait(0.1)
+                print("[HactTelur] fav belum stabil (unfav="..unfavN.." fav="..favN.."), tunggu...")
+                _G.__hactDbgExtra = ("⏳ fav belum stabil unfav=%d fav=%d"):format(unfavN, favN)
             end
-            if sellAborted then
-                -- batal sell, balik atas (jangan jual)
-            else
-            -- v22.3: CEK FAV LAGI tepat sebelum jual — pastikan gak ada pet keep yg belum di-fav
-            print("[HactTelur] cek fav terakhir sebelum jual...")
-            pcall(syncFavByRules)
-            task.wait(0.6)  -- kasih waktu fav tercatat server
-            -- v22.9: garden kosong -> batal sell (biar gak sell 0). trade UI manual -> batal juga.
+            if not favStable then
+                -- paksa sekali lagi
+                pcall(syncFavByRules); task.wait(0.3)
+            end
+            -- garden kosong atau trade manual → batal
             if isTradingManual() or countGardenPets() == 0 then
-                print("[HactTelur] garden kosong / trade UI kebuka pas mau jual, batal sell (ulang nanti)")
+                print("[HactTelur] garden kosong / trade manual, batal sell")
             else
+            _G.__hactDbgExtra = "💰 doAutoSell jalan..."
             local sold = doAutoSell()
-            -- reset flag penuh DULU + force rebuild biar count fresh (pet udah turun)
             Auto.bpFullFlag = false
-            Auto.lastSellTime = tick()  -- buat cooldown (abaikan notif lama)
+            Auto.lastSellTime = tick()
             task.wait(1)
-            PetDetect.rebuild(true)  -- force scan ulang, pet count terbaru
-            equipTeam("Reduce Tim")  -- langsung balik reduce abis jual
+            PetDetect.rebuild(true)
+            equipTeam("Reduce Tim")
             if sold == 0 then
                 Auto.sellExhausted = true
                 Auto.sellExhaustedCount = #PetDetect.listBackpackPets()
                 print("[HactTelur] gak ada pet buat dijual (sisanya keep), lanjut reduce")
             end
-            end  -- v22.9: tutup guard garden kosong
-            end  -- v26.1: tutup guard sellAborted (trade complete pas tunggu sell)
-            end  -- tutup guard isPausedForGift (jeda fav)
-            end  -- v23.0: tutup guard okSell (tim Sell lengkap)
-            end  -- tutup guard isPausedForGift
+            end  -- guard garden kosong
+            end  -- guard sealReady
+            end  -- guard isTradingManual
         elseif Auto.sellExhausted then
             -- cek apakah pet udah nambah dari terakhir sell (ada pet baru buat dijual)
             local nowCount = #PetDetect.listBackpackPets()
