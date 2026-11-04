@@ -54,17 +54,20 @@ local MERAH= Color3.fromRGB(255, 110, 110)
 -- fetch + jalanin script
 local ok, src = pcall(function() return game:HttpGet(REPO .. sc .. "?cb=" .. os.time()) end)
 if ok and src and #src > 100 then
+    -- ekstrak versi dari baris pertama src (cari "vXX.XX")
+    local ver = src:match('VERSION%s*=%s*"([^"]+)"') or src:match('"(v%d+%.%d+)"') or "?"
+    print("[ZenxLoader] " .. sc .. " versi: " .. ver)
     local fn, cerr = loadstring(src)
     if fn then
         local ok2, rerr = pcall(fn)
         if ok2 then
-            setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [JALAN OK]", IJO)
+            setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [" .. ver .. "  OK]", IJO)
         else
-            setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [RUN-ERR: " .. tostring(rerr):sub(1, 55) .. "]", MERAH)
+            setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [" .. ver .. "  RUN-ERR: " .. tostring(rerr):sub(1, 45) .. "]", MERAH)
             warn("[ZenxLoader] " .. sc .. " RUN error: " .. tostring(rerr))
         end
     else
-        setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [COMPILE-ERR: " .. tostring(cerr):sub(1, 50) .. "]", MERAH)
+        setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [" .. ver .. "  COMPILE-ERR: " .. tostring(cerr):sub(1, 40) .. "]", MERAH)
         warn("[ZenxLoader] " .. sc .. " loadstring gagal: " .. tostring(cerr))
     end
 else
