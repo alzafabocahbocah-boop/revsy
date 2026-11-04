@@ -209,6 +209,23 @@ local function runSwapSequence(uuid, kind)
     swapBusy[r8] = nil
 end
 
+-- ===== GLOBAL SPAWN MONITOR =====
+-- Log semua pet model spawn/despawn (global, bukan cuma dalam waitSpawn)
+pcall(function()
+    workspace.DescendantAdded:Connect(function(d)
+        if not isPetModel(d) then return end
+        local dName = d.Name
+        local dRaw8 = dName:sub(1,1) == "{" and dName:sub(2,9) or dName:sub(1,8)
+        push("GSPAWN", dRaw8)
+    end)
+    workspace.DescendantRemoving:Connect(function(d)
+        if not isPetModel(d) then return end
+        local dName = d.Name
+        local dRaw8 = dName:sub(1,1) == "{" and dName:sub(2,9) or dName:sub(1,8)
+        push("GDESP", dRaw8)
+    end)
+end)
+
 -- ===== TRIGGER: DataStream =====
 -- Parse CustomAnimationState dari nested table DataStream
 local function deepFind(t, depth, out)
@@ -294,4 +311,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "sc_swap v2.2d ready | equipRE=" .. (equipRE and "OK" or "NIL"))
+push("INIT", "sc_swap v2.3d ready | equipRE=" .. (equipRE and "OK" or "NIL"))
