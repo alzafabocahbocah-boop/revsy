@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.627"
+local VERSION = "9.628"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -87,7 +87,6 @@ local function tulis_skrip_up(diam)
     local jalur = PREFIX .. "/bin/up"
     local isi = table.concat({
         "#!" .. PREFIX .. "/bin/sh",
-        "zenx stop >/dev/null 2>&1",
         'echo "narik versi baru..."',
         'URL="' .. REPO_WORKER .. '/zenx_worker.lua?v=$(date +%s)"',
         'echo "download dari GitHub... (timeout 60 detik)"',
@@ -10691,6 +10690,12 @@ end
 -- v9.601: zenx arceus 1 / arceus 2 / arceus 1-2
 -- v9.617: fix zenx arceus -- hapus $ anchor (bukan valid Lua pattern), pakai gmatch candidate loop biar slot1 gak match _clone
 -- v9.618: zenx arceus pm install pakai -d (allow downgrade)
+-- v9.628: zenx fixup -- regenerasi script up ke versi terbaru
+if PERINTAH == "fixup" then
+    tulis_skrip_up(false)
+    return
+end
+
 -- v9.619: zenx uld -- shortcut jalanin uplevelnew-delta langsung
 -- v9.620: zenx level <delta> / zenx up3.8kg <delta> -- jalanin script dengan nilai delta
 if PERINTAH == "uld" then
