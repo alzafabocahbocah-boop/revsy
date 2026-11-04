@@ -1,8 +1,9 @@
--- sc_swap.lua v2.0
--- Trigger: DataStream (GameEvents.DataStream > CustomAnimationState "frill"/"fan")
+-- sc_swap.lua v3.0
+-- Trigger: DataStream (GameEvents.DataStream > CustomAnimationState)
+-- Skill: frill (dilop), fan (peacock), roar (lion), fly (peryton)
 -- ~17ms lebih cepet dari AnimationPlayed
 -- Swap: unequip → equip, cek posisi SPAWN (10,3,12), retry 1x kalau miss
--- UUID: auto-detect dari backpack (Dilop/Peacock/Peryton)
+-- Frill/Dilop: delay 200ms setelah trigger
 
 local Players = game:GetService("Players")
 local RS      = game:GetService("ReplicatedStorage")
@@ -29,7 +30,7 @@ hdr.Size = UDim2.new(1,-60,0,22); hdr.Position = UDim2.new(0,8,0,4)
 hdr.BackgroundTransparency = 1; hdr.Font = Enum.Font.GothamBold; hdr.TextSize = 11
 hdr.TextColor3 = Color3.fromRGB(80,220,120)
 hdr.TextXAlignment = Enum.TextXAlignment.Left
-hdr.Text = "SC SWAP v2  (2x tap = salin)"
+hdr.Text = "SC SWAP v3  (2x tap = salin)"
 
 local clrBtn = Instance.new("TextButton", fr)
 clrBtn.Size = UDim2.new(0,42,0,16); clrBtn.Position = UDim2.new(1,-48,0,4)
@@ -92,47 +93,26 @@ local function fmtUUID(u)
 end
 local function unequipPet(uuid)
     if not equipRE then return end
-    local fmt = fmtUUID(uuid)
-    push("FIRE", "UNQ " .. fmt)
-    pcall(function() equipRE:FireServer("UnequipPet", fmt) end)
+    pcall(function() equipRE:FireServer("UnequipPet", fmtUUID(uuid)) end)
 end
 local function equipPet(uuid)
     if not equipRE then return end
-    local fmt = fmtUUID(uuid)
-    push("FIRE", "EQP " .. fmt)
-    pcall(function() equipRE:FireServer("EquipPet", fmt, nil) end)
+    pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), nil) end)
 end
 
--- ===== TARGET PET UUID =====
-local TARGET_TYPES = { "dilophosaurus", "peacock", "peryton", "dilo" }
-local function findTargetUUID()
-    if _G.ZenxSwapUUID and _G.ZenxSwapUUID ~= "" then
-        return _G.ZenxSwapUUID
-    end
-    -- cari di backpack DAN character (pet yg lagi di-equip ada di character)
-    local containers = {}
-    local bp = plr:FindFirstChild("Backpack")
-    if bp then containers[#containers+1] = bp end
-    local char = plr.Character
-    if char then containers[#containers+1] = char end
-
-    for _, container in ipairs(containers) do
-        for _, t in ipairs(container:GetChildren()) do
-            if t:IsA("Tool") then
-                local uuid = t:GetAttribute("PET_UUID")
-                local f = tostring(t:GetAttribute("f") or ""):lower()
-                if uuid then
-                    for _, kw in ipairs(TARGET_TYPES) do
-                        if f:find(kw, 1, true) then
-                            return tostring(uuid)
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
+-- ===== SKILL TRIGGERS =====
+-- animStr → kind label
+-- frill = dilophosaurus, fan = peacock, roar = lion/gilded lion, fly = peryton
+local SKILL_KIND = {
+    frill = "FRILL",
+    fan   = "FAN",
+    roar  = "ROAR",
+    fly   = "FLY",
+}
+-- skill yang perlu delay 200ms sebelum swap
+local SKILL_DELAY = {
+    FRILL = 0.2,
+}
 
 -- ===== SWAP LOGIC =====
 local swapBusy  = {}   -- [uuid8] = true kalau sedang sequence
@@ -148,15 +128,13 @@ local function short8(uuid)
 end
 
 local function waitSpawn(targetUUID, timeoutSec)
-    local raw8 = short8(targetUUID)  -- 8 char tanpa kurung kurawal
+    local raw8 = short8(targetUUID)
     local done, pos = false, nil
     local conn = workspace.DescendantAdded:Connect(function(d)
         if done then return end
         if not isPetModel(d) then return end
-        -- log semua pet model yang spawn (buat debug)
         local dName = d.Name
         local dRaw8 = dName:sub(1,1) == "{" and dName:sub(2,9) or dName:sub(1,8)
-        push("DBG", "spawn=" .. dRaw8 .. " want=" .. raw8 .. (dRaw8==raw8 and " MATCH" or " skip"))
         if dRaw8 ~= raw8 then return end
         task.defer(function()
             if done then return end
@@ -208,8 +186,8 @@ local function runSwapSequence(uuid, kind)
     swapBusy[r8] = true
     push("TRIG", r8 .. " " .. kind)
 
-    -- Frill: delay 200ms setelah trigger
-    if kind == "FRILL" then task.wait(0.2) end
+    local delay = SKILL_DELAY[kind]
+    if delay then task.wait(delay) end
 
     local ok = doSwap(uuid, 1)
     if not ok then
@@ -219,23 +197,6 @@ local function runSwapSequence(uuid, kind)
     end
     swapBusy[r8] = nil
 end
-
--- ===== GLOBAL SPAWN MONITOR =====
--- Log semua pet model spawn/despawn (global, bukan cuma dalam waitSpawn)
-pcall(function()
-    workspace.DescendantAdded:Connect(function(d)
-        if not isPetModel(d) then return end
-        local dName = d.Name
-        local dRaw8 = dName:sub(1,1) == "{" and dName:sub(2,9) or dName:sub(1,8)
-        push("GSPAWN", dRaw8)
-    end)
-    workspace.DescendantRemoving:Connect(function(d)
-        if not isPetModel(d) then return end
-        local dName = d.Name
-        local dRaw8 = dName:sub(1,1) == "{" and dName:sub(2,9) or dName:sub(1,8)
-        push("GDESP", dRaw8)
-    end)
-end)
 
 -- ===== TRIGGER: DataStream =====
 -- Parse CustomAnimationState dari nested table DataStream
@@ -269,7 +230,7 @@ task.spawn(function()
     if not ge then push("DS", "ERR: GameEvents nil"); return end
     local ds = ge:WaitForChild("DataStream", 15)
     if not ds then push("DS", "ERR: DataStream nil"); return end
-    push("DS", "OK — DataStream hooked")
+    push("DS", "OK — hooked")
 
     local _lastParse = 0
     ds.OnClientEvent:Connect(function(...)
@@ -288,21 +249,15 @@ task.spawn(function()
         local hits = deepFind(data, 0)
         for _, hit in ipairs(hits) do
             local rawUUID, animStr = hit[1], hit[2]
-            if animStr ~= "frill" and animStr ~= "fan" then continue end
+            local kind = SKILL_KIND[animStr]
+            if not kind then continue end
 
             local r8 = rawUUID:sub(1,8)
-            -- debounce: skip kalau trigger sama dalam 0.5s
             if lastTrigger[r8] and (now - lastTrigger[r8]) < DS_DEBOUNCE then continue end
             lastTrigger[r8] = now
 
-            local kind = animStr == "frill" and "FRILL" or "FAN"
-
-            -- swap UUID yang skillnya keluar (bukan dari backpack)
-            -- rawUUID = UUID lengkap tanpa kurung dari DataStream
-            local targetUUID = rawUUID  -- contoh: "cbec051d-cd0b-4bb7-a825-cfb776eab0ca"
-
             task.spawn(function()
-                runSwapSequence(targetUUID, kind)
+                runSwapSequence(rawUUID, kind)
             end)
         end
     end)
@@ -312,11 +267,9 @@ end)
 task.spawn(function()
     while sg.Parent do
         task.wait(0.4)
-        local uuid = findTargetUUID()
-        local uStr = uuid and short8(uuid) or "none"
-        local head = string.format("[target=%s | total=%d]\n", uStr, #LOG)
+        local head = string.format("[total=%d]\n", #LOG)
         tx.Text = head .. table.concat(LOG, "\n")
     end
 end)
 
-push("INIT", "sc_swap v2.6 ready | equipRE=" .. (equipRE and "OK" or "NIL"))
+push("INIT", "sc_swap v3.0 | equipRE=" .. (equipRE and "OK" or "NIL"))
