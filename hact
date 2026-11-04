@@ -5385,19 +5385,21 @@ local function automationLoop()
             task.wait(5)
             if not globalRunning then break end
             -- pause sah? jangan hitung sbg nyangkut, reset timer progress
-            if isPausedForGift() or Auto.giftBusy then
+            -- v34.62: hatch/sell juga bukan nyangkut (memang perlu waktu lama)
+            if isPausedForGift() or Auto.giftBusy or Auto.eggPhase == "hatch" or Auto.eggPhase == "sell" then
                 Auto._progSince = tick()
                 Auto._progSig = nil
             else
-                local sig = tostring(Auto.currentTeam)
+                -- v34.62: include eggPhase di sig biar transisi reduce->hatch kedeteksi sbg progress
+                local sig = tostring(Auto.currentTeam).."|"..tostring(Auto.eggPhase)
                 if sig ~= Auto._progSig then
-                    -- tim berubah = progress nyata -> reset
+                    -- tim atau fase berubah = progress nyata -> reset
                     Auto._progSig = sig
                     Auto._progSince = tick()
                 else
                     local noProg = tick() - (Auto._progSince or tick())
                     if noProg > 60 then
-                        print("[HactTelur] ⚠ WATCHDOG2: tim '"..sig.."' "..math.floor(noProg).."s gak pindah -> RESTART cycle")
+                        print("[HactTelur] ⚠ WATCHDOG2: sig '"..sig.."' "..math.floor(noProg).."s gak pindah -> RESTART cycle")
                         Auto.currentTeam = nil
                         Auto.giftBusy = false
                         Auto.sellExhausted = false
@@ -5418,7 +5420,8 @@ local function automationLoop()
             if not globalRunning then break end
             local stuck = tick() - (Auto.lastLoopTick or tick())
             -- pause sah (trade complete/gift/trade UI)? -> bukan nyangkut, reset timer
-            if isPausedForGift() or Auto.giftBusy then
+            -- v34.62: hatch/sell juga bukan nyangkut (hatchAllEggs + waitTeamInGarden bisa >30s)
+            if isPausedForGift() or Auto.giftBusy or Auto.eggPhase == "hatch" or Auto.eggPhase == "sell" then
                 Auto.lastLoopTick = tick()
             elseif stuck > 30 then
                 print("[HactTelur] ⚠ WATCHDOG: nyangkut "..math.floor(stuck).."s tanpa pause -> RESTART cycle")
