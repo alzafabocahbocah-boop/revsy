@@ -122,8 +122,7 @@ local SKILL_KIND = {
     frill = "FRILL",
     fan   = "FAN",
     roar  = "ROAR",
-    -- fly = skip (jangan di-swap)
-    flyup = "FLY",    -- peryton/gilded
+    -- fly / flyup = skip (gilded pakai logika lain)
     pee   = "PEW",    -- hotdog
     pew   = "PEW",    -- hotdog (fallback)
 }
@@ -134,7 +133,6 @@ local SKILL_DELAY = {
 -- kind yang UUID-nya harus dicari dari backpack/character (bukan dari DataStream)
 -- karena DataStream bisa berisi UUID pet orang lain
 local SKILL_LOOKUP = {
-    FLY  = { "peryton", "gilded" },
     PEW  = { "hotdog" },
 }
 
