@@ -117,7 +117,8 @@ local SKILL_DELAY = {
 
 -- ===== SWAP LOGIC =====
 local swapBusy  = {}   -- [uuid8] = true kalau sedang sequence
-local CENTER    = Vector3.new(10, 3, 12)
+local CENTER    = Vector3.new(10, 3, 12)   -- default (fan/roar/fly/pew)
+local CENTER_FRILL = Vector3.new(11, 22, 8) -- dilop
 local CENTER_THRESH = 2.0
 
 local function isPetModel(d)
@@ -152,12 +153,13 @@ local function waitSpawn(targetUUID, timeoutSec)
     return pos
 end
 
-local function distToCenter(p)
+local function distToCenter(p, kind)
     if not p then return 999 end
-    return math.sqrt((p.X-CENTER.X)^2 + (p.Z-CENTER.Z)^2)
+    local c = (kind == "FRILL") and CENTER_FRILL or CENTER
+    return math.sqrt((p.X-c.X)^2 + (p.Y-c.Y)^2 + (p.Z-c.Z)^2)
 end
 
-local function doSwap(uuid, attempt)
+local function doSwap(uuid, attempt, kind)
     local r8 = short8(uuid)
     push("SWAP"..attempt, r8 .. " unequip")
     unequipPet(uuid)
@@ -166,7 +168,7 @@ local function doSwap(uuid, attempt)
     equipPet(uuid)
     local spawnPos = waitSpawn(uuid, 1.5)
     if spawnPos then
-        local dist = distToCenter(spawnPos)
+        local dist = distToCenter(spawnPos, kind)
         local posStr = string.format("(%.0f,%.0f,%.0f)", spawnPos.X, spawnPos.Y, spawnPos.Z)
         if dist <= CENTER_THRESH then
             push("OK"..attempt, r8 .. " " .. posStr .. " CENTER ✓")
@@ -190,10 +192,10 @@ local function runSwapSequence(uuid, kind)
     local delay = SKILL_DELAY[kind]
     if delay then task.wait(delay) end
 
-    local ok = doSwap(uuid, 1)
+    local ok = doSwap(uuid, 1, kind)
     if not ok then
         push("RETRY", r8 .. " attempt 2")
-        local ok2 = doSwap(uuid, 2)
+        local ok2 = doSwap(uuid, 2, kind)
         if not ok2 then push("FAIL", r8 .. " gagal 2x") end
     end
     swapBusy[r8] = nil
