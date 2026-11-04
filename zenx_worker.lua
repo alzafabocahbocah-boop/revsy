@@ -13873,6 +13873,54 @@ do
         end
     end
 end
+-- v9.622: fuzzy suggestion kalau command gak dikenal
+do
+    local ALL_CMD = {
+        "seed","market","farm","gag1","daftar-cek","masuk","game","home","set",
+        "catat","uji","ukur","cari","pantau","rekam","dpi","grid","grafis","buka",
+        "tap","lisensi","license","cekplace","getps","rejoin-log","denyut","logcat",
+        "logcat-live","intip","key","status","cek","hapus","download","dl","apk",
+        "uld","level","up3.8kg","arceus","lite","delta","update","refresh","tembak",
+        "loginsemua","stop","pasang","riwayat","scan","login","ganti","pantaucookie",
+        "catatakun","cekcookie","cookie","captcha","ceklayar","cekcaptcha","verif",
+        "cekverif","panel","script","sc","layar","full","fullscreen","mercy",
+    }
+    local function lev(a, b)
+        local m, n = #a, #b
+        local d = {}
+        for i = 0, m do d[i] = {[0]=i} end
+        for j = 0, n do d[0][j] = j end
+        for i = 1, m do
+            for j = 1, n do
+                if a:sub(i,i) == b:sub(j,j) then d[i][j] = d[i-1][j-1]
+                else d[i][j] = 1 + math.min(d[i-1][j], d[i][j-1], d[i-1][j-1]) end
+            end
+        end
+        return d[m][n]
+    end
+    if PERINTAH ~= "" then
+        local found = false
+        for _, c in ipairs(ALL_CMD) do
+            if PERINTAH == c then found = true; break end
+        end
+        if not found then
+            -- cari 5 command paling mirip
+            local scores = {}
+            for _, c in ipairs(ALL_CMD) do
+                scores[#scores+1] = {cmd=c, d=lev(PERINTAH, c)}
+            end
+            table.sort(scores, function(a,b) return a.d < b.d end)
+            io.write('\27[33m')
+            print("Command '" .. PERINTAH .. "' gak dikenal. Maksud kamu?")
+            for i = 1, math.min(5, #scores) do
+                print("  zenx " .. scores[i].cmd)
+            end
+            io.write('\27[0m')
+            return
+        end
+    end
+end
+
 hapus(STOP_FILE)   -- sisa dari sesi sebelumnya
 
 local cfg=load_config()
