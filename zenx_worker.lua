@@ -6439,7 +6439,7 @@ local function run(cfg)
         end
 
         -- v9.609: delta_split -> enforce landscape via wm user-rotation lock (lebih dalam dari settings put)
-        if cfg.delta_split and (now - lastLandscapeCek) >= 10 then
+        if cfg.delta_split and (now - lastLandscapeCek) >= 3 then
             lastLandscapeCek = now
             local rot = tonumber((sh("su -c 'settings get system user_rotation'") or ""):match("%d+"))
             if rot ~= 1 then
