@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.15"
+local VERSION = "v35.16"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5846,6 +5846,8 @@ local function automationLoop()
             -- v35.14: filter Koi = semua Hatch Tim yang BUKAN Brontosaurus
             -- (Koi bisa punya nama "Golden Koi", "Rainbow Koi", dll — tapi bukan Bronto)
             -- nWant = 5 (target Koi), bukan total Hatch Tim (yang include Bronto)
+            -- v35.16: _brontoSet diisi dari backpack SEBELUM equip (saat pet masih bisa diidentifikasi)
+            local _brontoSet = {}  -- clean UUID -> true, diisi di bawah sebelum equipTeam("Hatch Tim")
             local function _scanHatchTim()
                 local td = teamData["Hatch Tim"]
                 if not td or not td.selected then return 0, 5, "" end
@@ -5855,13 +5857,16 @@ local function automationLoop()
                 local function ownMe(d) local c=d for _=1,6 do if not c or c==Workspace then break end
                     local o=c:GetAttribute("owner") or c:GetAttribute("OWNER") or c:GetAttribute("Owner") or c:GetAttribute("UserId")
                     if o~=nil then return tostring(o)==myName or tostring(o)==myId end c=c.Parent end return nil end
-                -- v35.14: cek UUID apakah Bronto (kalau Bronto = bukan Koi)
-                -- pakai nameCache/typeCache, lalu attr model, lalu nama model sebagai fallback
+                -- v35.16: cek UUID apakah Bronto
+                -- prioritas: _brontoSet (dari scan backpack pra-equip) > nameCache > typeCache > _gardenName > attr/model
                 local function isBrontoUUID(clean)
+                    if _brontoSet[clean] ~= nil then return _brontoSet[clean] end
                     local nc = PetDetect.nameCache and PetDetect.nameCache[clean]
                     if nc then return tostring(nc):lower():find("brontosaurus") ~= nil end
                     local tc = PetDetect.typeCache and PetDetect.typeCache[clean]
                     if tc then return tostring(tc):lower():find("brontosaurus") ~= nil end
+                    local gn = PetDetect._gardenName and PetDetect._gardenName[clean]
+                    if gn then return tostring(gn):lower():find("brontosaurus") ~= nil end
                     return nil  -- cache miss, akan cek dari model
                 end
                 local n=0; local uuids={}
@@ -5907,6 +5912,40 @@ local function automationLoop()
                 pcall(clearGarden)
                 waitInterrupt(3)  -- kasih waktu Bronto keluar
                 if not globalRunning then break end
+                -- v35.16: scan backpack sekarang (pet masih di backpack sebelum di-equip)
+                -- build _brontoSet: uuid -> true/false berdasarkan nama tool di backpack
+                do
+                    local _htSel2 = teamData["Hatch Tim"] and teamData["Hatch Tim"].selected or {}
+                    local _bpHolder = player:FindFirstChild("Backpack")
+                    local _chHolder = player.Character
+                    local function _scanHolder(h)
+                        if not h then return end
+                        for _, t in ipairs(h:GetChildren()) do
+                            if t:IsA("Tool") then
+                                local u = t:GetAttribute("PET_UUID")
+                                if u then
+                                    local cl = tostring(u):gsub("[{}]","")
+                                    if _htSel2[u] or _htSel2[cl] or _htSel2["{"..cl.."}"] then
+                                        local isBronto = t.Name:lower():find("brontosaurus") ~= nil
+                                        _brontoSet[cl] = isBronto
+                                        -- juga isi nameCache kalau belum ada
+                                        if not PetDetect.nameCache[cl] then
+                                            local bn = t.Name:gsub("%s*%[.-%]",""):gsub("%s+$","")
+                                            if bn ~= "" then PetDetect.nameCache[cl] = bn end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    _scanHolder(_bpHolder); _scanHolder(_chHolder)
+                    -- log hasilnya
+                    local _bList = {}
+                    for cl, isB in pairs(_brontoSet) do
+                        table.insert(_bList, cl:sub(1,8).."="..(isB and "B" or "K"))
+                    end
+                    print("[HactTelur] _brontoSet: "..#_bList.." entries — "..table.concat(_bList, ", "))
+                end
                 -- v34.70: force re-equip Hatch Tim (jangan skip meski currentTeam == "Hatch Tim")
                 Auto.currentTeam = nil
                 -- v34.74: debug — tampilkan jumlah pet di Hatch Tim selected
