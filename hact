@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.13"
+local VERSION = "v35.14"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -5827,7 +5827,8 @@ local function automationLoop()
             -- 2) slot penuh ATAU egg habis tapi ada di garden: cek ready
             -- v35.09: _scanHatchTim diangkat ke sini (shared antara hatch-all & hatch sebagian)
             -- sebelumnya local function di dalam blok allReady -> nil di blok 60% -> loop hang
-            -- v35.11: filter Koi only — nIn hanya hitung model yang namanya mengandung "Koi"
+            -- v35.14: filter Koi = semua Hatch Tim yang BUKAN Brontosaurus
+            -- (Koi bisa punya nama "Golden Koi", "Rainbow Koi", dll — tapi bukan Bronto)
             -- nWant = 5 (target Koi), bukan total Hatch Tim (yang include Bronto)
             local function _scanHatchTim()
                 local td = teamData["Hatch Tim"]
@@ -5838,15 +5839,33 @@ local function automationLoop()
                 local function ownMe(d) local c=d for _=1,6 do if not c or c==Workspace then break end
                     local o=c:GetAttribute("owner") or c:GetAttribute("OWNER") or c:GetAttribute("Owner") or c:GetAttribute("UserId")
                     if o~=nil then return tostring(o)==myName or tostring(o)==myId end c=c.Parent end return nil end
+                -- v35.14: cek UUID apakah Bronto (kalau Bronto = bukan Koi)
+                -- pakai nameCache/typeCache, lalu attr model, lalu nama model sebagai fallback
+                local function isBrontoUUID(clean)
+                    local nc = PetDetect.nameCache and PetDetect.nameCache[clean]
+                    if nc then return tostring(nc):lower():find("brontosaurus") ~= nil end
+                    local tc = PetDetect.typeCache and PetDetect.typeCache[clean]
+                    if tc then return tostring(tc):lower():find("brontosaurus") ~= nil end
+                    return nil  -- cache miss, akan cek dari model
+                end
                 local n=0; local uuids={}
                 pcall(function() local pp=Workspace:FindFirstChild("PetsPhysical"); if not pp then return end
                     local seen={} for _,m in ipairs(pp:GetDescendants()) do if m:IsA("Model") then
                         local uuid=m:GetAttribute("PET_UUID"); local raw=uuid and tostring(uuid) or m.Name
                         local clean=raw:gsub("[{}]","")
-                        -- v35.11: hanya hitung Koi (bukan Bronto dll), cek nama model
-                        local isKoi = m.Name:lower():find("koi") ~= nil
-                        if want[clean] and isKoi and not seen[clean] and ownMe(m)~=false then
-                            seen[clean]=true; n=n+1; table.insert(uuids, clean:sub(1,8)) end end end end)
+                        if want[clean] and not seen[clean] and ownMe(m)~=false then
+                            -- cek apakah Bronto: cache -> attr -> nama model
+                            local brontoCheck = isBrontoUUID(clean)
+                            if brontoCheck == nil then
+                                local pt = m:GetAttribute("PET_TYPE") or m:GetAttribute("PetType") or m:GetAttribute("PET_NAME") or m:GetAttribute("PetName")
+                                local nm = pt and tostring(pt) or m.Name
+                                brontoCheck = nm:lower():find("brontosaurus") ~= nil
+                            end
+                            -- hitung kalau bukan Bronto (= semua Koi variant)
+                            if not brontoCheck then
+                                seen[clean]=true; n=n+1; table.insert(uuids, clean:sub(1,8))
+                            end
+                        end end end end)
                 return n, 5, table.concat(uuids, ",")  -- nWant selalu 5 (target Koi)
             end
             local allReady, total, ready = allEggsReady()
