@@ -5679,6 +5679,10 @@ local function automationLoop()
                 Auto.eggPhase = "hatch"  -- v26.5: fase hatch -> pencet egg tiap 6s
                 print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
                 _G.__hactDbgExtra = ("✅ hatch: semua ready %d/%d, pasang Koi..."):format(ready, total)
+                -- v34.70: force re-equip Hatch Tim (jangan skip meski currentTeam == "Hatch Tim")
+                -- dulu kalau currentTeam sudah "Hatch Tim" dari iterasi sebelumnya, equipTeam skip
+                -- padahal Koi sudah keluar garden waktu balik reduce
+                Auto.currentTeam = nil
                 equipTeam("Hatch Tim")
                 waitInterrupt(3)  -- v33.95: interruptible (kasih waktu pet Reduce keluar garden)
                 if not globalRunning then equipTeam("Reduce Tim") break end
@@ -5701,10 +5705,11 @@ local function automationLoop()
                     ok = false
                 end
                 if not ok then
-                    -- v24.6: balik Reduce + tunggu (jgn loop hatch terus / clearGarden async yg bentrok)
-                    print("[HactTelur] tim Koi GAK LENGKAP ("..nKoi.."), balik Reduce, tunggu...")
-                    _G.__hactDbgExtra = ("❌ Koi gak lengkap ("..nKoi.."), balik reduce")
-                    equipTeam("Reduce Tim")
+                    -- v34.70: kalau Koi gak masuk garden, JANGAN balik Reduce (egg masih ready!)
+                    -- cukup tunggu sebentar lalu coba lagi di iterasi berikutnya
+                    -- (balik Reduce dulu = eggPhase jadi reduce = fase 1 lagi, padahal egg sudah ready)
+                    print("[HactTelur] tim Koi GAK LENGKAP ("..nKoi.."), tunggu, coba lagi...")
+                    _G.__hactDbgExtra = ("❌ Koi gak lengkap ("..nKoi.."), tunggu coba lagi...")
                     waitInterrupt(3)  -- v33.95: interruptible
                 else
                     print("[HactTelur] tim Koi LENGKAP ("..countGardenPets().."), tunggu "..hd.." detik...")
@@ -5734,6 +5739,8 @@ local function automationLoop()
                 Auto.eggPhase = "hatch"  -- v26.5: fase hatch -> pencet egg tiap 6s
                 print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
                 _G.__hactDbgExtra = ("⏳ hatch sebagian: %d/%d ready"):format(ready, total)
+                -- v34.70: force re-equip Hatch Tim (sama seperti hatch-all)
+                Auto.currentTeam = nil
                 equipTeam("Hatch Tim")
                 waitInterrupt(3)  -- v33.95: interruptible (kasih waktu pet Reduce keluar garden)
                 if not globalRunning then equipTeam("Reduce Tim") break end
@@ -5752,11 +5759,10 @@ local function automationLoop()
                     ok = false
                 end
                 if not ok then
-                    -- v24.6: tim Koi gak lengkap -> BALIK ke Reduce + TUNGGU (jgn loop hatch terus).
-                    -- dulu cuma clearGarden async -> bentrok sama equipTeam berikutnya -> 0 pet -> loop.
-                    print("[HactTelur] tim Koi GAK LENGKAP ("..nKoi2.."), balik Reduce, tunggu egg sisanya...")
-                    _G.__hactDbgExtra = ("❌ Koi gak lengkap, nunggu sisa %d egg"):format(total-ready)
-                    equipTeam("Reduce Tim")
+                    -- v34.70: kalau Koi gak masuk, jangan balik Reduce (egg masih ready!)
+                    -- cukup tunggu lalu coba lagi di iterasi berikutnya
+                    print("[HactTelur] tim Koi GAK LENGKAP ("..nKoi2.."), tunggu, coba lagi...")
+                    _G.__hactDbgExtra = ("❌ Koi gak lengkap, tunggu coba lagi sisa %d egg"):format(total-ready)
                     waitInterrupt(3)  -- v33.95: interruptible (kasih waktu egg sisa ready)
                 else
                     print("[HactTelur] Koi LENGKAP ("..nKoi2.."), tunggu 6 detik...")
