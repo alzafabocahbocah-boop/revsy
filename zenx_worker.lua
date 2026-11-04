@@ -10678,6 +10678,7 @@ end
 
 -- v9.601: zenx arceus 1 / arceus 2 / arceus 1-2
 -- v9.617: fix zenx arceus -- hapus $ anchor (bukan valid Lua pattern), pakai gmatch candidate loop biar slot1 gak match _clone
+-- v9.618: zenx arceus pm install pakai -d (allow downgrade)
 if PERINTAH == "arceus" then
     local rentang = arg[2] or ""
     local nums = {}
@@ -10739,7 +10740,7 @@ if PERINTAH == "arceus" then
                 print("[" .. s.label .. "] download GAGAL/partial (" .. math.floor(sz/1048576) .. "MB) -> SKIP")
             else
                 print("[" .. s.label .. "] " .. math.floor(sz/1048576) .. "MB, install...")
-                local r = sh("su -c 'cat \"" .. s.out .. "\" | pm install -r -S " .. sz .. "' 2>&1") or ""
+                local r = sh("su -c 'cat \"" .. s.out .. "\" | pm install -r -d -S " .. sz .. "' 2>&1") or ""
                 print("[" .. s.label .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
             end
             sh("rm -f '" .. s.out .. "' 2>/dev/null")
