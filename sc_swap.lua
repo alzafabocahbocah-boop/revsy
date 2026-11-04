@@ -142,10 +142,10 @@ local function waitSpawn(targetUUID, timeoutSec)
     local conn = workspace.DescendantAdded:Connect(function(d)
         if done then return end
         if not isPetModel(d) then return end
-        -- model name bisa "{cbec051d-..." atau "cbec051d-..."
-        -- strip { lalu ambil 8 char pertama
+        -- log semua pet model yang spawn (buat debug)
         local dName = d.Name
         local dRaw8 = dName:sub(1,1) == "{" and dName:sub(2,9) or dName:sub(1,8)
+        push("DBG", "spawn=" .. dRaw8 .. " want=" .. raw8 .. (dRaw8==raw8 and " MATCH" or " skip"))
         if dRaw8 ~= raw8 then return end
         task.defer(function()
             if done then return end
@@ -294,4 +294,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "sc_swap v2.1 ready | equipRE=" .. (equipRE and "OK" or "NIL"))
+push("INIT", "sc_swap v2.2d ready | equipRE=" .. (equipRE and "OK" or "NIL"))
