@@ -10679,6 +10679,13 @@ end
 -- v9.601: zenx arceus 1 / arceus 2 / arceus 1-2
 -- v9.617: fix zenx arceus -- hapus $ anchor (bukan valid Lua pattern), pakai gmatch candidate loop biar slot1 gak match _clone
 -- v9.618: zenx arceus pm install pakai -d (allow downgrade)
+-- v9.619: zenx uld -- shortcut jalanin uplevelnew-delta langsung
+if PERINTAH == "uld" then
+    print("Jalanin uplevelnew-delta...")
+    os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-delta")
+    return
+end
+
 if PERINTAH == "arceus" then
     local rentang = arg[2] or ""
     local nums = {}
