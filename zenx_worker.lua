@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.629"
+local VERSION = "9.630"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10699,8 +10699,9 @@ end
 -- v9.619: zenx uld -- shortcut jalanin uplevelnew-delta langsung
 -- v9.620: zenx level <delta> / zenx up3.8kg <delta> -- jalanin script dengan nilai delta
 if PERINTAH == "uld" then
+    local lua = os.getenv("PREFIX") and (os.getenv("PREFIX") .. "/bin/lua5.4") or "lua5.4"
     print("Jalanin uplevelnew-delta...")
-    os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s uplevelnew-delta")
+    os.execute(lua .. " " .. (arg and arg[0] or "zenx_worker.lua") .. " pasang uplevelnew-delta")
     return
 end
 
@@ -10722,7 +10723,8 @@ local function zenx_script_shortcut(perintah, sub)
         return true
     end
     print("Jalanin " .. script .. "...")
-    os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s " .. script)
+    local lua = os.getenv("PREFIX") and (os.getenv("PREFIX") .. "/bin/lua5.4") or "lua5.4"
+    os.execute(lua .. " " .. (arg and arg[0] or "zenx_worker.lua") .. " pasang " .. script)
     return true
 end
 
