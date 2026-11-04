@@ -2523,6 +2523,8 @@ do
 
             -- skill → langsung swap, tanpa cek isSupport/animTriggerOk
             local SWAP_ANIM = { frill=true, fan=true, roar=true, flyup=true, pee=true, pew=true }
+            -- pet yang di-blacklist meski animStr cocok (mis. T-Rex roar bukan Lion)
+            local ANIM_BLACKLIST = { roar = { "trex", "t-rex", "tyrannosaurus" } }
             -- kind yg UUID-nya bisa milik orang lain → lookup dari supportKunci
             local LOOKUP_KW = {
                 flyup = { "peryton", "gilded" },
@@ -2546,6 +2548,25 @@ do
                     local anim = tostring(animStr):lower()
                     if not SWAP_ANIM[anim] then continue end
                     if not _G.ZenxSuppSwapOn then continue end
+                    -- blacklist: skip kalau pet tipe ini di-blacklist untuk animStr ini
+                    do
+                        local bl = ANIM_BLACKLIST[anim]
+                        if bl then
+                            local pt = ""
+                            pcall(function()
+                                local fmtU = "{"..r.."}"
+                                local e = _kgContainer and (_kgContainer[fmtU] or _kgContainer[r])
+                                if type(e) == "table" then
+                                    pt = tostring(e.PetType or (e.PetData and e.PetData.PetType) or ""):lower()
+                                end
+                            end)
+                            local blocked = false
+                            for _, bkw in ipairs(bl) do
+                                if pt:find(bkw, 1, true) then blocked = true; break end
+                            end
+                            if blocked then continue end
+                        end
+                    end
                     -- debounce 0.5s per uuid
                     local r8 = r:sub(1,8)
                     if _debounce[r8] and (now - _debounce[r8]) < 0.5 then continue end
