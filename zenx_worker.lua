@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.628"
+local VERSION = "9.629"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10704,11 +10704,6 @@ if PERINTAH == "uld" then
     return
 end
 
-if PERINTAH == "level" then
-    zenx_script_shortcut("level", arg and arg[2] or "")
-    return
-end
-
 -- v9.624: shortcut script lengkap (10=arceus, 15=delta)
 local function zenx_script_shortcut(perintah, sub)
     local MAP = {
@@ -10729,6 +10724,11 @@ local function zenx_script_shortcut(perintah, sub)
     print("Jalanin " .. script .. "...")
     os.execute("curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh -s " .. script)
     return true
+end
+
+if PERINTAH == "level" then
+    zenx_script_shortcut("level", arg and arg[2] or "")
+    return
 end
 
 if PERINTAH == "up3.8kg" or PERINTAH == "telur" or PERINTAH == "up6kg" or PERINTAH == "market" then
