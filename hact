@@ -8614,126 +8614,8 @@ miscToggleRow(12.95, "Debug Seal %", "Print nilai % per pet ke console (F9)", fu
     print("[HactTelur] Debug Seal% "..(on and "ON - buka console (F9), pilih tim sell ulang" or "OFF"))
 end)
 
--- 5) WEBHOOK DISCORD (input URL + toggle)
-local function _buildWebhookSection() do
-    local row = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = C.card, LayoutOrder = 13, Parent = miscScroll })
-    corner(row, 8); stroke(row, C.border, 1)
-    local t = lbl(row, "Webhook Discord", 13, C.text, Enum.TextXAlignment.Left); t.Font = FONT_B
-    t.Position = UDim2.new(0, 14, 0, 9); t.Size = UDim2.new(1, -80, 0, 18)
-    local d = lbl(row, "Notif tiap hatch & sell", 11, C.textDim, Enum.TextXAlignment.Left)
-    d.Position = UDim2.new(0, 14, 0, 28); d.Size = UDim2.new(1, -80, 0, 16)
-    -- toggle
-    local sw = mk("TextButton", {
-        Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -58, 0, 14),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = row })
-    corner(sw, 12)
-    local knob = mk("Frame", {
-        Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 3, 0.5, -9),
-        BackgroundColor3 = C.textDim, Parent = sw })
-    corner(knob, 9)
-    sw.MouseButton1Click:Connect(function()
-        Webhook.enabled = not Webhook.enabled
-        sw.BackgroundColor3 = Webhook.enabled and C.accent or C.input
-        knob.BackgroundColor3 = Webhook.enabled and Color3.fromRGB(17,17,17) or C.textDim
-        knob.Position = Webhook.enabled and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-        if Webhook.enabled and Webhook.url ~= "" then
-            sendWebhook("✅ Webhook Aktif", "Notif hatch & sell nyala.", 3066993)
-        end
-    end)
-    -- input URL
-    local urlBox = mk("TextBox", {
-        Size = UDim2.new(1, -28, 0, 30), Position = UDim2.new(0, 14, 0, 54),
-        BackgroundColor3 = C.input, Text = "", PlaceholderText = "Tempel URL webhook discord...",
-        Font = FONT, TextSize = 21, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
-        ClearTextOnFocus = false, ClipsDescendants = true, Parent = row })
-    corner(urlBox, 6); stroke(urlBox, C.border, 1); pad(urlBox, 8)
-    urlBox.FocusLost:Connect(function()
-        Webhook.url = urlBox.Text:gsub("%s+", "")
-        if _G.__hactSave then pcall(_G.__hactSave) end
-    end)
-    _G.HactTelurSetWebhookUI = function(url)
-        urlBox.Text = url or ""
-    end
-end end _buildWebhookSection()  -- v33.99
-
--- ======= v27.160: SELL ONLY (SEAL) — skip automation normal, langsung Seal + jual pakai sell rule aktif ======
-local function _buildSellOnlySection() do
-    local soRunning = false
-    local soGen = 0
-
-    local soRow = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
-        LayoutOrder = 14, Parent = miscScroll })
-    corner(soRow, 8); stroke(soRow, C.border, 1)
-
-    local soTitle = lbl(soRow, "Sell Only (Seal)", 13, C.text, Enum.TextXAlignment.Left)
-    soTitle.Font = FONT_B; soTitle.Position = UDim2.new(0,14,0,9); soTitle.Size = UDim2.new(1,-80,0,18)
-    local soDesc = lbl(soRow, "Skip hatch, Seal langsung, jual pakai sell rule aktif", 11, C.textDim, Enum.TextXAlignment.Left)
-    soDesc.Position = UDim2.new(0,14,0,28); soDesc.Size = UDim2.new(1,-80,0,16)
-
-    local soSw = mk("TextButton", {
-        Size = UDim2.new(0,44,0,24), Position = UDim2.new(1,-58,0.5,-12),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = soRow })
-    corner(soSw, 12)
-    local soKnob = mk("Frame", {
-        Size = UDim2.new(0,18,0,18), Position = UDim2.new(0,3,0.5,-9),
-        BackgroundColor3 = C.textDim, Parent = soSw })
-    corner(soKnob, 9)
-
-    local function soApplyVisual()
-        soSw.BackgroundColor3 = soRunning and C.accent or C.input
-        soKnob.BackgroundColor3 = soRunning and Color3.fromRGB(17,17,17) or C.textDim
-        soKnob.Position = soRunning and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9)
-    end
-
-    local function runSellOnly(gen)
-        print("[HactTelur] SellOnly START gen="..gen)
-        while soRunning and soGen == gen do
-            if not isBackpackFull() then
-                task.wait(0.5)
-            else
-                local ok, err = pcall(function()
-                    favTeamPets()
-                    pcall(syncFavByRules)
-                    task.wait(3)
-                    pcall(syncFavByRules)
-                    task.wait(0.5)
-                    if not soRunning or soGen ~= gen then return end
-                    equipTeam("Sell Tim")
-                    local okSell = waitTeamInGarden("Sell Tim", 15)
-                    if okSell then
-                        local sd = config.hatchDelay or 6
-                        print("[HactTelur] SellOnly: tim Seal lengkap, tunggu "..sd.."s...")
-                        task.wait(sd)
-                        if not soRunning or soGen ~= gen then return end
-                        pcall(syncFavByRules); task.wait(0.6)
-                        local sold = doAutoSell()
-                        Auto.bpFullFlag = false
-                        Auto.lastSellTime = tick()
-                        task.wait(1)
-                        PetDetect.rebuild(true)
-                        print("[HactTelur] SellOnly: sold="..tostring(sold))
-                    else
-                        print("[HactTelur] SellOnly: tim Seal gak lengkap, batal")
-                        Auto.bpFullFlag = false
-                        task.spawn(function() pcall(clearGarden) end)
-                    end
-                end)
-                if not ok then print("[HactTelur] SellOnly err: "..tostring(err)) end
-                task.wait(2)
-            end
-        end
-        print("[HactTelur] SellOnly STOP gen="..gen)
-    end
-
-    soSw.MouseButton1Click:Connect(function()
-        soRunning = not soRunning
-        soApplyVisual()
-        soGen = soGen + 1
-        if soRunning then task.spawn(runSellOnly, soGen) end
-    end)
-end end _buildSellOnlySection()  -- v33.98
+-- 5) WEBHOOK DISCORD + SELL ONLY dipindah ke luar __hactMain (v34.73: fix Luau 200 locals limit)
+-- dipanggil setelah end __hactMain() di bawah, dengan upvalue dari _G
 
 -- toggle tampilan AUTO HACT vs MISC vs MANUAL
 showMiscFn = function(on)
@@ -10385,6 +10267,25 @@ _G.__hactMiscToggleRefreshers = miscToggleRefreshers
 _G.__hactFruitData = fruitData
 -- v34.72: expose Auto biar debug panel bisa baca eggPhase
 _G.__hactAuto = Auto
+-- v34.73: expose upvalue untuk _buildWebhookSection + _buildSellOnlySection
+_G.__hactMk = mk
+_G.__hactC = C
+_G.__hactCorner = corner
+_G.__hactStroke = stroke
+_G.__hactLbl = lbl
+_G.__hactPad = pad
+_G.__hactFontB = FONT_B
+_G.__hactFont = FONT
+_G.__hactMiscScroll = miscScroll
+_G.__hactSendWebhook = sendWebhook
+_G.__hactIsBackpackFull = isBackpackFull
+_G.__hactFavTeamPets = favTeamPets
+_G.__hactSyncFavByRules = syncFavByRules
+_G.__hactEquipTeam = equipTeam
+_G.__hactWaitTeamInGarden = waitTeamInGarden
+_G.__hactDoAutoSell = doAutoSell
+_G.__hactClearGarden = clearGarden
+_G.__hactPetDetect = PetDetect
 end __hactMain()  -- v34.63: tutup __hactMain lebih awal, save/load di scope terpisah
 
 -- ============ SAVE / LOAD CONFIG (biar gak pilih ulang pas rejoin) ============
@@ -10631,6 +10532,131 @@ task.spawn(function()
         if _G.__hactSave then pcall(_G.__hactSave) end
     end
 end)
+
+-- ============ WEBHOOK + SELL ONLY (dipindah keluar __hactMain v34.73) ============
+local function _buildWebhookSection() do
+local mk=_G.__hactMk; local C=_G.__hactC; local corner=_G.__hactCorner
+local stroke=_G.__hactStroke; local lbl=_G.__hactLbl; local pad=_G.__hactPad
+local FONT_B=_G.__hactFontB; local FONT=_G.__hactFont
+local miscScroll=_G.__hactMiscScroll; local Webhook=_G.__hactWebhook
+local sendWebhook=_G.__hactSendWebhook
+    local row = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = C.card, LayoutOrder = 13, Parent = miscScroll })
+    corner(row, 8); stroke(row, C.border, 1)
+    local t = lbl(row, "Webhook Discord", 13, C.text, Enum.TextXAlignment.Left); t.Font = FONT_B
+    t.Position = UDim2.new(0, 14, 0, 9); t.Size = UDim2.new(1, -80, 0, 18)
+    local d = lbl(row, "Notif tiap hatch & sell", 11, C.textDim, Enum.TextXAlignment.Left)
+    d.Position = UDim2.new(0, 14, 0, 28); d.Size = UDim2.new(1, -80, 0, 16)
+    local sw = mk("TextButton", {
+        Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -58, 0, 14),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = row })
+    corner(sw, 12)
+    local knob = mk("Frame", {
+        Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 3, 0.5, -9),
+        BackgroundColor3 = C.textDim, Parent = sw })
+    corner(knob, 9)
+    sw.MouseButton1Click:Connect(function()
+        Webhook.enabled = not Webhook.enabled
+        sw.BackgroundColor3 = Webhook.enabled and C.accent or C.input
+        knob.BackgroundColor3 = Webhook.enabled and Color3.fromRGB(17,17,17) or C.textDim
+        knob.Position = Webhook.enabled and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+        if Webhook.enabled and Webhook.url ~= "" then
+            sendWebhook("✅ Webhook Aktif", "Notif hatch & sell nyala.", 3066993)
+        end
+    end)
+    local urlBox = mk("TextBox", {
+        Size = UDim2.new(1, -28, 0, 30), Position = UDim2.new(0, 14, 0, 54),
+        BackgroundColor3 = C.input, Text = "", PlaceholderText = "Tempel URL webhook discord...",
+        Font = FONT, TextSize = 21, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false, ClipsDescendants = true, Parent = row })
+    corner(urlBox, 6); stroke(urlBox, C.border, 1); pad(urlBox, 8)
+    urlBox.FocusLost:Connect(function()
+        Webhook.url = urlBox.Text:gsub("%s+", "")
+        if _G.__hactSave then pcall(_G.__hactSave) end
+    end)
+    _G.HactTelurSetWebhookUI = function(url)
+        urlBox.Text = url or ""
+    end
+end end _buildWebhookSection()
+
+local function _buildSellOnlySection() do
+local mk=_G.__hactMk; local C=_G.__hactC; local corner=_G.__hactCorner
+local lbl=_G.__hactLbl; local FONT_B=_G.__hactFontB
+local miscScroll=_G.__hactMiscScroll; local config=_G.__hactConfig
+local Auto=_G.__hactAuto; local isBackpackFull=_G.__hactIsBackpackFull
+local favTeamPets=_G.__hactFavTeamPets; local syncFavByRules=_G.__hactSyncFavByRules
+local equipTeam=_G.__hactEquipTeam; local waitTeamInGarden=_G.__hactWaitTeamInGarden
+local doAutoSell=_G.__hactDoAutoSell; local clearGarden=_G.__hactClearGarden
+local PetDetect=_G.__hactPetDetect
+    local soRunning = false
+    local soGen = 0
+    local soRow = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        LayoutOrder = 14, Parent = miscScroll })
+    corner(soRow, 8)
+    local soTitle = lbl(soRow, "Sell Only (Seal)", 13, C.text, Enum.TextXAlignment.Left)
+    soTitle.Font = FONT_B; soTitle.Position = UDim2.new(0,14,0,9); soTitle.Size = UDim2.new(1,-80,0,18)
+    local soDesc = lbl(soRow, "Skip hatch, Seal langsung, jual pakai sell rule aktif", 11, C.textDim, Enum.TextXAlignment.Left)
+    soDesc.Position = UDim2.new(0,14,0,28); soDesc.Size = UDim2.new(1,-80,0,16)
+    local soSw = mk("TextButton", {
+        Size = UDim2.new(0,44,0,24), Position = UDim2.new(1,-58,0.5,-12),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = soRow })
+    corner(soSw, 12)
+    local soKnob = mk("Frame", {
+        Size = UDim2.new(0,18,0,18), Position = UDim2.new(0,3,0.5,-9),
+        BackgroundColor3 = C.textDim, Parent = soSw })
+    corner(soKnob, 9)
+    local function soApplyVisual()
+        soSw.BackgroundColor3 = soRunning and C.accent or C.input
+        soKnob.BackgroundColor3 = soRunning and Color3.fromRGB(17,17,17) or C.textDim
+        soKnob.Position = soRunning and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9)
+    end
+    local function runSellOnly(gen)
+        print("[HactTelur] SellOnly START gen="..gen)
+        while soRunning and soGen == gen do
+            if not isBackpackFull() then
+                task.wait(0.5)
+            else
+                local ok, err = pcall(function()
+                    favTeamPets()
+                    pcall(syncFavByRules)
+                    task.wait(3)
+                    pcall(syncFavByRules)
+                    task.wait(0.5)
+                    if not soRunning or soGen ~= gen then return end
+                    equipTeam("Sell Tim")
+                    local okSell = waitTeamInGarden("Sell Tim", 15)
+                    if okSell then
+                        local sd = config.hatchDelay or 6
+                        print("[HactTelur] SellOnly: tim Seal lengkap, tunggu "..sd.."s...")
+                        task.wait(sd)
+                        if not soRunning or soGen ~= gen then return end
+                        pcall(syncFavByRules); task.wait(0.6)
+                        local sold = doAutoSell()
+                        Auto.bpFullFlag = false
+                        Auto.lastSellTime = tick()
+                        task.wait(1)
+                        PetDetect.rebuild(true)
+                        print("[HactTelur] SellOnly: sold="..tostring(sold))
+                    else
+                        print("[HactTelur] SellOnly: tim Seal gak lengkap, batal")
+                        Auto.bpFullFlag = false
+                        task.spawn(function() pcall(clearGarden) end)
+                    end
+                end)
+                if not ok then print("[HactTelur] SellOnly err: "..tostring(err)) end
+                task.wait(2)
+            end
+        end
+        print("[HactTelur] SellOnly STOP gen="..gen)
+    end
+    soSw.MouseButton1Click:Connect(function()
+        soRunning = not soRunning
+        soApplyVisual()
+        soGen = soGen + 1
+        if soRunning then task.spawn(runSellOnly, soGen) end
+    end)
+end end _buildSellOnlySection()
 
 -- v19.1: AUTO START — kalau toggle aktif, mulai automation otomatis setelah load/rejoin
 task.spawn(function()
