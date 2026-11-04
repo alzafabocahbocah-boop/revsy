@@ -1537,11 +1537,46 @@ do
         local ge = RS:FindFirstChild("GameEvents")
         local pcu = ge and ge:FindFirstChild("PetCooldownsUpdated")
         local req = ge and ge:FindFirstChild("RequestPetCooldowns")
+        -- gilded ready loop: debounce per uuid
+        local _gildedDebounce = {}
+        local function isGilded(uuid)
+            local bp = plr:FindFirstChild("Backpack")
+            local char = plr.Character
+            for _, cont in ipairs({bp, char}) do
+                if not cont then continue end
+                for _, t in ipairs(cont:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local u = tostring(t:GetAttribute("PET_UUID") or ""):gsub("[{}]","")
+                        if u == uuid then
+                            local f = tostring(t:GetAttribute("f") or ""):lower()
+                            if f:find("gilded",1,true) or f:find("peryton",1,true) then
+                                return true
+                            end
+                        end
+                    end
+                end
+            end
+            return false
+        end
         if pcu and pcu:IsA("RemoteEvent") then
             pcu.OnClientEvent:Connect(function(uuid, data)
                 local key = tostring(uuid):gsub("[{}]", "")
                 local rdy = readyDariData(data)
                 cdEventCache[key] = { ready = rdy == true, at = tick() }
+                -- gilded: swap langsung dari PCU, bypass supportKunci
+                if rdy == true then
+                    local now = tick()
+                    if not _gildedDebounce[key] or (now - _gildedDebounce[key]) >= 1.0 then
+                        if isGilded(key) then
+                            _gildedDebounce[key] = now
+                            task.spawn(function()
+                                unequipPet(key)
+                                task.wait(0.03)
+                                equipPet(key)
+                            end)
+                        end
+                    end
+                end
             end)
         end
         if req and req:IsA("RemoteEvent") then pcall(function() req:FireServer() end) end
