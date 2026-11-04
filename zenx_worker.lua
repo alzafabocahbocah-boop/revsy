@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.624"
+local VERSION = "9.625"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10780,7 +10780,13 @@ if PERINTAH == "arceus" then
                 print("[" .. s.label .. "] download GAGAL/partial (" .. math.floor(sz/1048576) .. "MB) -> SKIP")
             else
                 print("[" .. s.label .. "] " .. math.floor(sz/1048576) .. "MB, install...")
+                local pkg = (n == 1) and "com.roblox.client" or "com.roblox.client.clone"
                 local r = sh("su -c 'cat \"" .. s.out .. "\" | pm install -r -d -S " .. sz .. "' 2>&1") or ""
+                if r:find("INCOMPATIBLE") or r:find("signatures do not match") then
+                    print("[" .. s.label .. "] signature beda — uninstall dulu lalu install ulang...")
+                    sh("su -c 'pm uninstall " .. pkg .. "' 2>/dev/null")
+                    r = sh("su -c 'cat \"" .. s.out .. "\" | pm install -d -S " .. sz .. "' 2>&1") or ""
+                end
                 print("[" .. s.label .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
             end
             sh("rm -f '" .. s.out .. "' 2>/dev/null")
