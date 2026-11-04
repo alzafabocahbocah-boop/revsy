@@ -1,4 +1,5 @@
--- uplevelnew v8.463
+-- uplevelnew v8.464
+-- v8.464: guard enforceEquip pcall+log buat trace crash di sesi1/sesi2
 -- v8.463: fix getMtsPets crash (sesiPool nil guard) + debug NMPoller log attrs
 -- v8.462: debug log attribute buah buat cek kenapa nightmare gak ke-detect
 -- v8.461: startup 10s tap kanan atas layar (lewatin loading screen)
@@ -3847,16 +3848,23 @@ end
 local function enforceEquip(allowedDef)
     -- skip kalau AUTO MTS sedang running — MTS punya lineup sendiri, jangan diusik
     if _G.ZenxMutRunning then return end
+    if type(allowedDef) ~= "table" then
+        addLog("[enforceEquip] SKIP: allowedDef bukan table = "..tostring(allowedDef))
+        return
+    end
     local allowed = {}
     for _, d in ipairs(allowedDef) do allowed[d.nama] = true end
-    for uuid in pairs(modelByUuid) do
-        if _bahanUuids[uuid] then continue end
-        local tipe = getPetTipeFromUUID(uuid)
-        if tipe and not allowed[tipe] then
-            addLog("Enforce: unequip '"..tipe.."' (bukan bagian sesi ini)")
-            pcall(function() unequipPet(uuid) end)
+    local ok2, err2 = pcall(function()
+        for uuid in pairs(modelByUuid) do
+            if _bahanUuids[uuid] then continue end
+            local tipe = getPetTipeFromUUID(uuid)
+            if tipe and not allowed[tipe] then
+                addLog("Enforce: unequip '"..tipe.."' (bukan bagian sesi ini)")
+                pcall(function() unequipPet(uuid) end)
+            end
         end
-    end
+    end)
+    if not ok2 then addLog("[enforceEquip] ERR: "..tostring(err2)) end
 end
 
 local function processFruits()
@@ -4027,7 +4035,8 @@ local function runSesiUtama(sesiNum, def, label, col)
     dbgLog("[DBG] masuk loop sesi"..sesiNum)
     while not stopRequested and not _targetReached do
         dbgLog("[DBG] iterasi sesi"..sesiNum)
-        enforceEquip(def)
+        local okEE, errEE = pcall(enforceEquip, def)
+        if not okEE then addLog("[loop] enforceEquip ERR: "..tostring(errEE)) end
         local data = scanFruits()
         local nm = _nmCached  -- baca dari fast poller (0.5s), lebih responsif
         _lastMutasiCount = #data.shovel
@@ -4107,7 +4116,8 @@ local function runSesi2()
     unequipAll(); equipSesi(2,SESI2_DEF); equipOneBahan()
     setStatus("Sesi 2 — tunggu nightmare habis",Color3.fromRGB(220,160,60))
     while not stopRequested do
-        enforceEquip(SESI2_DEF)
+        local okEE2, errEE2 = pcall(enforceEquip, SESI2_DEF)
+        if not okEE2 then addLog("[sesi2] enforceEquip ERR: "..tostring(errEE2)) end
         -- cek bahan age SEBELUM equip baru, biar tidak ganti bahan dulu
         local _allBahanTua = true
         for uuid in pairs(_bahanUuids) do
