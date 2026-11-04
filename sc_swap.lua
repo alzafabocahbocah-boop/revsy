@@ -125,8 +125,8 @@ local SKILL_KIND = {
     roar  = "ROAR",
     fly   = "FLY",    -- peryton skill 1
     flyup = "FLY",    -- peryton skill 2
-    pee   = "FLY",    -- peryton skill 3
-    pew   = "PEW",    -- hotdog
+    pee   = "PEW",    -- hotdog
+    pew   = "PEW",    -- hotdog (fallback)
 }
 -- skill yang perlu delay 200ms sebelum swap
 local SKILL_DELAY = {
