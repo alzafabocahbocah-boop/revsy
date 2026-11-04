@@ -92,11 +92,15 @@ local function fmtUUID(u)
 end
 local function unequipPet(uuid)
     if not equipRE then return end
-    pcall(function() equipRE:FireServer("UnequipPet", fmtUUID(uuid)) end)
+    local fmt = fmtUUID(uuid)
+    push("FIRE", "UNQ " .. fmt)
+    pcall(function() equipRE:FireServer("UnequipPet", fmt) end)
 end
 local function equipPet(uuid)
     if not equipRE then return end
-    pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), nil) end)
+    local fmt = fmtUUID(uuid)
+    push("FIRE", "EQP " .. fmt)
+    pcall(function() equipRE:FireServer("EquipPet", fmt, nil) end)
 end
 
 -- ===== TARGET PET UUID =====
@@ -105,16 +109,23 @@ local function findTargetUUID()
     if _G.ZenxSwapUUID and _G.ZenxSwapUUID ~= "" then
         return _G.ZenxSwapUUID
     end
+    -- cari di backpack DAN character (pet yg lagi di-equip ada di character)
+    local containers = {}
     local bp = plr:FindFirstChild("Backpack")
-    if not bp then return nil end
-    for _, t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") then
-            local uuid = t:GetAttribute("PET_UUID")
-            local f = tostring(t:GetAttribute("f") or ""):lower()
-            if uuid then
-                for _, kw in ipairs(TARGET_TYPES) do
-                    if f:find(kw, 1, true) then
-                        return tostring(uuid)
+    if bp then containers[#containers+1] = bp end
+    local char = plr.Character
+    if char then containers[#containers+1] = char end
+
+    for _, container in ipairs(containers) do
+        for _, t in ipairs(container:GetChildren()) do
+            if t:IsA("Tool") then
+                local uuid = t:GetAttribute("PET_UUID")
+                local f = tostring(t:GetAttribute("f") or ""):lower()
+                if uuid then
+                    for _, kw in ipairs(TARGET_TYPES) do
+                        if f:find(kw, 1, true) then
+                            return tostring(uuid)
+                        end
                     end
                 end
             end
@@ -311,4 +322,4 @@ task.spawn(function()
     end
 end)
 
-push("INIT", "sc_swap v2.3d ready | equipRE=" .. (equipRE and "OK" or "NIL"))
+push("INIT", "sc_swap v2.4d ready | equipRE=" .. (equipRE and "OK" or "NIL"))
