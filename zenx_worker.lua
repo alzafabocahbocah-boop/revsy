@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.630"
+local VERSION = "9.631"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5980,8 +5980,17 @@ local function run(cfg)
                             info(("[denyut-cek] %s: umur=%s")
                                 :format(ak, umur and (umur.."s") or "BELUM ADA FILE"))
                         end
-                        if umur ~= nil and umur <= denyut_fresh_sec(cfg) then
+                        -- v9.631: FORCE_PS_TEMBAK -- langsung tembak ke PS setelah start, skip grace denyut
+                        local forcePsTembak = _G.FORCE_PS_TEMBAK and _G.FORCE_PS_TEMBAK[pkg]
+                            and (os.time() - _G.FORCE_PS_TEMBAK[pkg]) < 300   -- valid 5 menit
+                        if forcePsTembak and mapLink and mapLink[pkg] and mapLink[pkg] ~= "" then
+                            _G.FORCE_PS_TEMBAK[pkg] = nil
+                            KICK_DIURUS["nofile_since:" .. pkg] = nil
+                            perluTembak[#perluTembak+1] = pkg
+                            info(("[antrian] %s FORCE_PS_TEMBAK -> langsung tembak PS (skip grace denyut)"):format(ak or pkg))
+                        elseif umur ~= nil and umur <= denyut_fresh_sec(cfg) then
                             diGame = diGame + 1
+                            if _G.FORCE_PS_TEMBAK then _G.FORCE_PS_TEMBAK[pkg] = nil end   -- denyut fresh, clear flag
                             if KICK_DIURUS["captcha:" .. pkg] then
                                 info(("[antrian] %s CAPTCHA kelar (denyut fresh = masuk game)")
                                     :format(ak or pkg))
@@ -7422,6 +7431,15 @@ local function run(cfg)
                         end
                     end
                     info("START PAKSA: denyut-rejoin di-BLOCK (grace) -- fokus buka client dulu, cek denyut lagi setelah masuk")
+                    -- v9.631: tandai semua pkg perlu langsung tembak PS setelah masuk game (skip grace antrian)
+                    _G.FORCE_PS_TEMBAK = _G.FORCE_PS_TEMBAK or {}
+                    for _, pk in ipairs(split(cfg.pkgs or "")) do
+                        local akun = (mapAkun and mapAkun[pk] or ""):lower()
+                        local pkShort = pk:gsub("com%.roblox%.",""):lower()
+                        if not daftarF or targetF[akun] or targetF[pkShort] then
+                            _G.FORCE_PS_TEMBAK[pk] = os.time()
+                        end
+                    end
                 end
             end
             lastIsi = isi
