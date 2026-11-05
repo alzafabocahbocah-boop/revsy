@@ -1,4 +1,4 @@
--- uplevelnew v8.495
+-- uplevelnew v8.496
 -- v8.485: Peacock swap via animStr "fan" (DataStream) + koordinat CENTER Vector3(10,3,12), thresh 2 stud
 -- v8.484: auto-shovel equip shovel tool dulu sebelum FireServer Remove_Item, unequip setelah selesai
 -- v8.483: toggle AUTO SHOVEL di MISC; doShovelPlants hanya jalan kalau toggle ON
@@ -186,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.495"
+local VERSION = "v8.496"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4609,7 +4609,6 @@ local function runNewLoop()
     unequipAll()
     equipSesi(5, AUTOLVLNEWW_DEF)
     setStatus("AUTOLVLNEWW — running", C.accent)
-    local _collectBusy = false
     while not _newStopRequested do
         local okEE, errEE = pcall(enforceEquip, AUTOLVLNEWW_DEF)
         if not okEE then addLog("[newloop] enforceEquip ERR: "..tostring(errEE)) end
@@ -4619,26 +4618,8 @@ local function runNewLoop()
         end)
         local data = scanFruits()
         updateUI(totalNightmareCollected, data.nightmareCount, 1)
-        if #data.shovel > 0 and not _collectBusy then
-            _collectBusy = true
-            task.spawn(function()
-                -- collect dulu (ambil buah mutasi)
-                local fruits = data.shovel
-                while #fruits > 0 and not _newStopRequested do
-                    local collected = doCollect(fruits)
-                    totalShovel = totalShovel + collected
-                    addLog("NewLoop collect: "..collected.."/"..#fruits)
-                    task.wait(0.8)
-                    local nxt = scanFruits(); fruits = nxt.shovel
-                end
-                -- setelah collect, shovel pohonnya
-                local shoveled = doShovelPlants()
-                if shoveled > 0 then
-                    addLog("NewLoop shovel: "..shoveled.." pohon dihapus")
-                end
-                _collectBusy = false
-            end)
-        end
+        local shoveled = doShovelPlants()
+        if shoveled > 0 then addLog("NewLoop shovel: "..shoveled.." pohon") end
         task.wait(0.5)
     end
     unequipAll()
