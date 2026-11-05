@@ -186,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.507"
+local VERSION = "v8.509"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2146,8 +2146,8 @@ do
         addLog("AUTO SHOVEL: "..(nowOn and "ON" or "OFF"))
     end)
     local _swCleanRow,_setSwClean,_getSwClean,_swCleanEv
-    _swCleanRow,_setSwClean,_getSwClean,_swCleanEv=makeSwitch(miscScroll,"FARM CLEANER",10,false)
-    _G._UPL_FARM_CLEANER = false
+    _swCleanRow,_setSwClean,_getSwClean,_swCleanEv=makeSwitch(miscScroll,"FARM CLEANER",10,true)
+    _G._UPL_FARM_CLEANER = true
     _swCleanEv:Connect(function(nowOn)
         _G._UPL_FARM_CLEANER = nowOn
         addLog("FARM CLEANER: "..(nowOn and "ON" or "OFF"))
@@ -2817,13 +2817,13 @@ do
     -- owrap + UIScale 1.95 (sama persis up6kg)
     local owrap2 = Instance.new("Frame")
     owrap2.Size = UDim2.new(1,0,1,0); owrap2.BackgroundTransparency = 1; owrap2.BorderSizePixel = 0; owrap2.Parent = sg2
-    local oscale2 = Instance.new("UIScale"); oscale2.Scale = 1.95; oscale2.Parent = owrap2
+    local oscale2 = Instance.new("UIScale"); oscale2.Scale = 1.56; oscale2.Parent = owrap2
 
     -- frame utama: 356x290, pojok kanan atas, identik up6kg
     local frame2 = Instance.new("Frame")
     frame2.Size = UDim2.new(0,356,0,290)
     frame2.AnchorPoint = Vector2.new(1,0)
-    frame2.Position = UDim2.new(1/1.95,-14/1.95,0,14/1.95)
+    frame2.Position = UDim2.new(1/1.56,-14/1.56,0,14/1.56)
     frame2.BackgroundColor3 = Color3.fromRGB(0,0,0)
     frame2.BackgroundTransparency = 0.08
     frame2.BorderSizePixel = 0; frame2.Parent = owrap2
@@ -2837,6 +2837,8 @@ do
     local dot2 = Instance.new("Frame"); dot2.Size = UDim2.new(0,9,0,9); dot2.Position = UDim2.new(0,2,0.5,-4); dot2.BackgroundColor3 = _AQ; dot2.BorderSizePixel = 0; dot2.Parent = hdr2
     Instance.new("UICorner",dot2).CornerRadius = UDim.new(1,0)
     local ttl2 = Instance.new("TextLabel"); ttl2.BackgroundTransparency = 1; ttl2.Font = Enum.Font.GothamBold; ttl2.TextSize = 15; ttl2.TextColor3 = _AQ; ttl2.Text = "UPLEVEL STAT"; ttl2.Position = UDim2.new(0,17,0,0); ttl2.Size = UDim2.new(1,-17,1,0); ttl2.TextXAlignment = Enum.TextXAlignment.Left; ttl2.Parent = hdr2
+    -- v8.509: FPS label di kanan header
+    local fpsLbl2 = Instance.new("TextLabel"); fpsLbl2.BackgroundTransparency = 1; fpsLbl2.Font = Enum.Font.GothamBold; fpsLbl2.TextSize = 13; fpsLbl2.TextColor3 = Color3.fromRGB(180,180,180); fpsLbl2.Text = "-- FPS"; fpsLbl2.Position = UDim2.new(1,-60,0,0); fpsLbl2.Size = UDim2.new(0,60,1,0); fpsLbl2.TextXAlignment = Enum.TextXAlignment.Right; fpsLbl2.Parent = hdr2
 
     -- grid 2x2 (sama up6kg: CellSize 0.5,-5 / CellPadding 0,10,0,10)
     local gridF2 = Instance.new("Frame"); gridF2.Size = UDim2.new(1,0,1,-31); gridF2.BackgroundTransparency = 1; gridF2.BorderSizePixel = 0; gridF2.LayoutOrder = 2; gridF2.Parent = frame2
@@ -2858,20 +2860,42 @@ do
     local v500m, c500m = makeCard2(_ORG, "500-",           3)
     local v500p, c500p = makeCard2(_GRN, "500+",           4)
 
-    -- shrink saat touch (sama up6kg: kecil ke 0.7x selama 10s)
-    local kecilSampai2 = 0
+    -- v8.509: shrink bertahap saat touch: 0-5s=0.3x, 5-10s=0.7x, 10-15s=balik asal
+    local touchAt2 = 0
     local UIS2 = game:GetService("UserInputService")
     UIS2.InputBegan:Connect(function(input, gpe)
         if input.UserInputType == Enum.UserInputType.Touch
            or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            kecilSampai2 = tick() + 10
+            touchAt2 = tick()
         end
     end)
 
     -- update loop: scale + data tiap 0.5s
     task.spawn(function()
+        local lastFpsTime = tick(); local lastFpsFrame = 0
         while sg2.Parent do
-            local s = (tick() < kecilSampai2) and 0.7 or 1.95
+            -- hitung FPS
+            local now = tick()
+            local cf = game:GetService("Stats").HeartbeatTimeMs
+            pcall(function()
+                local elapsed = now - lastFpsTime
+                if elapsed >= 0.5 then
+                    local fps = math.floor(1000 / math.max(cf, 1))
+                    fpsLbl2.Text = fps.." FPS"
+                    lastFpsTime = now
+                end
+            end)
+            -- scale bertahap: 0-5s=0.3, 5-10s=0.7, 10-15s=asal
+            local elapsed2 = now - touchAt2
+            local s
+            if touchAt2 > 0 and elapsed2 < 5 then
+                s = 0.3
+            elseif touchAt2 > 0 and elapsed2 < 10 then
+                s = 0.7
+            else
+                s = 1.56
+                if elapsed2 >= 15 then touchAt2 = 0 end
+            end
             oscale2.Scale = s
             frame2.Position = UDim2.new(1/s,-14/s,0,14/s)
 
@@ -4540,10 +4564,10 @@ local function doShovelPlants()
     local imp = farm:FindFirstChild("Important"); if not imp then return 0 end
     local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return 0 end
 
-    -- kumpulkan semua pohon (GetDescendants bypass limit 500)
+    -- kumpulkan semua pohon (GetChildren langsung dari Plants_Physical)
     local targets = {}
-    for _, pt in ipairs(plants:GetDescendants()) do
-        if pt:IsA("Model") and pt.Parent == plants then
+    for _, pt in ipairs(plants:GetChildren()) do
+        if pt:IsA("Model") then
             table.insert(targets, pt)
         end
     end
