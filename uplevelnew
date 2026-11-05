@@ -1,4 +1,5 @@
--- uplevelnew v8.538
+-- uplevelnew v8.539
+-- v8.539: doCollect hapus cek f.Parent — buah bisa hilang parent antara scan dan collect, kirim semua ke server
 -- v8.538: debug autoCollect — tambah print ke console saat cropsRE nil + confirm loop running
 -- v8.537: fix pool3 (NEW 1) tidak ter-load dari file — loadPoolFile sekarang dipanggil kalau pool3 kosong juga
 -- v8.536: fix crash v8.535 — addLog dipanggil sebelum didefinisikan (baris 1919), pindah ke dalam task.spawn
@@ -111,7 +112,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.538")
+print("[UPL] VERSION: v8.539")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -219,7 +220,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.538"
+local VERSION = "v8.539"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4370,7 +4371,9 @@ local function doCollect(fruits)
         local batch = {}
         for j = i, math.min(i + 39, #fruits) do
             local f = fruits[j]
-            if f and f.Parent then batch[#batch+1] = f end
+            -- v8.539: hapus cek f.Parent — buah bisa hilang parent antara scan dan collect
+            -- kirim semua ke server, biar server yang filter mana yang valid
+            if f then batch[#batch+1] = f end
         end
         if #batch > 0 then
             local ok, err = pcall(function() re:FireServer(batch) end)
@@ -6992,17 +6995,20 @@ do
         local _acIter = 0
         while true do
             task.wait(0.7)
-            pcall(function()
+            local ok, err = pcall(function()
                 local data = scanFruits()
                 _acIter = _acIter + 1
-                -- v8.538: log tiap 50 iterasi (35s) untuk confirm masih running
-                if _acIter % 50 == 0 then
+                -- v8.539: log tiap 10 iterasi (7s) untuk lihat shovel count
+                if _acIter % 10 == 0 then
                     print("[UPLVL-DBG][autoCollect] iter="..tostring(_acIter).." shovel="..#data.shovel)
                 end
                 if #data.shovel > 0 then
                     doCollect(data.shovel)
                 end
             end)
+            if not ok then
+                print("[UPLVL-DBG][autoCollect] pcall ERR: "..tostring(err))
+            end
         end
     end)
 
