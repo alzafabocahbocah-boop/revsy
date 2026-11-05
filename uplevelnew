@@ -1,4 +1,7 @@
--- uplevelnew v8.505
+-- uplevelnew v8.508
+-- v8.508: cleanFruit hapus SEMUA children buah (konfirmasi aman — collect tetap jalan)
+-- v8.507: cleanFruit loop tiap 1s — hapus visual Part/Particle/Highlight di buah via GetTagged Harvestable
+-- v8.506: AUTOLVLNEWW 3 tim — NM>=100 (main), NM 1-99 (noBaku), NM<1 (3 Mimic+1 Baku); sembunyiin tab CAD.1 & CAD.2
 -- v8.485: Peacock swap via animStr "fan" (DataStream) + koordinat CENTER Vector3(10,3,12), thresh 2 stud
 -- v8.484: auto-shovel equip shovel tool dulu sebelum FireServer Remove_Item, unequip setelah selesai
 -- v8.483: toggle AUTO SHOVEL di MISC; doShovelPlants hanya jalan kalau toggle ON
@@ -226,6 +229,11 @@ local AUTOLVLNEWW_NOBAKU_DEF = {
     {nama="T-Rex",   jml=5},
     {nama="Peacock", jml=2},
     {nama="Bahan",   jml=1},
+}
+-- tim saat nightmare < 1 (NM habis, tunggu tumbuh)
+local AUTOLVLNEWW_NM0_DEF = {
+    {nama="Mimic Octopus", jml=3},
+    {nama="Baku",          jml=1},
 }
 
 -- v8.314: lineup equip saat AUTO MTS start
@@ -1516,10 +1524,10 @@ local s2Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tab
     TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow}); corner(s2Tab,7)
 local s3Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW*2,0,0,3),
     BackgroundColor3=C.card,Text="CAD. 1",Font=FONT_B,TextSize=10,
-    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow}); corner(s3Tab,7)
+    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow,Visible=false}); corner(s3Tab,7)
 local s4Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW*3,0,0,3),
     BackgroundColor3=C.card,Text="CAD. 2",Font=FONT_B,TextSize=10,
-    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow}); corner(s4Tab,7)
+    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow,Visible=false}); corner(s4Tab,7)
 local s5Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW*4,0,0,3),
     BackgroundColor3=C.card,Text="NEWW",Font=FONT_B,TextSize=10,
     TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow}); corner(s5Tab,7)
@@ -4719,31 +4727,39 @@ local function runNewLoop()
     equipSesi(5, AUTOLVLNEWW_DEF)
     setStatus("AUTOLVLNEWW — running", C.accent)
     local _usingBaku = true  -- track tim aktif (true=pakai Baku, false=no Baku)
+    local _newwTimAktif = "main"  -- "main"=NM>=100 | "nobaku"=NM<100 | "nm0"=NM<1
     while not _newStopRequested do
         local data = scanFruits()
         updateUI(totalNightmareCollected, data.nightmareCount, 1)
 
-        -- swap tim berdasar nightmare count (DISABLED v8.519 — selalu pakai Baku)
+        -- swap tim berdasar nightmare count
         local nmCount = data.nightmareCount
-        --[[
-        if nmCount < 100 and _usingBaku then
-            -- nightmare sedikit → copot Baku, ganti T-Rex ke-5
-            addLog("[newloop] NM "..nmCount.." < 100 — swap ke no-Baku (T-Rex×5)")
+        if nmCount < 1 and _newwTimAktif ~= "nm0" then
+            -- NM habis → 3 Mimic + 1 Baku
+            addLog("[newloop] NM "..nmCount.." < 1 — swap ke NM0 (Mimic×3+Baku×1)")
+            _newwTimAktif = "nm0"
+            _activeSesiDef = AUTOLVLNEWW_NM0_DEF
+            _G._UPL_SESI_DEF = AUTOLVLNEWW_NM0_DEF
+            unequipAll(); equipSesi(5, AUTOLVLNEWW_NM0_DEF)
+        elseif nmCount >= 1 and nmCount < 100 and _newwTimAktif ~= "nobaku" then
+            -- NM 1-99 → 5 T-Rex + 2 Peacock + 1 Bahan
+            addLog("[newloop] NM "..nmCount.." 1-99 — swap ke noBaku (T-Rex×5)")
+            _newwTimAktif = "nobaku"
             _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
             unequipAll(); equipSesi(5, AUTOLVLNEWW_NOBAKU_DEF)
-            _usingBaku = false
-        elseif nmCount >= 100 and not _usingBaku then
-            -- nightmare banyak → pasang Baku lagi
-            addLog("[newloop] NM "..nmCount.." >= 100 — swap ke Baku (T-Rex×4+Baku×1)")
+        elseif nmCount >= 100 and _newwTimAktif ~= "main" then
+            -- NM >= 100 → tim utama 4 T-Rex + 1 Baku + 2 Peacock + 1 Bahan
+            addLog("[newloop] NM "..nmCount.." >= 100 — swap ke main")
+            _newwTimAktif = "main"
             _activeSesiDef = AUTOLVLNEWW_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
             unequipAll(); equipSesi(5, AUTOLVLNEWW_DEF)
-            _usingBaku = true
         end
-        --]]
 
-        local curDef = _usingBaku and AUTOLVLNEWW_DEF or AUTOLVLNEWW_NOBAKU_DEF
+        local curDef = _newwTimAktif == "nm0" and AUTOLVLNEWW_NM0_DEF
+                    or _newwTimAktif == "nobaku" and AUTOLVLNEWW_NOBAKU_DEF
+                    or AUTOLVLNEWW_DEF
         local okEE, errEE = pcall(enforceEquip, curDef)
         if not okEE then addLog("[newloop] enforceEquip ERR: "..tostring(errEE)) end
         pcall(function()
@@ -6511,6 +6527,27 @@ do
         while true do
             task.wait(5)
             destroyDiggingGrid()
+        end
+    end)
+
+    -- v8.508: cleanFruit loop tiap 1s — hapus SEMUA children buah (collect tetap jalan tanpa NumberValue/StringValue)
+    task.spawn(function()
+        local function cleanFruit(fruit)
+            for _, c in ipairs(fruit:GetChildren()) do
+                pcall(function() c:Destroy() end)
+            end
+        end
+        while true do
+            task.wait(1)
+            pcall(function()
+                local farm = getPlayerFarm()
+                if not farm then return end
+                for _, fruit in ipairs(_CS:GetTagged("Harvestable")) do
+                    if fruit:IsDescendantOf(farm) then
+                        cleanFruit(fruit)
+                    end
+                end
+            end)
         end
     end)
 
