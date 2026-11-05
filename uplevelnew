@@ -1,4 +1,5 @@
--- uplevelnew v8.541
+-- uplevelnew v8.542
+-- v8.542: fix NEWLOOP error :5119 (_activeUuids nil) + auto-restart NEWLOOP setelah error
 -- v8.541: autoCollect loop pakai _G._UPL_scanFruits — scanFruits local, tidak visible di do..end block lain
 -- v8.540: scanFruits ganti IsDescendantOf(farm) → cek langsung parent chain — cegah false negative
 -- v8.539: doCollect hapus cek f.Parent — buah bisa hilang parent antara scan dan collect, kirim semua ke server
@@ -114,7 +115,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.541")
+print("[UPL] VERSION: v8.542")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -222,7 +223,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.541"
+local VERSION = "v8.542"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5116,7 +5117,9 @@ local function runNewLoop()
             local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
             if bakuSlot and bakuSlot.uuid then
                 unequipPet(bakuSlot.uuid)
-                _activeUuids[tostring(bakuSlot.uuid)] = nil
+                -- v8.542: guard nil sebelum index (bisa nil kalau script re-exec)
+                local _au = _G._ZenxActiveUuids
+                if _au then _au[tostring(bakuSlot.uuid)] = nil end
                 task.wait(0.8)  -- v8.527: tunggu server proses unequip sebelum equip baru
             end
             -- equip T-Rex ke-5 (slot ke-5 di pool, karena main punya 4)
@@ -5314,6 +5317,17 @@ task.defer(function()
             if not ok then
                 addLog("AUTOLVLNEWW ERR: "..tostring(err))
                 print("[NEWLOOP] ERR:", tostring(err))
+                -- v8.542: auto-restart setelah error (delay 3s)
+                print("[NEWLOOP] auto-restart dalam 3s...")
+                task.wait(3)
+                if not _newStopRequested then
+                    addLog("AUTOLVLNEWW auto-restart...")
+                    local ok2, err2 = pcall(runNewLoop)
+                    if not ok2 then
+                        addLog("AUTOLVLNEWW ERR (restart): "..tostring(err2))
+                        print("[NEWLOOP] ERR (restart):", tostring(err2))
+                    end
+                end
             end
             _newRunning = false
             setSwNew(false)
