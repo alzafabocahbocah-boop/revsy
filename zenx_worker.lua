@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.631"
+local VERSION = "9.632"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -444,7 +444,7 @@ end
 function interval_denyut(cfg)
     local sl = tostring(cfg and cfg.script_label or "")
     if sl:find("UP3", 1, true) then return 90 end   -- up3.8kg: cek denyut 90s (v9.487, dari 60s)
-    if sl:find("UP6KG") then return 999999 end   -- up6kg: denyut DIMATIIN v9.553
+    if sl:find("UP6KG") then return 90 end   -- up6kg: denyut balik nyala v9.632 (dari 999999 v9.553)
     if sl:find("UPLEVEL") or sl:find("MARKET") then return 180 end
     if sl:find("HACT") then return 120 end   -- hact: cek denyut 120s
     return 360
