@@ -1,4 +1,5 @@
--- uplevelnew v8.484
+-- uplevelnew v8.485
+-- v8.485: Peacock swap via animStr "fan" (DataStream) + koordinat CENTER Vector3(10,3,12), thresh 2 stud
 -- v8.484: auto-shovel equip shovel tool dulu sebelum FireServer Remove_Item, unequip setelah selesai
 -- v8.483: toggle AUTO SHOVEL di MISC; doShovelPlants hanya jalan kalau toggle ON
 -- v8.482: auto-shovel di runNewLoop — scan Plants_Physical, FireServer Remove_Item tiap pohon (tanpa equip shovel tool)
@@ -77,7 +78,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.481")
+print("[UPL] VERSION: v8.485")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -185,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.481"
+local VERSION = "v8.485"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3128,100 +3129,99 @@ do
             end
         end
     end)
-    -- T-Rex: swap via CustomAnimationState "Eat" (DataStream ActivePets)
-    -- v8.448: flag disable sementara T-Rex swap Eat
-    local TREX_SWAP_ENABLED = false
+    -- DataStream swap: Peacock "fan" + T-Rex "Eat" (T-Rex disabled flag, Peacock aktif)
     task.spawn(function()
-        local function tsLog(msg) addLog(msg) end
-        -- ─────────────────────────────────────────────────────
-        if not TREX_SWAP_ENABLED then tsLog("T-Rex swap Eat: DISABLED (flag false)"); return end
-
-        -- cek ge2
+        local function tsLog(msg) addLog("[swap] "..tostring(msg)) end
         if not ge2 then tsLog("ERR: ge2 nil"); return end
-        tsLog("ge2 OK, cari DataStream...")
         local ds2 = ge2:WaitForChild("DataStream", 15)
         if not ds2 then tsLog("ERR: DataStream nil"); return end
-        tsLog("ds2 OK, listener ON")
+        tsLog("ds2 ON")
 
-        local _evTotal, _evActivePets = 0, 0
-        local _dbgAnimFound = 0
+        -- animStr trigger: Peacock=fan, T-Rex=Eat (T-Rex disabled)
+        local SWAP_ANIM = { fan=true }  -- tambah "Eat"=true kalau T-Rex mau diaktifkan
+        local PEACOCK_CENTER = Vector3.new(10, 3, 12)  -- koordinat target spawn Peacock (dari up3.8kg)
+        local PEACOCK_THRESH = 2.0  -- stud — re-swap kalau spawn jauh dari CENTER
 
-        -- deep find + handle CustomAnimationState (depth 12)
-        local function deepFind(t, depth, path)
+        local _debounce = {}  -- [raw8] = tick()
+
+        local function deepFind(t, depth)
             depth = depth or 0
-            path = path or "r"
             if depth > 12 or type(t) ~= "table" then return end
-            for k, v in pairs(t) do
-                local ks = tostring(k):sub(1,20)
+            for _, v in pairs(t) do
                 if type(v) == "table" then
                     local v1 = tostring(v[1] or "")
                     if v1:find("CustomAnimationState",1,true) then
                         local animStr = tostring(v[2] or "")
-                        -- ekstrak uuid dari path: .../{uuid}/CustomAnimationState
-                        local uuid = v1:match("{([^}]+)}")  or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                        local anim = animStr:lower()
+                        if not SWAP_ANIM[anim] then continue end
+                        -- ekstrak uuid
+                        local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
                         local raw = uuid:gsub("[{}]","")
-                        _dbgAnimFound = _dbgAnimFound + 1
-                        -- cek tipe pet — container key pakai format {uuid}
-                        local fmtU = "{" .. raw .. "}"
-                        local tipe = nil
+                        -- debounce 0.5s per uuid
+                        local r8 = raw:sub(1,8)
+                        local now = tick()
+                        if _debounce[r8] and (now - _debounce[r8]) < 0.5 then continue end
+                        -- cek tipe pet dari _kgContainer
+                        local tl = ""
                         if _kgContainer then
-                            local e = _kgContainer[fmtU] or _kgContainer[raw]
+                            local e = _kgContainer["{"..raw.."}"] or _kgContainer[raw]
                             if type(e) == "table" then
-                                local pt = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
-                                if pt ~= "" then tipe = pt end
+                                tl = tostring(e.PetType or (e.PetData and e.PetData.PetType) or ""):lower()
                             end
                         end
-                        local tl = tipe and tostring(tipe):lower() or ""
-                        if animStr == "Eat" and (tl:find("t-rex",1,true) or tl:find("trex",1,true)) then
-                            if not running or stopRequested or _isCollecting or _isTransisi then
-                                -- guard aktif, skip swap
-                            else
-                                local inActive = _activeUuids ~= nil and (_activeUuids[raw] or _activeUuids["{"..raw.."}"])
-                                tsLog("SWAP! raw=" .. raw:sub(1,8) .. " equipRE=" .. tostring(equipRE~=nil) .. " active=" .. tostring(inActive))
-                                task.spawn(function()
-                                    -- swap 1
-                                    pcall(function() unequipPet(raw) end)
-                                    task.wait(0.03)
-                                    pcall(function() equipPet(raw) end)
-                                    _swapLastSwap[raw] = tick()
-                                    tsLog("SWAP1 " .. raw:sub(1,8))
-                                    -- swap 2 setelah 0.5s
-                                    task.wait(0.5)
-                                    pcall(function() unequipPet(raw) end)
-                                    task.wait(0.03)
-                                    pcall(function() equipPet(raw) end)
-                                    _swapLastSwap[raw] = tick()
-                                    tsLog("SWAP2 " .. raw:sub(1,8))
+                        -- Peacock: animStr fan
+                        if anim == "fan" and tl:find("peacock",1,true) then
+                            if not (_newRunning or running) then continue end
+                            _debounce[r8] = now
+                            tsLog("Peacock fan → swap "..r8)
+                            task.spawn(function()
+                                pcall(function() unequipPet(raw) end); task.wait(0.03)
+                                pcall(function() equipPet(raw) end)
+                                -- cek posisi spawn, re-swap kalau jauh dari CENTER
+                                local done, spawnPos = false, nil
+                                local conn2 = workspace.DescendantAdded:Connect(function(d)
+                                    if done then return end
+                                    if not d:IsA("Model") then return end
+                                    local dn = d.Name
+                                    local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
+                                    if d8 ~= r8 then return end
+                                    task.defer(function()
+                                        if done then return end
+                                        pcall(function()
+                                            local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
+                                            if p then spawnPos = p.Position end
+                                        end)
+                                        done = true
+                                    end)
                                 end)
-                            end
+                                local t0 = tick()
+                                while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
+                                conn2:Disconnect()
+                                if spawnPos then
+                                    local dist = (spawnPos - PEACOCK_CENTER).Magnitude
+                                    if dist > PEACOCK_THRESH then
+                                        tsLog("Peacock respawn "..string.format("%.1f",dist).."stud → re-swap")
+                                        pcall(function() unequipPet(raw) end); task.wait(0.03)
+                                        pcall(function() equipPet(raw) end)
+                                    end
+                                end
+                            end)
                         end
                     else
-                        deepFind(v, depth+1, path .. "." .. ks)
+                        deepFind(v, depth+1)
                     end
                 end
             end
         end
 
-
         ds2.OnClientEvent:Connect(function(...)
             local args = {...}
-            _evTotal = _evTotal + 1
-            -- args[1]=_, args[2]=service, args[3]=data ATAU args[3]=subservice, args[4]=data
             local svc = tostring(args[2] or "")
-            local data3 = args[3]
-            local data4 = args[4]
-            if svc:find("ActivePets", 1, true) then
-                _evActivePets = _evActivePets + 1
-                local data = type(data3)=="table" and data3 or (type(data4)=="table" and data4 or nil)
-                if data then
-                    local sz = 0; for _ in pairs(data) do sz=sz+1 end
-                    if sz > 0 then
-                        deepFind(data, 0, "AP")
-                    end
-                end
-            end
+            if not svc:find("ActivePets",1,true) then return end
+            local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
+            if data then deepFind(data, 0) end
         end)
-        tsLog("listener ON (counter+scan+deepfind)")
+        tsLog("Peacock fan swap listener ON — CENTER("..PEACOCK_CENTER.X..","..PEACOCK_CENTER.Y..","..PEACOCK_CENTER.Z..")")
     end)
 end
 local function petReadyUpl(uuid)
