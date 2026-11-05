@@ -1,4 +1,5 @@
--- uplevelnew v8.526
+-- uplevelnew v8.527
+-- v8.527: swap 1 slot — wait 0.8s setelah unequip + retry equip kalau model belum muncul
 -- v8.526: swap row T-Rex slot5 & Baku sekarang tampil kg + age seperti kartu normal
 -- v8.525: startup auto-isi tunggu container ada isinya (next check) — cegah T-Rex slot5 kosong saat container belum ready
 -- v8.524: runNewLoop cek NM sebelum equip pertama — tidak salah masukkan Baku saat NM<200
@@ -5029,15 +5030,21 @@ local function runNewLoop()
             local pool5 = sesiPool[5] or {}
             local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
             if bakuSlot and bakuSlot.uuid then
-                unequipPet(bakuSlot.uuid); task.wait(0.3)
+                unequipPet(bakuSlot.uuid)
                 _activeUuids[tostring(bakuSlot.uuid)] = nil
+                task.wait(0.8)  -- v8.527: tunggu server proses unequip sebelum equip baru
             end
             -- equip T-Rex ke-5 (slot ke-5 di pool, karena main punya 4)
             local trexPool = pool5["T-Rex"] or {}
             local trex5 = trexPool[5]  -- slot ke-5
             if trex5 and trex5.uuid then
-                equipPet(trex5.uuid); task.wait(0.3)
+                equipPet(trex5.uuid); task.wait(0.5)
                 _activeUuids[tostring(trex5.uuid)] = true
+                -- v8.527: verifikasi equip berhasil — retry sekali kalau model belum muncul
+                if not modelByUuid[tostring(trex5.uuid)] then
+                    addLog("[newloop] T-Rex5 equip retry (model belum muncul)")
+                    task.wait(0.5); equipPet(trex5.uuid); task.wait(0.5)
+                end
             else
                 -- fallback: auto cari T-Rex dari container
                 addLog("[newloop] T-Rex slot5 tidak ada di pool — fallback equipSesi nobaku")
@@ -5054,13 +5061,19 @@ local function runNewLoop()
             local trexPool = pool5["T-Rex"] or {}
             local trex5 = trexPool[5]
             if trex5 and trex5.uuid then
-                unequipPet(trex5.uuid); task.wait(0.3)
+                unequipPet(trex5.uuid)
                 _activeUuids[tostring(trex5.uuid)] = nil
+                task.wait(0.8)  -- v8.527: tunggu server proses unequip
             end
             local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
             if bakuSlot and bakuSlot.uuid then
-                equipPet(bakuSlot.uuid); task.wait(0.3)
+                equipPet(bakuSlot.uuid); task.wait(0.5)
                 _activeUuids[tostring(bakuSlot.uuid)] = true
+                -- v8.527: verifikasi equip berhasil — retry sekali kalau model belum muncul
+                if not modelByUuid[tostring(bakuSlot.uuid)] then
+                    addLog("[newloop] Baku equip retry (model belum muncul)")
+                    task.wait(0.5); equipPet(bakuSlot.uuid); task.wait(0.5)
+                end
             else
                 addLog("[newloop] Baku tidak ada di pool — fallback equipSesi main")
                 unequipAll(); equipSesi(5, AUTOLVLNEWW_DEF)
