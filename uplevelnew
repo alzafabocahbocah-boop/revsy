@@ -1,4 +1,4 @@
--- uplevelnew v8.500
+-- uplevelnew v8.501
 -- v8.485: Peacock swap via animStr "fan" (DataStream) + koordinat CENTER Vector3(10,3,12), thresh 2 stud
 -- v8.484: auto-shovel equip shovel tool dulu sebelum FireServer Remove_Item, unequip setelah selesai
 -- v8.483: toggle AUTO SHOVEL di MISC; doShovelPlants hanya jalan kalau toggle ON
@@ -186,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.500"
+local VERSION = "v8.501"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -1344,11 +1344,17 @@ do
                 age500plusL.Text  = tostring(plus)
                 age500minusL.Text = tostring(minus)
                 do
-                    local ages = {}
+                    local times = {}
                     for uuid in pairs(_bahanUuids) do
-                        table.insert(ages, tostring(getAgeFallback(uuid)))
+                        local t0 = _bahanEquipTime[uuid]
+                        if t0 then
+                            local elapsed = math.floor(tick() - t0)
+                            local m = math.floor(elapsed / 60)
+                            local s = elapsed % 60
+                            table.insert(times, m..":"..string.format("%02d", s))
+                        end
                     end
-                    bahanAgeL.Text = #ages > 0 and table.concat(ages, "/") or "—"
+                    bahanAgeL.Text = #times > 0 and table.concat(times, "/") or "—"
                 end
                 -- TOTAL PET / MAX INVENTORY:
                 -- Prioritas 1: baca dari _G.ZenxKgStat (up6kg sudah jalan -> akurat)
@@ -2340,13 +2346,19 @@ local function updateUI(collected,kebun,sesiNum)
                 end
             end
             age500plusL.Text=tostring(plus); age500minusL.Text=tostring(minus)
-            -- bahan age
+            -- bahan time (elapsed sejak equip)
             do
-                local ages = {}
+                local times = {}
                 for uuid in pairs(_bahanUuids) do
-                    table.insert(ages, tostring(getAgeFallback(uuid)))
+                    local t0 = _bahanEquipTime[uuid]
+                    if t0 then
+                        local elapsed = math.floor(tick() - t0)
+                        local m = math.floor(elapsed / 60)
+                        local s = elapsed % 60
+                        table.insert(times, m..":"..string.format("%02d", s))
+                    end
                 end
-                bahanAgeL.Text = #ages > 0 and table.concat(ages, "/") or "—"
+                bahanAgeL.Text = #times > 0 and table.concat(times, "/") or "—"
             end
         end)
         if sesiNum then
@@ -3358,7 +3370,8 @@ end
 -- Disimpan di _G supaya healer loop bisa akses meski script di-re-exec
 if type(_G._ZenxActiveUuids) ~= "table" then _G._ZenxActiveUuids = {} end
 local _activeUuids = _G._ZenxActiveUuids
-local _bahanUuids = {}  -- table UUID Bahan yang sedang equip (max 2, aging bersamaan)
+local _bahanUuids = {}      -- table UUID Bahan yang sedang equip (max 2, aging bersamaan)
+local _bahanEquipTime = {}  -- catat tick() waktu tiap UUID bahan di-equip
 local _isCollecting = false  -- pause healer saat doCollect berjalan
 local _isTransisi   = false  -- pause healer+swapLoop saat ganti sesi / unequipAll
 local _geLogged = false      -- gameEvents log cukup sekali
@@ -3587,6 +3600,7 @@ equipOneBahan = function()
                 if age < CFG.bahanMaxAge then
                     equipPet(slotBahan.uuid)
                     _bahanUuids[ustr] = true
+                    _bahanEquipTime[ustr] = tick()
                     addLog("Equip bahan (pool#"..i..") "..tostring(slotBahan.tipe or "?").." age="..age)
                 else
                     addLog("Bahan pool#"..i.." umur "..age.." >= "..CFG.bahanMaxAge.." — skip")
@@ -3613,6 +3627,7 @@ equipOneBahan = function()
                     if age < CFG.bahanMaxAge then
                         equipPet(p.uuid)
                         _bahanUuids[ustr] = true
+                        _bahanEquipTime[ustr] = tick()
                         addLog("Equip bahan (auto) "..tostring(p.tipe).." age="..age.." kg="..string.format("%.1f", p.kg or 0))
                     end
                 end
