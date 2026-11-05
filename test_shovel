@@ -1,0 +1,246 @@
+-- test_shovel.lua — standalone shovel tester v1.0
+-- GUI kecil: toggle ON/OFF + log output
+-- Jalankan sebagai LocalScript di StarterPlayerScripts atau executor
+
+local plr = game:GetService("Players").LocalPlayer
+local gameEvents = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+local removeItemRE = gameEvents and gameEvents:FindFirstChild("Remove_Item")
+
+-- ══════════════════════════════════════
+-- HELPER
+-- ══════════════════════════════════════
+local function getPlayerFarm()
+    local farm = workspace:FindFirstChild("Farm")
+    if not farm then return nil end
+    local inner = farm:FindFirstChild("Farm")
+    if not inner then return nil end
+    return inner
+end
+
+local function fruitHasMutation(fruit)
+    -- cek attribute Mutation atau child bernama Mutation
+    local ok, v = pcall(function() return fruit:GetAttribute("Mutation") end)
+    if ok and v and v ~= "" and v ~= false then return true end
+    if fruit:FindFirstChild("Mutation") then return true end
+    -- fallback: cek semua attribute
+    local attrs = fruit:GetAttributes()
+    for k, val in pairs(attrs) do
+        if tostring(k):lower():find("mutation") and val and val ~= "" then return true end
+    end
+    return false
+end
+
+-- ══════════════════════════════════════
+-- GUI
+-- ══════════════════════════════════════
+local sg = Instance.new("ScreenGui")
+sg.Name = "ShovelTester"
+sg.ResetOnSpawn = false
+sg.IgnoreGuiInset = true
+sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+sg.Parent = plr:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 260, 0, 200)
+frame.Position = UDim2.new(0, 10, 0, 10)
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = sg
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+-- title bar
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 28)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+title.BorderSizePixel = 0
+title.Text = "🌿 Shovel Tester v1.0"
+title.TextColor3 = Color3.fromRGB(220, 220, 220)
+title.TextSize = 13
+title.Font = Enum.Font.GothamBold
+title.Parent = frame
+Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+-- toggle button
+local togBtn = Instance.new("TextButton")
+togBtn.Size = UDim2.new(1, -20, 0, 34)
+togBtn.Position = UDim2.new(0, 10, 0, 36)
+togBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+togBtn.BorderSizePixel = 0
+togBtn.Text = "AUTO SHOVEL: OFF"
+togBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+togBtn.TextSize = 13
+togBtn.Font = Enum.Font.GothamBold
+togBtn.Parent = frame
+Instance.new("UICorner", togBtn).CornerRadius = UDim.new(0, 6)
+
+-- run once button
+local runBtn = Instance.new("TextButton")
+runBtn.Size = UDim2.new(1, -20, 0, 28)
+runBtn.Position = UDim2.new(0, 10, 0, 78)
+runBtn.BackgroundColor3 = Color3.fromRGB(50, 90, 130)
+runBtn.BorderSizePixel = 0
+runBtn.Text = "▶ Shovel Sekali"
+runBtn.TextColor3 = Color3.fromRGB(220, 220, 240)
+runBtn.TextSize = 12
+runBtn.Font = Enum.Font.Gotham
+runBtn.Parent = frame
+Instance.new("UICorner", runBtn).CornerRadius = UDim.new(0, 6)
+
+-- log box
+local logBox = Instance.new("ScrollingFrame")
+logBox.Size = UDim2.new(1, -20, 0, 80)
+logBox.Position = UDim2.new(0, 10, 0, 114)
+logBox.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+logBox.BorderSizePixel = 0
+logBox.ScrollBarThickness = 3
+logBox.CanvasSize = UDim2.new(0, 0, 0, 0)
+logBox.AutomaticCanvasSize = Enum.AutomaticSize.Y
+logBox.Parent = frame
+Instance.new("UICorner", logBox).CornerRadius = UDim.new(0, 4)
+
+local logLayout = Instance.new("UIListLayout")
+logLayout.SortOrder = Enum.SortOrder.LayoutOrder
+logLayout.Padding = UDim.new(0, 1)
+logLayout.Parent = logBox
+
+local logCount = 0
+local function addLog(msg)
+    logCount = logCount + 1
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -6, 0, 14)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = msg
+    lbl.TextColor3 = Color3.fromRGB(180, 220, 180)
+    lbl.TextSize = 11
+    lbl.Font = Enum.Font.Code
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.LayoutOrder = logCount
+    lbl.Parent = logBox
+    -- auto scroll
+    task.defer(function()
+        logBox.CanvasPosition = Vector2.new(0, math.huge)
+    end)
+    print("[ShovelTest]", msg)
+end
+
+-- ══════════════════════════════════════
+-- SHOVEL LOGIC
+-- ══════════════════════════════════════
+local autoOn = false
+local busy = false
+
+local function doShovel()
+    if busy then addLog("busy, skip"); return end
+    busy = true
+
+    -- cari Remove_Item RE
+    local re = removeItemRE
+    if not re then
+        re = gameEvents and gameEvents:FindFirstChild("Remove_Item")
+        removeItemRE = re
+    end
+    if not re then addLog("ERR: Remove_Item RE tidak ditemukan"); busy = false; return end
+
+    -- farm
+    local farm = getPlayerFarm()
+    if not farm then addLog("ERR: farm nil"); busy = false; return end
+    local imp = farm:FindFirstChild("Important")
+    if not imp then addLog("ERR: Important nil"); busy = false; return end
+    local plants = imp:FindFirstChild("Plants_Physical")
+    if not plants then addLog("ERR: Plants_Physical nil"); busy = false; return end
+
+    -- kumpulkan pohon bermutasi
+    local targets = {}
+    for _, pt in ipairs(plants:GetChildren()) do
+        local fruits = pt:FindFirstChild("Fruits")
+        if fruits then
+            for _, fruit in ipairs(fruits:GetChildren()) do
+                if fruitHasMutation(fruit) then
+                    table.insert(targets, pt)
+                    break
+                end
+            end
+        end
+    end
+    addLog("Pohon mutasi: "..#targets)
+    if #targets == 0 then busy = false; return end
+
+    -- cari shovel
+    local char = plr.Character
+    if not char then addLog("ERR: char nil"); busy = false; return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then addLog("ERR: hum nil"); busy = false; return end
+
+    local shovelTool = nil
+    for _, t in ipairs(plr.Backpack:GetChildren()) do
+        if t:IsA("Tool") and t.Name:lower():find("shovel") then shovelTool = t; break end
+    end
+    if not shovelTool then
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("shovel") then shovelTool = t; break end
+        end
+    end
+    if not shovelTool then addLog("ERR: shovel tidak ada di backpack"); busy = false; return end
+    addLog("Shovel: "..shovelTool.Name)
+
+    -- equip shovel
+    pcall(function() hum:UnequipTools() end); task.wait(0.2)
+    pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.3)
+    addLog("Shovel equipped")
+
+    -- FireServer tiap pohon
+    local count = 0
+    for _, pt in ipairs(targets) do
+        if not autoOn and count > 0 then break end  -- kalau manual (run once), tetap loop semua
+        local ok, err = pcall(function() re:FireServer(pt) end)
+        if ok then
+            count = count + 1
+            addLog("OK: "..pt.Name)
+        else
+            addLog("ERR: "..tostring(err))
+        end
+        task.wait(0.3)
+    end
+
+    -- unequip shovel
+    pcall(function() hum:UnequipTools() end); task.wait(0.2)
+    addLog("Selesai: "..count.." pohon dishovel")
+    busy = false
+end
+
+-- ══════════════════════════════════════
+-- EVENTS
+-- ══════════════════════════════════════
+togBtn.MouseButton1Click:Connect(function()
+    autoOn = not autoOn
+    if autoOn then
+        togBtn.Text = "AUTO SHOVEL: ON"
+        togBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 80)
+        togBtn.TextColor3 = Color3.fromRGB(220, 255, 220)
+        addLog("AUTO SHOVEL ON")
+    else
+        togBtn.Text = "AUTO SHOVEL: OFF"
+        togBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+        togBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+        addLog("AUTO SHOVEL OFF")
+    end
+end)
+
+runBtn.MouseButton1Click:Connect(function()
+    addLog("--- Run manual ---")
+    task.spawn(doShovel)
+end)
+
+-- auto loop tiap 5 detik kalau ON
+task.spawn(function()
+    while true do
+        task.wait(5)
+        if autoOn and not busy then
+            task.spawn(doShovel)
+        end
+    end
+end)
+
+addLog("Ready — tekan toggle atau run sekali")
