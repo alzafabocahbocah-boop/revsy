@@ -1,4 +1,5 @@
--- uplevelnew v8.537
+-- uplevelnew v8.538
+-- v8.538: debug autoCollect — tambah print ke console saat cropsRE nil + confirm loop running
 -- v8.537: fix pool3 (NEW 1) tidak ter-load dari file — loadPoolFile sekarang dipanggil kalau pool3 kosong juga
 -- v8.536: fix crash v8.535 — addLog dipanggil sebelum didefinisikan (baris 1919), pindah ke dalam task.spawn
 -- v8.535: tambah log debug startup — cek kenapa auto-isi tidak jalan (pool3 kosong tapi skip)
@@ -110,7 +111,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.537")
+print("[UPL] VERSION: v8.538")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -218,7 +219,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.537"
+local VERSION = "v8.538"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4356,6 +4357,8 @@ local function doCollect(fruits)
     if not re then
         local msg = "ERR: Crops.Collect RE nil!"
         dbgLog(msg)
+        print("[UPLVL-DBG][doCollect] "..msg)  -- v8.538: print ke console biar keliatan
+        addLog(msg)  -- v8.538: addLog biar tampil di log panel
         if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = "[COLLECT] "..msg end
         _isCollecting = false
         return 0
@@ -6958,7 +6961,10 @@ do
     end)
 
     -- v8.508: cleanFruit loop tiap 1s — hapus SEMUA children buah (collect tetap jalan tanpa NumberValue/StringValue)
+    -- v8.538: tambah print confirm loop started
+    print("[UPLVL-DBG] cleanFruit loop SPAWN")
     task.spawn(function()
+        print("[UPLVL-DBG] cleanFruit loop STARTED (inside task.spawn)")
         local function cleanFruit(fruit)
             for _, c in ipairs(fruit:GetChildren()) do
                 pcall(function() c:Destroy() end)
@@ -6979,11 +6985,20 @@ do
     end)
 
     -- v8.509: autoCollect loop independent — scan+collect mutasi tiap 0.7s, jalan terus walau AUTOLVLNEWW off
+    -- v8.538: tambah print confirm loop started + debug kalau shovel=0 padahal ada buah
+    print("[UPLVL-DBG] autoCollect loop SPAWN")
     task.spawn(function()
+        print("[UPLVL-DBG] autoCollect loop STARTED (inside task.spawn)")
+        local _acIter = 0
         while true do
             task.wait(0.7)
             pcall(function()
                 local data = scanFruits()
+                _acIter = _acIter + 1
+                -- v8.538: log tiap 50 iterasi (35s) untuk confirm masih running
+                if _acIter % 50 == 0 then
+                    print("[UPLVL-DBG][autoCollect] iter="..tostring(_acIter).." shovel="..#data.shovel)
+                end
                 if #data.shovel > 0 then
                     doCollect(data.shovel)
                 end
