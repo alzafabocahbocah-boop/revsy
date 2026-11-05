@@ -1,4 +1,5 @@
--- uplevelnew v8.483
+-- uplevelnew v8.484
+-- v8.484: auto-shovel equip shovel tool dulu sebelum FireServer Remove_Item, unequip setelah selesai
 -- v8.483: toggle AUTO SHOVEL di MISC; doShovelPlants hanya jalan kalau toggle ON
 -- v8.482: auto-shovel di runNewLoop — scan Plants_Physical, FireServer Remove_Item tiap pohon (tanpa equip shovel tool)
 -- v8.481: tambah tab NEWW di lineup pet untuk simpan tim AUTOLVLNEWW (sesiPool[5]); Auto Isi & Reset juga include sesi 5
@@ -4482,9 +4483,10 @@ task.spawn(function()
 end)
 
 -- ===================== AUTOLVLNEWW LOOP =====================
--- auto-shovel: scan Plants_Physical lalu FireServer Remove_Item tiap pohon (tanpa equip tool)
+-- auto-shovel: equip shovel, FireServer Remove_Item tiap pohon bermutasi, unequip setelah selesai
 local function doShovelPlants()
     if not _G._UPL_AUTO_SHOVEL then return 0 end
+
     local re = removeItemRE
     if not re then
         re = gameEvents and gameEvents:FindFirstChild("Remove_Item")
@@ -4497,29 +4499,60 @@ local function doShovelPlants()
     local imp = farm:FindFirstChild("Important"); if not imp then return 0 end
     local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return 0 end
 
-    local count = 0
+    -- kumpulkan pohon bermutasi dulu
+    local targets = {}
     for _, pt in ipairs(plants:GetChildren()) do
-        -- hanya shovel pohon yang punya buah mutasi (ada di data.shovel)
         local fruits = pt:FindFirstChild("Fruits")
-        local hasMut = false
         if fruits then
             for _, fruit in ipairs(fruits:GetChildren()) do
-                if fruitHasMutation(fruit) then hasMut = true; break end
+                if fruitHasMutation(fruit) then
+                    table.insert(targets, pt)
+                    break
+                end
             end
-        end
-        if hasMut then
-            local ok, err = pcall(function()
-                re:FireServer(pt)
-            end)
-            if ok then
-                count = count + 1
-                addLog("[shovel] Remove_Item: "..pt.Name)
-            else
-                addLog("[shovel] ERR: "..tostring(err))
-            end
-            task.wait(0.3)
         end
     end
+    if #targets == 0 then return 0 end
+
+    -- cari shovel di backpack
+    local char = plr.Character; if not char then return 0 end
+    local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return 0 end
+    local bp = plr.Backpack
+    local shovelTool = nil
+    for _, t in ipairs(bp:GetChildren()) do
+        if t:IsA("Tool") and t.Name:lower():find("shovel") then shovelTool = t; break end
+    end
+    -- cek juga kalau sudah di tangan
+    if not shovelTool then
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("shovel") then shovelTool = t; break end
+        end
+    end
+    if not shovelTool then addLog("[shovel] shovel tool tidak ada di backpack"); return 0 end
+
+    -- unequip pet dulu, equip shovel
+    pcall(function() hum:UnequipTools() end); task.wait(0.2)
+    pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.3)
+
+    -- FireServer Remove_Item tiap pohon
+    local count = 0
+    for _, pt in ipairs(targets) do
+        if not _G._UPL_AUTO_SHOVEL then break end -- cek lagi kalau toggle dimatikan
+        local ok, err = pcall(function() re:FireServer(pt) end)
+        if ok then
+            count = count + 1
+            addLog("[shovel] Remove_Item: "..pt.Name)
+        else
+            addLog("[shovel] ERR: "..tostring(err))
+        end
+        task.wait(0.3)
+    end
+
+    -- unequip shovel, re-equip pet
+    pcall(function() hum:UnequipTools() end); task.wait(0.2)
+    -- re-equip sesi aktif
+    pcall(function() equipSesi(_activeSesiNum, _activeSesiDef) end)
+
     return count
 end
 
