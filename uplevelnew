@@ -1,4 +1,5 @@
--- uplevelnew v8.527
+-- uplevelnew v8.528
+-- v8.528: fallback swap — cari T-Rex5/Baku dari container tanpa unequipAll (tidak ganggu T-Rex 1-4)
 -- v8.527: swap 1 slot — wait 0.8s setelah unequip + retry equip kalau model belum muncul
 -- v8.526: swap row T-Rex slot5 & Baku sekarang tampil kg + age seperti kartu normal
 -- v8.525: startup auto-isi tunggu container ada isinya (next check) — cegah T-Rex slot5 kosong saat container belum ready
@@ -5037,18 +5038,40 @@ local function runNewLoop()
             -- equip T-Rex ke-5 (slot ke-5 di pool, karena main punya 4)
             local trexPool = pool5["T-Rex"] or {}
             local trex5 = trexPool[5]  -- slot ke-5
+            -- v8.528: kalau slot5 kosong, cari T-Rex dari container tanpa unequipAll
+            if not (trex5 and trex5.uuid) then
+                local usedInPool = {}
+                for i=1,4 do
+                    local e=(trexPool[i] or {})
+                    if e.uuid then usedInPool[tostring(e.uuid)]=true end
+                end
+                local c=_kgContainer or {}
+                for cuuid,ce in pairs(c) do
+                    if not usedInPool[cuuid] then
+                        local nm=stripMutation(tostring(ce.PetType or (ce.PetData and ce.PetData.PetType) or ""))
+                        if nm=="T-Rex" then
+                            local lv=tonumber((ce.PetData or {}).Level) or 0
+                            local bw=tonumber((ce.PetData or {}).BaseWeight) or 0
+                            local kg=bw*(lv+10)/10
+                            trex5={uuid=cuuid, tipe="T-Rex", age=lv, kg=kg}
+                            if not sesiPool[5]["T-Rex"] then sesiPool[5]["T-Rex"]={} end
+                            sesiPool[5]["T-Rex"][5]=trex5
+                            addLog("[newloop] T-Rex5 auto-pick dari container: "..cuuid:sub(1,12))
+                            break
+                        end
+                    end
+                end
+            end
             if trex5 and trex5.uuid then
                 equipPet(trex5.uuid); task.wait(0.5)
                 _activeUuids[tostring(trex5.uuid)] = true
-                -- v8.527: verifikasi equip berhasil — retry sekali kalau model belum muncul
+                -- verifikasi equip berhasil — retry sekali kalau model belum muncul
                 if not modelByUuid[tostring(trex5.uuid)] then
                     addLog("[newloop] T-Rex5 equip retry (model belum muncul)")
                     task.wait(0.5); equipPet(trex5.uuid); task.wait(0.5)
                 end
             else
-                -- fallback: auto cari T-Rex dari container
-                addLog("[newloop] T-Rex slot5 tidak ada di pool — fallback equipSesi nobaku")
-                unequipAll(); equipSesi(5, AUTOLVLNEWW_NOBAKU_DEF)
+                addLog("[newloop] T-Rex5 tidak ditemukan sama sekali — skip swap")
             end
         elseif nmCount >= 200 and _newwTimAktif ~= "main" then
             -- NM >= 200 → cabut T-Rex ke-5, pasang kembali Baku
@@ -5075,8 +5098,27 @@ local function runNewLoop()
                     task.wait(0.5); equipPet(bakuSlot.uuid); task.wait(0.5)
                 end
             else
-                addLog("[newloop] Baku tidak ada di pool — fallback equipSesi main")
-                unequipAll(); equipSesi(5, AUTOLVLNEWW_DEF)
+                -- v8.528: cari Baku dari container tanpa unequipAll
+                local c=_kgContainer or {}
+                local foundBaku = nil
+                for cuuid,ce in pairs(c) do
+                    local nm=stripMutation(tostring(ce.PetType or (ce.PetData and ce.PetData.PetType) or ""))
+                    if nm=="Baku" then
+                        local lv=tonumber((ce.PetData or {}).Level) or 0
+                        local bw=tonumber((ce.PetData or {}).BaseWeight) or 0
+                        foundBaku={uuid=cuuid, tipe="Baku", age=lv, kg=bw*(lv+10)/10}
+                        if not sesiPool[5]["Baku"] then sesiPool[5]["Baku"]={} end
+                        sesiPool[5]["Baku"][1]=foundBaku
+                        addLog("[newloop] Baku auto-pick dari container: "..cuuid:sub(1,12))
+                        break
+                    end
+                end
+                if foundBaku then
+                    equipPet(foundBaku.uuid); task.wait(0.5)
+                    _activeUuids[tostring(foundBaku.uuid)] = true
+                else
+                    addLog("[newloop] Baku tidak ditemukan sama sekali — skip swap")
+                end
             end
         elseif (_newwTimAktif == "nm0") and nmCount >= 1 then
             -- pulih dari NM0 → kembali ke main/nobaku sesuai count
