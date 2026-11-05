@@ -1,4 +1,5 @@
--- uplevelnew v8.559
+-- uplevelnew v8.560
+-- v8.560: stat loop mandiri — baca totalAll+maxInv dari RC tiap 2s, tulis ke ZenxKgStat
 -- v8.559: auto-accept trade port pola hact — listen semua TradeEvents RE, skip kalau inv penuh
 -- v8.558: threshold NM 300->150 — Baku masuk saat NM>=150, T-Rex saat NM 1-149
 -- v8.557: fix Bahan masuk saat nobaku — equipOneBahan return early kalau DEF tidak punya Bahan
@@ -132,7 +133,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.559")
+print("[UPL] VERSION: v8.560")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -240,7 +241,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.559"
+local VERSION = "v8.560"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -877,6 +878,61 @@ local function _rcGetMaxInv()
         if type(mp) == "number" and mp > 0 and mp <= 2000 then mx = mp end
     end)
     return mx
+end
+
+-- ===================== STAT LOOP MANDIRI (totalAll + maxInv) =====================
+-- v8.560: uplevelnew tidak punya stat loop sendiri — ZenxKgStat.maxInv selalu nil
+-- kalau up3.8kg/up6kg tidak jalan. Tambahin loop ringan: baca RC tiap 2s,
+-- tulis totalAll + maxInv ke _G.ZenxKgStat (tidak overwrite field lain kalau up3.8kg juga jalan).
+do
+    _G.ZenxKgStat = _G.ZenxKgStat or {}
+    local _uplStatGen = (_G.__ZenxUplStatGen or 0) + 1
+    _G.__ZenxUplStatGen = _uplStatGen
+    task.spawn(function()
+        while _G.__ZenxUplStatGen == _uplStatGen do
+            pcall(function()
+                -- baca maxInv dari RC
+                local mx = _rcGetMaxInv()
+                if mx and mx > 0 then
+                    local cur = _G.__ZenxMaxPetCache or 0
+                    if mx > cur then _G.__ZenxMaxPetCache = mx end
+                end
+                local maxInv = _G.__ZenxMaxPetCache or 0
+
+                -- baca totalAll dari container RC
+                local totalAll = 0
+                pcall(function()
+                    if not _rcInst then return end
+                    local data = _rcInst:GetData(plr.Name)
+                    if type(data) ~= "table" then return end
+                    local tbl = rawget(data, "Table")
+                    if type(tbl) ~= "table" then return end
+                    local ppd = rawget(tbl, "PlayerPetData")
+                    if type(ppd) ~= "table" then return end
+                    local pd = rawget(ppd, plr.Name)
+                    if type(pd) ~= "table" then return end
+                    local pi = rawget(pd, "PetInventory")
+                    if type(pi) ~= "table" then return end
+                    local dat = rawget(pi, "Data")
+                    if type(dat) ~= "table" then return end
+                    local n = 0
+                    for _ in pairs(dat) do n = n + 1 end
+                    totalAll = n
+                end)
+
+                -- tulis ke ZenxKgStat — jangan overwrite kalau up3.8kg/up6kg sudah tulis nilai lebih besar
+                local st = _G.ZenxKgStat
+                if maxInv > 0 and (not st.maxInv or st.maxInv == 0) then
+                    st.maxInv = maxInv
+                end
+                if totalAll > 0 and (not st.totalAll or st.totalAll == 0) then
+                    st.totalAll = totalAll
+                    st.total = totalAll
+                end
+            end)
+            task.wait(2)
+        end
+    end)
 end
 
 -- ===================== getgc MEMORY CONTAINER =====================
