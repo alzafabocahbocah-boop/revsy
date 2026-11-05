@@ -1,4 +1,5 @@
--- uplevelnew v8.518
+-- uplevelnew v8.519
+-- v8.519: swap main<->nobaku cukup tukar 1 slot (Baku<->T-Rex ke-5), pet lain tidak disentuh; pool5 simpan 5 T-Rex+1 Baku
 -- v8.518: fix render pool3/4 — Reset & initial render pakai NM0_DEF bukan SESI_CADANGAN_DEF (T-Rex/Peacock tidak lagi masuk NEW1<1)
 -- v8.517: threshold switch NM 100->200 — Baku masuk saat NM>=200, T-Rex×5 saat NM 1-199
 -- v8.516: AUTOLVLNEW lineup 2 tab — NEWW (NM>=1 auto switch) dan NEW1<1 (NM0_DEF); pool3=NM0
@@ -230,6 +231,13 @@ local SESI_CADANGAN2_DEF = {
 -- autolvlneww: 1 tim fix, tanpa target nightmare, tanpa pindah kebun
 local AUTOLVLNEWW_DEF = {
     {nama="T-Rex",   jml=4},
+    {nama="Baku",    jml=1},
+    {nama="Peacock", jml=2},
+    {nama="Bahan",   jml=1},
+}
+-- pool NEWW: simpan 5 T-Rex + 1 Baku agar slot ke-5 tersedia waktu swap main<->nobaku
+local AUTOLVLNEWW_POOL_DEF = {
+    {nama="T-Rex",   jml=5},
     {nama="Baku",    jml=1},
     {nama="Peacock", jml=2},
     {nama="Bahan",   jml=1},
@@ -1687,8 +1695,8 @@ local function autoIsiSemua()
             addLog("AutoIsi S"..sesiNum.." "..nm..": "..count.."/"..sup.jml)
         end
     end
-    -- v8.516: pool3=NM0_DEF(NEW1<1), pool4 sama NM0_DEF, pool5=NEWW
-    isiSesi(5,AUTOLVLNEWW_DEF)         -- NEWW (NM>=100 tim, switch otomatis ke NOBAKU saat NM<100)
+    -- v8.519: pool5 pakai POOL_DEF (5 T-Rex+1 Baku) agar slot ke-5 ada untuk swap
+    isiSesi(5,AUTOLVLNEWW_POOL_DEF)    -- NEWW: simpan 5 T-Rex+1 Baku, swap 1 slot saat NM berubah
     isiSesi(3,AUTOLVLNEWW_NM0_DEF)    -- NEW1 <1 (NM habis)
     isiSesi(4,AUTOLVLNEWW_NM0_DEF)    -- pool4 sama NM0 (cadangan)
     isiSesi(1,SESI1_DEF); isiSesi(2,SESI2_DEF)
@@ -4795,28 +4803,73 @@ local function runNewLoop()
         updateUI(totalNightmareCollected, data.nightmareCount, 1)
 
         -- swap tim berdasar nightmare count
+        -- v8.519: swap main<->nobaku cukup tukar 1 slot (Baku<->T-Rex ke-5), pet lain tidak disentuh
         local nmCount = data.nightmareCount
         if nmCount < 1 and _newwTimAktif ~= "nm0" then
-            -- NM habis → 3 Mimic + 1 Baku
+            -- NM habis → ganti total ke Mimic×3+Baku (beda banget, unequipAll wajar)
             addLog("[newloop] NM "..nmCount.." < 1 — swap ke NM0 (Mimic×3+Baku×1)")
             _newwTimAktif = "nm0"
             _activeSesiDef = AUTOLVLNEWW_NM0_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_NM0_DEF
             unequipAll(); equipSesi(5, AUTOLVLNEWW_NM0_DEF)
         elseif nmCount >= 1 and nmCount < 200 and _newwTimAktif ~= "nobaku" then
-            -- NM 1-199 → 5 T-Rex + 2 Peacock + 1 Bahan
-            addLog("[newloop] NM "..nmCount.." 1-199 — swap ke noBaku (T-Rex×5)")
+            -- NM 1-199 → cabut Baku, pasang T-Rex ke-5 (pet lain tetap)
+            addLog("[newloop] NM "..nmCount.." 1-199 — swap Baku→T-Rex ke-5")
             _newwTimAktif = "nobaku"
             _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
-            unequipAll(); equipSesi(5, AUTOLVLNEWW_NOBAKU_DEF)
+            -- cari UUID Baku di pool5 dan unequip, lalu equip T-Rex ke-5 dari pool5
+            local pool5 = sesiPool[5] or {}
+            local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
+            if bakuSlot and bakuSlot.uuid then
+                unequipPet(bakuSlot.uuid); task.wait(0.3)
+                _activeUuids[tostring(bakuSlot.uuid)] = nil
+            end
+            -- equip T-Rex ke-5 (slot ke-5 di pool, karena main punya 4)
+            local trexPool = pool5["T-Rex"] or {}
+            local trex5 = trexPool[5]  -- slot ke-5
+            if trex5 and trex5.uuid then
+                equipPet(trex5.uuid); task.wait(0.3)
+                _activeUuids[tostring(trex5.uuid)] = true
+            else
+                -- fallback: auto cari T-Rex dari container
+                addLog("[newloop] T-Rex slot5 tidak ada di pool — fallback equipSesi nobaku")
+                unequipAll(); equipSesi(5, AUTOLVLNEWW_NOBAKU_DEF)
+            end
         elseif nmCount >= 200 and _newwTimAktif ~= "main" then
-            -- NM >= 200 → tim utama 4 T-Rex + 1 Baku + 2 Peacock + 1 Bahan
-            addLog("[newloop] NM "..nmCount.." >= 200 — swap ke main")
+            -- NM >= 200 → cabut T-Rex ke-5, pasang kembali Baku
+            addLog("[newloop] NM "..nmCount.." >= 200 — swap T-Rex ke-5→Baku")
             _newwTimAktif = "main"
             _activeSesiDef = AUTOLVLNEWW_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
-            unequipAll(); equipSesi(5, AUTOLVLNEWW_DEF)
+            -- unequip T-Rex ke-5, equip Baku dari pool5
+            local pool5 = sesiPool[5] or {}
+            local trexPool = pool5["T-Rex"] or {}
+            local trex5 = trexPool[5]
+            if trex5 and trex5.uuid then
+                unequipPet(trex5.uuid); task.wait(0.3)
+                _activeUuids[tostring(trex5.uuid)] = nil
+            end
+            local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
+            if bakuSlot and bakuSlot.uuid then
+                equipPet(bakuSlot.uuid); task.wait(0.3)
+                _activeUuids[tostring(bakuSlot.uuid)] = true
+            else
+                addLog("[newloop] Baku tidak ada di pool — fallback equipSesi main")
+                unequipAll(); equipSesi(5, AUTOLVLNEWW_DEF)
+            end
+        elseif (_newwTimAktif == "nm0") and nmCount >= 1 then
+            -- pulih dari NM0 → kembali ke main/nobaku sesuai count
+            if nmCount >= 200 then
+                addLog("[newloop] NM "..nmCount.." pulih dari NM0 — ke main")
+                _newwTimAktif = "main"
+                _activeSesiDef = AUTOLVLNEWW_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
+            else
+                addLog("[newloop] NM "..nmCount.." pulih dari NM0 — ke nobaku")
+                _newwTimAktif = "nobaku"
+                _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
+            end
+            unequipAll(); equipSesi(5, _activeSesiDef)
         end
 
         local curDef = _newwTimAktif == "nm0" and AUTOLVLNEWW_NM0_DEF
