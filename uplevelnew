@@ -186,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.514"
+local VERSION = "v8.515"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3852,7 +3852,7 @@ local _nmDbgLbl, _nmDbgCopy, _nmDbgCollectLbl
 do
     local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
     local sg = Instance.new("ScreenGui"); sg.Name = "ZenxNMDbg"; sg.ResetOnSpawn = false
-    sg.DisplayOrder = 998; sg.IgnoreGuiInset = true; sg.Parent = pg
+    sg.DisplayOrder = 9999; sg.IgnoreGuiInset = true; sg.Parent = pg
     local fr = Instance.new("Frame"); fr.Size = UDim2.new(0,340,0,290)
     fr.Position = UDim2.new(0,10,0.5,-145); fr.AnchorPoint = Vector2.new(0,0)
     fr.BackgroundColor3 = Color3.fromRGB(10,10,10); fr.BackgroundTransparency = 0.15
@@ -3912,16 +3912,23 @@ do
         task.spawn(function()
             _nmDbgScan.Text = "⏳..."
             pcall(function()
-                local d = scanFruits()
+                -- pakai _G karena scanFruits/doCollect didefinisikan setelah block ini
+                local sf = _G._UPL_scanFruits
+                local dc = _G._UPL_doCollect
+                if not sf then
+                    if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = "[SCAN] ERR: scanFruits belum ready" end
+                    _nmDbgScan.Text = "▶ Scan"; return
+                end
+                local d = sf()
                 local msg = "[SCAN MANUAL]\nshovel="..#d.shovel.." nm="..d.nightmareCount
                 if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = msg end
                 print("[NMDbg] "..msg)
-                if #d.shovel > 0 then
-                    local c = doCollect(d.shovel)
+                if #d.shovel > 0 and dc then
+                    local c = dc(d.shovel)
                     local r = "[SCAN MANUAL]\nshovel="..#d.shovel.." nm="..d.nightmareCount.."\ncollect fired="..c
                     if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = r end
                     print("[NMDbg] collect fired="..c)
-                else
+                elseif #d.shovel == 0 then
                     if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = "[SCAN MANUAL] 0 buah mutasi ditemukan" end
                 end
             end)
@@ -4082,6 +4089,7 @@ local function scanFruits()
     end
     return res
 end
+_G._UPL_scanFruits = scanFruits  -- expose untuk debug overlay tombol Scan
 
 -- ===================== COLLECT HELPERS =====================
 -- Ambil ProximityPrompt dari buah: ada di fruit["2"].ProximityPrompt
@@ -4189,6 +4197,7 @@ local function doCollect(fruits)
     end
     return collected
 end
+_G._UPL_doCollect = doCollect  -- expose untuk debug overlay tombol Scan
 
 -- Unequip pet asing yang tidak ada di allowedDef dan bukan bahan
 -- allowedDef: tabel {nama, jml} seperti SESI_CADANGAN2_DEF
