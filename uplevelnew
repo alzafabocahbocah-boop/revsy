@@ -1,4 +1,5 @@
--- uplevelnew v8.558
+-- uplevelnew v8.559
+-- v8.559: auto-accept trade port pola hact — listen semua TradeEvents RE, skip kalau inv penuh
 -- v8.558: threshold NM 300->150 — Baku masuk saat NM>=150, T-Rex saat NM 1-149
 -- v8.557: fix Bahan masuk saat nobaku — equipOneBahan return early kalau DEF tidak punya Bahan
 -- v8.556: fix FPS panel top-right stuck 60 — counter RenderStepped lokal, tidak pakai _G.__ZenxFps
@@ -131,7 +132,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.558")
+print("[UPL] VERSION: v8.559")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -239,7 +240,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.558"
+local VERSION = "v8.559"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2711,66 +2712,94 @@ end
 clrLogBtn.MouseButton1Click:Connect(function() logs={}; logBox.Text="— log dikosongkan —" end)
 
 -- ===================== AUTO-ACCEPT TRADE (background, selalu ON) =====================
--- Nerima trade ticket/gift dari akun MARKET. Cuma di private server + garden.
-task.spawn(function()
-    local RS=game:GetService("ReplicatedStorage"); local WS=game:GetService("Workspace")
-    local function diGarden() return WS:FindFirstChild("TradeWorld")==nil end
-    local function getR()
-        local ge=RS:FindFirstChild("GameEvents"); local te=ge and ge:FindFirstChild("TradeEvents"); if not te then return nil end
-        return{sendReq=te:FindFirstChild("SendRequest"),respond=te:FindFirstChild("RespondRequest"),accept=te:FindFirstChild("Accept"),confirm=te:FindFirstChild("Confirm")}
-    end
-    local function fs2(sig) if not sig then return end
-        if getconnections then pcall(function() for _,c in ipairs(getconnections(sig)) do if c.Fire then pcall(function()c:Fire()end)elseif c.Function then pcall(function()c.Function()end)end end end) end
-        if firesignal then pcall(function()firesignal(sig)end) end
-    end
-    local function klik(b) if not b then return end pcall(function()fs2(b.MouseButton1Click)end); pcall(function()fs2(b.Activated)end) end
-    local function klikAccept()
-        local pg=plr:FindFirstChild("PlayerGui"); local tui=pg and pg:FindFirstChild("TradingUI")
-        local lt=tui and tui:FindFirstChild("LiveTrade"); local opts=lt and lt:FindFirstChild("Options")
-        klik(opts and opts:FindFirstChild("Accept"))
-    end
-    local function klikYes()
-        local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
-        for _,nm in ipairs({"UnfairTrade","GenericConfirmationPrompt","GiveawayConfirmation_UI"}) do
-            local pp=pg:FindFirstChild(nm)
-            if pp then for _,bn in ipairs({"Yes","Confirm","Continue"}) do
-                local b=pp:FindFirstChild(bn,true)
-                if b and (b:IsA("ImageButton") or b:IsA("TextButton")) then
-                    local v=false; pcall(function()v=b.Visible end); if v then klik(b) end
+-- v8.559: port pola hact — listen SEMUA RemoteEvent di TradeEvents, tangkap lastTradeID
+-- dari mana saja, respond saat sendReqRE event masuk (lebih reliable dari cuma dengerin SendRequest)
+do
+    local RS = game:GetService("ReplicatedStorage")
+    local ge = RS:WaitForChild("GameEvents", 30)
+    if ge then
+        local te = ge:FindFirstChild("TradeEvents")
+        if te then
+            local sendReqRE = te:FindFirstChild("SendRequest")
+            local respondRE = te:FindFirstChild("RespondRequest")
+            if sendReqRE and respondRE then
+                local lastTradeID = nil
+                for _, r in ipairs(te:GetChildren()) do
+                    if r:IsA("RemoteEvent") then
+                        local lname = r.Name:lower()
+                        if not (lname:find("history") or lname:find("inventory")) then
+                            r.OnClientEvent:Connect(function(...)
+                                local args = {...}
+                                -- tangkap tradeID dari arg string UUID (format xxxx-xxxx-...)
+                                if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("%-") then
+                                    lastTradeID = args[1]
+                                end
+                                if lname:find("cancel") or lname:find("reject") or lname:find("decline") then return end
+                                -- respond saat sendReq event masuk
+                                if r == sendReqRE and lastTradeID then
+                                    -- v8.559: skip kalau inventory penuh (tiru hact)
+                                    local invFull = false
+                                    pcall(function()
+                                        local st = _G.ZenxKgStat
+                                        local maxInv = _G.__ZenxMaxPetCache or (st and tonumber(st.maxInv)) or 0
+                                        local total = st and (tonumber(st.totalAll) or tonumber(st.total)) or 0
+                                        if maxInv > 0 and total >= maxInv then invFull = true end
+                                    end)
+                                    if invFull then
+                                        print("[UPL-TRADE] skip respond — inventory penuh")
+                                        return
+                                    end
+                                    print("[UPL-TRADE] auto-accept trade masuk id="..tostring(lastTradeID))
+                                    pcall(function() respondRE:FireServer(lastTradeID, true) end)
+                                    -- backup: klik tombol di GUI 8x selama 4s
+                                    local acceptedID = lastTradeID
+                                    task.spawn(function()
+                                        for _ = 1, 8 do
+                                            pcall(function()
+                                                local pg = plr:FindFirstChild("PlayerGui"); if not pg then return end
+                                                local tui = pg:FindFirstChild("TradingUI")
+                                                local lt = tui and tui:FindFirstChild("LiveTrade")
+                                                if lt and lt.Visible and tui and tui.Enabled then
+                                                    local opts = lt:FindFirstChild("Options")
+                                                    for _, bn in ipairs({"Accept","Confirm","Terima"}) do
+                                                        local b = opts and opts:FindFirstChild(bn)
+                                                        if b then
+                                                            if firesignal then pcall(function()firesignal(b.Activated)end) end
+                                                            if getconnections then for _,c in ipairs(getconnections(b.Activated)) do pcall(function()c:Fire()end) end end
+                                                            pcall(function()b.MouseButton1Click:Fire()end)
+                                                        end
+                                                    end
+                                                    -- scan semua popup YES/confirm
+                                                    for _, d in ipairs(pg:GetDescendants()) do
+                                                        if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                                                            local t = ((d:IsA("TextButton") and d.Text) or ""):lower()
+                                                            if t=="yes" or t=="ya" or t:find("confirm") or t=="continue" or t=="lanjut" then
+                                                                if firesignal then pcall(function()firesignal(d.Activated)end) end
+                                                                pcall(function()d.MouseButton1Click:Fire()end)
+                                                            end
+                                                        end
+                                                    end
+                                                    -- backup remote accept/confirm
+                                                    local te2 = RS:FindFirstChild("GameEvents"); te2 = te2 and te2:FindFirstChild("TradeEvents")
+                                                    if te2 then
+                                                        local a=te2:FindFirstChild("Accept"); local c=te2:FindFirstChild("Confirm")
+                                                        if c then pcall(function()c:FireServer()end) end
+                                                        if a then pcall(function()a:FireServer()end) end
+                                                    end
+                                                end
+                                            end)
+                                            task.wait(0.5)
+                                        end
+                                    end)
+                                end
+                            end)
+                        end
+                    end
                 end
-            end end
+            end
         end
     end
-    local conn=nil
-    while true do
-        pcall(function()
-            local R=getR()
-            if R and R.respond and R.sendReq and not conn then
-                conn=R.sendReq.OnClientEvent:Connect(function(...)
-                    local args={...}
-                    print("[TRADE] sendReq event masuk, args count="..#args)
-                    for i,a in ipairs(args) do print("[TRADE] arg["..i.."] type="..type(a).." val="..tostring(a)) end
-                    local id; for _,a in ipairs(args) do if type(a)=="string" and #a>8 and a:find("-") then id=a; break end end
-                    print("[TRADE] id="..tostring(id))
-                    if id then
-                        local ok,err=pcall(function()R.respond:FireServer(id,true)end)
-                        print("[TRADE] respond FireServer ok="..tostring(ok).." err="..tostring(err))
-                    end
-                end)
-            end
-            local pg=plr:FindFirstChild("PlayerGui"); local tui=pg and pg:FindFirstChild("TradingUI")
-            local lt=tui and tui:FindFirstChild("LiveTrade"); local vis=false
-            if lt then pcall(function()vis=lt.Visible end) end
-            if lt and vis then
-                klikAccept()
-                if R and R.accept then pcall(function()R.accept:FireServer()end) end
-                if R and R.confirm then pcall(function()R.confirm:FireServer()end) end
-                klikYes()
-            end
-        end)
-        task.wait(0.5)
-    end
-end)
+end
 
 -- ===================== AUTO-ACCEPT GIFT (background, selalu ON) =====================
 task.spawn(function()
