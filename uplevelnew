@@ -186,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.517"
+local VERSION = "v8.518"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4182,21 +4182,46 @@ task.spawn(function()
     btn.Font = Enum.Font.GothamBold; btn.TextSize = 11; btn.TextColor3 = Color3.fromRGB(220,120,255)
     btn.Text = "▶ Scan+Collect"; btn.BorderSizePixel = 0; btn.Parent = fr
     Instance.new("UICorner",btn).CornerRadius = UDim.new(0,6)
+    -- fungsi popup notif kecil di atas tombol
+    local function showNotif(txt, col)
+        local notif = Instance.new("TextLabel")
+        notif.Size = UDim2.new(0,220,0,36)
+        notif.Position = UDim2.new(0.5,-110,1,-64)
+        notif.BackgroundColor3 = Color3.fromRGB(20,20,20)
+        notif.BackgroundTransparency = 0.1
+        notif.BorderSizePixel = 0
+        notif.Font = Enum.Font.GothamBold
+        notif.TextSize = 11
+        notif.TextColor3 = col or Color3.fromRGB(255,255,255)
+        notif.TextWrapped = true
+        notif.Text = txt
+        notif.ZIndex = 10
+        notif.Parent = fr
+        Instance.new("UICorner",notif).CornerRadius = UDim.new(0,8)
+        task.delay(4, function() pcall(function() notif:Destroy() end) end)
+    end
     btn.MouseButton1Click:Connect(function()
         task.spawn(function()
-            btn.Text = "⏳..."
-            pcall(function()
+            btn.Text = "⏳ scanning..."
+            local ok, err = pcall(function()
                 local d = scanFruits()
-                local msg = "shovel="..#d.shovel.." nm="..d.nightmareCount
-                if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = "[SCAN]\n"..msg end
-                print("[NMDbg Scan] "..msg)
+                local scanMsg = "🔍 Scan: "..#d.shovel.." mutasi, nm="..d.nightmareCount
+                if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = "[SCAN]\nshovel="..#d.shovel.." nm="..d.nightmareCount end
+                print("[NMDbg] "..scanMsg)
                 if #d.shovel > 0 then
+                    btn.Text = "⏳ collecting..."
                     local c = doCollect(d.shovel)
+                    local col = c > 0 and Color3.fromRGB(100,255,160) or Color3.fromRGB(255,100,100)
+                    showNotif("✅ Collect: "..c.."/"..#d.shovel.." fired\nnm="..d.nightmareCount, col)
                     print("[NMDbg] collect fired="..c)
                 else
+                    showNotif("⚠️ 0 mutasi ditemukan\nnm="..d.nightmareCount, Color3.fromRGB(255,200,80))
                     if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = "[SCAN] 0 mutasi ditemukan" end
                 end
             end)
+            if not ok then
+                showNotif("❌ ERR: "..tostring(err), Color3.fromRGB(255,80,80))
+            end
             btn.Text = "▶ Scan+Collect"
         end)
     end)
