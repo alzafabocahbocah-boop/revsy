@@ -1,4 +1,5 @@
--- uplevelnew v8.543
+-- uplevelnew v8.544
+-- v8.544: cleanFruit loop rewrite — cari farm sekali pakai WaitForChild (pattern script standalone)
 -- v8.543: debug cleanFruit loop — tambah log tiap iter untuk lihat farm nil atau cleaned=0
 -- v8.542: fix NEWLOOP error :5119 (_activeUuids nil) + auto-restart NEWLOOP setelah error
 -- v8.541: autoCollect loop pakai _G._UPL_scanFruits — scanFruits local, tidak visible di do..end block lain
@@ -116,7 +117,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.543")
+print("[UPL] VERSION: v8.544")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -224,7 +225,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.543"
+local VERSION = "v8.544"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7001,50 +7002,51 @@ do
         end
     end)
 
-    -- v8.508: cleanFruit loop tiap 1s — hapus SEMUA children buah (collect tetap jalan tanpa NumberValue/StringValue)
-    -- v8.538: tambah print confirm loop started
-    print("[UPLVL-DBG] cleanFruit loop SPAWN")
+    -- v8.544: cleanFruit loop — cari farm sekali di awal (WaitForChild), lalu loop tiap 1s
     task.spawn(function()
-        print("[UPLVL-DBG] cleanFruit loop STARTED (inside task.spawn)")
+        local _CS_cf = game:GetService("CollectionService")
+        local _plr_cf = game:GetService("Players").LocalPlayer
+        -- cari farm player (sama kayak script standalone yang jalan)
+        local _farmRoot = workspace:WaitForChild("Farm", 30)
+        local _myFarm = nil
+        if _farmRoot then
+            for _, f in ipairs(_farmRoot:GetChildren()) do
+                local owner = f:FindFirstChild("Important")
+                    and f.Important:FindFirstChild("Data")
+                    and f.Important.Data:FindFirstChild("Owner")
+                if owner and owner.Value == _plr_cf.Name then
+                    _myFarm = f; break
+                end
+            end
+        end
+        if not _myFarm then
+            print("[UPLVL-DBG][cleanFruit] farm tidak ketemu, loop skip")
+            return
+        end
+        print("[UPLVL-DBG][cleanFruit] farm OK, mulai loop tiap 1s")
         local function cleanFruit(fruit)
             for _, c in ipairs(fruit:GetChildren()) do
                 pcall(function() c:Destroy() end)
             end
         end
-        local _cleanIter = 0
+        local _iter = 0
         while true do
             task.wait(1)
-            _cleanIter = _cleanIter + 1
-            local ok2, err2 = pcall(function()
-                -- v8.541: pakai _G expose karena getPlayerFarm local, nil di do..end block ini
-                local _gpf = _G._UPL_getPlayerFarm
-                if not _gpf then
-                    if _cleanIter <= 3 or _cleanIter % 10 == 0 then
-                        print("[UPLVL-DBG][cleanFruit] _gpf nil iter="..tostring(_cleanIter))
-                    end
-                    return
-                end
-                local farm = _gpf()
-                if not farm then
-                    if _cleanIter <= 3 or _cleanIter % 10 == 0 then
-                        print("[UPLVL-DBG][cleanFruit] farm nil iter="..tostring(_cleanIter))
-                    end
-                    return
-                end
-                local fruits = _CS:GetTagged("Harvestable")
-                local nClean = 0
-                for _, fruit in ipairs(fruits) do
-                    if fruit:IsDescendantOf(farm) then
+            _iter = _iter + 1
+            local destroyed = 0
+            local total = 0
+            pcall(function()
+                for _, fruit in ipairs(_CS_cf:GetTagged("Harvestable")) do
+                    if fruit:IsDescendantOf(_myFarm) then
+                        total = total + 1
+                        local before = #fruit:GetChildren()
                         cleanFruit(fruit)
-                        nClean = nClean + 1
+                        destroyed = destroyed + (before - #fruit:GetChildren())
                     end
-                end
-                if _cleanIter <= 5 or _cleanIter % 30 == 0 then
-                    print("[UPLVL-DBG][cleanFruit] iter="..tostring(_cleanIter).." cleaned="..nClean.." total="..#fruits)
                 end
             end)
-            if not ok2 then
-                print("[UPLVL-DBG][cleanFruit] pcall ERR iter="..tostring(_cleanIter)..": "..tostring(err2))
+            if _iter <= 5 or _iter % 30 == 0 then
+                print(string.format("[cleanFruit] iter=%d cleaned=%d | total=%d", _iter, destroyed, total))
             end
         end
     end)
