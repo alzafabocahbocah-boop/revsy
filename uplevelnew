@@ -1,4 +1,5 @@
--- uplevelnew v8.549
+-- uplevelnew v8.550
+-- v8.550: NM swap loop independent (task.spawn 2s) — tidak ketahan doShovelPlants
 -- v8.549: threshold NM 200->300 — Baku masuk saat NM>=300, T-Rex saat NM 1-299
 -- v8.548: destroyVisualTags batasi ke subfarm player — pet di luar farm aman, debug print dihapus
 -- v8.547: FarmCleaner skip non-tree di Plants_Physical — cegah visual pet T-Rex ke-destroy
@@ -122,7 +123,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.549")
+print("[UPL] VERSION: v8.550")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -230,7 +231,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.549"
+local VERSION = "v8.550"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5099,15 +5100,70 @@ local function runNewLoop()
     unequipAll()
     equipSesi(5, _startDef)
     setStatus("AUTOLVLNEWW — running", C.accent)
+
+    -- v8.550: NM swap loop independent — tidak tergantung lamanya doShovelPlants
+    -- cek tiap 2s sehingga swap Baku<->T-Rex tidak ketahan oleh shovel loop
+    task.spawn(function()
+        while not _newStopRequested do
+            task.wait(2)
+            if _newStopRequested then break end
+            local ok_nm, _d = pcall(scanFruits)
+            if not ok_nm then continue end
+            local nmC = _d.nightmareCount
+            updateUI(totalNightmareCollected, nmC, 1)
+            if nmC < 1 and _newwTimAktif ~= "nm0" then
+                addLog("[newloop-fast] NM "..nmC.." < 1 — swap ke NM0")
+                _newwTimAktif = "nm0"
+                _activeSesiDef = AUTOLVLNEWW_NM0_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NM0_DEF
+                unequipAll(); equipSesi(5, AUTOLVLNEWW_NM0_DEF)
+            elseif nmC >= 1 and nmC < 300 and _newwTimAktif ~= "nobaku" then
+                addLog("[newloop-fast] NM "..nmC.." 1-299 — swap Baku→T-Rex ke-5")
+                _newwTimAktif = "nobaku"
+                _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
+                local pool5 = sesiPool[5] or {}
+                local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
+                if bakuSlot and bakuSlot.uuid then
+                    unequipPet(bakuSlot.uuid)
+                    local _au = _G._ZenxActiveUuids
+                    if _au then _au[tostring(bakuSlot.uuid)] = nil end
+                    task.wait(0.8)
+                end
+                local trexPool = pool5["T-Rex"] or {}
+                local trex5 = trexPool[5]
+                if trex5 and trex5.uuid then
+                    equipPet(trex5.uuid); task.wait(0.5)
+                end
+            elseif nmC >= 300 and _newwTimAktif ~= "main" then
+                addLog("[newloop-fast] NM "..nmC.." >= 300 — swap T-Rex ke-5→Baku")
+                _newwTimAktif = "main"
+                _activeSesiDef = AUTOLVLNEWW_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
+                local pool5 = sesiPool[5] or {}
+                local trexPool = pool5["T-Rex"] or {}
+                local trex5 = trexPool[5]
+                if trex5 and trex5.uuid then
+                    unequipPet(trex5.uuid)
+                    local _au = _G._ZenxActiveUuids
+                    if _au then _au[tostring(trex5.uuid)] = nil end
+                    task.wait(0.8)
+                end
+                local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
+                if bakuSlot and bakuSlot.uuid then
+                    equipPet(bakuSlot.uuid); task.wait(0.5)
+                end
+            end
+        end
+    end)
+
     while not _newStopRequested do
         local data = scanFruits()
-        updateUI(totalNightmareCollected, data.nightmareCount, 1)
-
-        -- swap tim berdasar nightmare count
+        -- updateUI sudah ditangani fast loop di atas, skip di sini
+        -- swap tim ditangani fast loop, skip di sini
+        -- (komentar lama dipertahankan untuk referensi)
         -- v8.519: swap main<->nobaku cukup tukar 1 slot (Baku<->T-Rex ke-5), pet lain tidak disentuh
         local nmCount = data.nightmareCount
+        -- v8.550: swap NM ditangani fast loop (task.spawn 2s), main loop hanya shovel+enforce
+        if false then -- disabled: swap lama (lambat karena ketahan doShovelPlants)
         if nmCount < 1 and _newwTimAktif ~= "nm0" then
-            -- NM habis → ganti total ke Mimic×3+Baku (beda banget, unequipAll wajar)
             addLog("[newloop] NM "..nmCount.." < 1 — swap ke NM0 (Mimic×3+Baku×1)")
             _newwTimAktif = "nm0"
             _activeSesiDef = AUTOLVLNEWW_NM0_DEF
@@ -5226,7 +5282,7 @@ local function runNewLoop()
                 _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
             end
             unequipAll(); equipSesi(5, _activeSesiDef)
-        end
+        end end -- end if false (swap lama disabled v8.550)
 
         local curDef = _newwTimAktif == "nm0" and AUTOLVLNEWW_NM0_DEF
                     or _newwTimAktif == "nobaku" and AUTOLVLNEWW_NOBAKU_DEF
