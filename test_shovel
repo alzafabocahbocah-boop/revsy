@@ -6,6 +6,16 @@ local plr = game:GetService("Players").LocalPlayer
 local gameEvents = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
 local removeItemRE = gameEvents and gameEvents:FindFirstChild("Remove_Item")
 
+-- InputGateway REs (diperlukan server sebelum Remove_Item)
+local function getInputGatewayREs()
+    local char = plr.Character
+    local wsIG = char and char:FindFirstChild("InputGateway")
+    local wsAct = wsIG and wsIG:FindFirstChild("Activation")
+    local psIG = plr:FindFirstChild("PlayerScripts") and plr.PlayerScripts:FindFirstChild("InputGateway")
+    local psAct = psIG and psIG:FindFirstChild("Activation")
+    return wsAct, psAct
+end
+
 -- ══════════════════════════════════════
 -- HELPER
 -- ══════════════════════════════════════
@@ -182,11 +192,34 @@ local function doShovel()
     pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.3)
     addLog("Shovel equipped")
 
-    -- FireServer tiap pohon
+    -- dapatkan InputGateway REs
+    local wsAct, psAct = getInputGatewayREs()
+    if not wsAct then addLog("WARN: Workspace InputGateway.Activation nil") end
+    if not psAct then addLog("WARN: PlayerScripts InputGateway.Activation nil") end
+
+    -- FireServer tiap pohon dengan sequence: Activation(true) → Remove_Item → Activation(false)
     local count = 0
     for _, pt in ipairs(targets) do
-        if not autoOn and count > 0 then break end  -- kalau manual (run once), tetap loop semua
+        -- ambil CFrame karakter saat ini
+        local cf = CFrame.new()
+        pcall(function()
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then cf = hrp.CFrame end
+        end)
+
+        -- Activation true
+        if wsAct then pcall(function() wsAct:FireServer(true, cf) end) end
+        if psAct then pcall(function() psAct:FireServer(true, cf) end) end
+        task.wait(0.05)
+
+        -- Remove_Item
         local ok, err = pcall(function() re:FireServer(pt) end)
+        task.wait(0.05)
+
+        -- Activation false
+        if wsAct then pcall(function() wsAct:FireServer(false, cf) end) end
+        if psAct then pcall(function() psAct:FireServer(false, cf) end) end
+
         if ok then
             count = count + 1
             addLog("OK: "..pt.Name)
