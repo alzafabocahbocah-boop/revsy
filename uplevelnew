@@ -186,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.516"
+local VERSION = "v8.517"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4167,7 +4167,40 @@ local function doCollect(fruits)
     end
     return collected
 end
-_G._UPL_doCollect = doCollect  -- expose untuk debug overlay tombol Scan
+_G._UPL_doCollect = doCollect  -- expose untuk debug overlay
+
+-- v8.517: tombol manual collect di debug overlay — dipasang di sini setelah fungsi ready
+task.spawn(function()
+    task.wait(0.1)  -- tunggu 1 frame biar GUI sudah terbuat
+    local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui",5)
+    if not pg then return end
+    local sg = pg:FindFirstChild("ZenxNMDbg"); if not sg then return end
+    local fr = sg:FindFirstChildOfClass("Frame"); if not fr then return end
+    -- tombol Collect manual
+    local btn = Instance.new("TextButton"); btn.Size = UDim2.new(0,110,0,22)
+    btn.Position = UDim2.new(0.5,-55,1,-26); btn.BackgroundColor3 = Color3.fromRGB(60,20,100)
+    btn.Font = Enum.Font.GothamBold; btn.TextSize = 11; btn.TextColor3 = Color3.fromRGB(220,120,255)
+    btn.Text = "▶ Scan+Collect"; btn.BorderSizePixel = 0; btn.Parent = fr
+    Instance.new("UICorner",btn).CornerRadius = UDim.new(0,6)
+    btn.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            btn.Text = "⏳..."
+            pcall(function()
+                local d = scanFruits()
+                local msg = "shovel="..#d.shovel.." nm="..d.nightmareCount
+                if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = "[SCAN]\n"..msg end
+                print("[NMDbg Scan] "..msg)
+                if #d.shovel > 0 then
+                    local c = doCollect(d.shovel)
+                    print("[NMDbg] collect fired="..c)
+                else
+                    if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = "[SCAN] 0 mutasi ditemukan" end
+                end
+            end)
+            btn.Text = "▶ Scan+Collect"
+        end)
+    end)
+end)
 
 -- Unequip pet asing yang tidak ada di allowedDef dan bukan bahan
 -- allowedDef: tabel {nama, jml} seperti SESI_CADANGAN2_DEF
