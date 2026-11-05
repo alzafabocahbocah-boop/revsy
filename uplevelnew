@@ -1,4 +1,5 @@
--- uplevelnew v8.521
+-- uplevelnew v8.522
+-- v8.522: auto isi otomatis waktu startup kalau pool kosong — tidak perlu pencet tombol setelah rejoin
 -- v8.521: fix renderLineup sesi5 pakai POOL_DEF — swap row T-Rex/Baku sekarang muncul setelah auto isi
 -- v8.520: lineup NEWW — T-Rex slot5 dan Baku tampil 1 baris side-by-side dengan label NM 1-199 / NM ≥200
 -- v8.519: swap main<->nobaku cukup tukar 1 slot (Baku<->T-Rex ke-5), pet lain tidak disentuh; pool5 simpan 5 T-Rex+1 Baku
@@ -1309,7 +1310,8 @@ local function renderLineup(sesiNum, defs)
     local pool=sesiPool[sesiNum] or {}
     local order=0
 
-    -- v8.521: fix renderLineup sesi5 pakai POOL_DEF — swap row T-Rex/Baku sekarang muncul setelah auto isi
+    -- v8.522: auto isi otomatis waktu startup kalau pool kosong — tidak perlu pencet tombol setelah rejoin
+-- v8.521: fix renderLineup sesi5 pakai POOL_DEF — swap row T-Rex/Baku sekarang muncul setelah auto isi
 -- v8.520: sesi5 (NEWW) — T-Rex slot ke-5 dan Baku tampil 1 baris side-by-side (swap slot)
     if sesiNum == 5 then
         -- kumpulkan slot yang akan di-render: T-Rex 1-4 normal, lalu swap row (T-Rex5 | Baku), lalu sisanya
@@ -1857,10 +1859,31 @@ resetPoolBtn.MouseButton1Click:Connect(function()
     resetPoolBtn.Text="✓  Reset!"; resetPoolBtn.TextColor3=C.accent
     task.delay(2,function() resetPoolBtn.Text="🗑  Reset Semua"; resetPoolBtn.TextColor3=Color3.fromRGB(220,80,80) end)
 end)
--- v8.262: initial render dipindah ke sini (di dalam do block) agar setLineupTab tidak nil
+-- v8.522: initial render — kalau pool ada isinya (dari loadPoolFile), render langsung
+-- kalau pool kosong, auto isi otomatis setelah container ready
 renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
 renderLineup(3,AUTOLVLNEWW_NM0_DEF); renderLineup(4,AUTOLVLNEWW_NM0_DEF)
 renderLineup(5,AUTOLVLNEWW_POOL_DEF); setLineupTab(1)
+-- cek pool kosong → auto isi otomatis (tanpa perlu pencet tombol)
+local _poolAdaIsi = next(sesiPool[1]) or next(sesiPool[5])
+if not _poolAdaIsi then
+    task.spawn(function()
+        addLog("Pool kosong — auto isi otomatis...")
+        -- tunggu container ready dulu (max 10s)
+        for _=1,20 do
+            if _kgContainer and next(_kgContainer) then break end
+            task.wait(0.5)
+        end
+        if _autoIsiBusy then return end
+        _autoIsiBusy = true
+        autoIsiSemua()
+        _autoIsiBusy = false
+        autoIsiBtn.TextColor3=C.accent; autoIsiBtn.Text="✓  Semua terisi!"
+        task.delay(2.5,function()
+            autoIsiBtn.TextColor3=C.textDim; autoIsiBtn.Text="⚡  Auto Isi Semua (rejoin)"
+        end)
+    end)
+end
 end -- TAB SESI
 
 -- ===================== KONTROL =====================
