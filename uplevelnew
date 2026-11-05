@@ -1,4 +1,5 @@
--- uplevelnew v8.539
+-- uplevelnew v8.540
+-- v8.540: scanFruits ganti IsDescendantOf(farm) → cek langsung parent chain — cegah false negative
 -- v8.539: doCollect hapus cek f.Parent — buah bisa hilang parent antara scan dan collect, kirim semua ke server
 -- v8.538: debug autoCollect — tambah print ke console saat cropsRE nil + confirm loop running
 -- v8.537: fix pool3 (NEW 1) tidak ter-load dari file — loadPoolFile sekarang dipanggil kalau pool3 kosong juga
@@ -112,7 +113,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.539")
+print("[UPL] VERSION: v8.540")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -220,7 +221,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.539"
+local VERSION = "v8.540"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4271,9 +4272,29 @@ local function scanFruits()
         local farm=getPlayerFarm()
         if not farm then addLog("scanFruits: farm nil"); return end
         local totalScanned=0
-        -- v8.540: CollectionService:GetTagged("Harvestable") sama kayak NM poller
+        -- v8.540: ganti IsDescendantOf(farm) → cek farm fresh tiap buah
+        -- IsDescendantOf bisa false kalau farm instance lama (cache beda thread)
+        local farmWS = workspace:FindFirstChild("Farm")
         for _,fruit in ipairs(_CS:GetTagged("Harvestable")) do
-            if fruit:IsDescendantOf(farm) then
+            -- cek: buah ada di workspace.Farm.<subfarm> yang ownernya player ini
+            local inMyFarm = fruit:IsDescendantOf(farm)
+            -- v8.540: fallback — kalau false, cek parent chain manual
+            if not inMyFarm and farmWS then
+                local p = fruit.Parent
+                while p and p ~= farmWS and p ~= workspace do p = p.Parent end
+                if p == farmWS then
+                    -- cek owner subfarm
+                    local subfarm = fruit
+                    while subfarm and subfarm.Parent ~= farmWS do subfarm = subfarm.Parent end
+                    if subfarm then
+                        local imp = subfarm:FindFirstChild("Important")
+                        local d = imp and imp:FindFirstChild("Data")
+                        local own = d and d:FindFirstChild("Owner")
+                        if own and own.Value == plr.Name then inMyFarm = true end
+                    end
+                end
+            end
+            if inMyFarm then
                 totalScanned=totalScanned+1
                 local isNightmare = fruit:GetAttribute("Nightmare")==true
                 local hasMut = fruitHasMutation(fruit)
