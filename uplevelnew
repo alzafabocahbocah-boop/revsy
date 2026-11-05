@@ -186,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.538"
+local VERSION = "v8.539"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3851,50 +3851,45 @@ local _nmPollerDebugDone = false
 -- v8.531: debug overlay dihapus total (tidak ada overhead)
 local _nmDbgLbl, _nmDbgCopy, _nmDbgCollectLbl = nil, nil, nil
 
+local _CS = game:GetService("CollectionService")
 task.spawn(function()
     while true do
         task.wait(0.2)
         pcall(function()
             local farm = getPlayerFarm()
             if not farm then print("[NMPoller] farm nil"); return end
-            local imp = farm:FindFirstChild("Important")
-            if not imp then print("[NMPoller] Important nil"); return end
-            local plants = imp:FindFirstChild("Plants_Physical")
-            if not plants then print("[NMPoller] Plants_Physical nil"); return end
             local count = 0
             local totalFruit = 0
             local firstAttrs = nil
             local mutasiAttrs = nil
             local mutasiCount = 0
-            -- v8.538: GetChildren 3-level (pohon->Fruits->buah), skip semua object non-buah
-            for _, pohon in ipairs(plants:GetChildren()) do
-                local fruitsFolder = pohon:FindFirstChild("Fruits")
-                if fruitsFolder then
-                    for _, fruit in ipairs(fruitsFolder:GetChildren()) do
-                        totalFruit = totalFruit + 1
-                        local attrs = fruit:GetAttributes()
-                        if not firstAttrs then
-                            firstAttrs = {}
-                            for k, v in pairs(attrs) do
-                                table.insert(firstAttrs, k.."="..tostring(v))
-                            end
-                        end
-                        if attrs["Nightmare"] == true then
-                            count = count + 1
-                        end
-                        -- cek mutasi
-                        local hasMut = false
-                        local mAttrs = {}
+            -- v8.539: CollectionService:GetTagged("Harvestable") + IsDescendantOf(farm)
+            -- skip loop pohon + FindFirstChild, langsung dapet semua buah sekaligus
+            for _, fruit in ipairs(_CS:GetTagged("Harvestable")) do
+                if fruit:IsDescendantOf(farm) then
+                    totalFruit = totalFruit + 1
+                    local attrs = fruit:GetAttributes()
+                    if not firstAttrs then
+                        firstAttrs = {}
                         for k, v in pairs(attrs) do
-                            if v == true and not FRUIT_NON_MUTATIONS[k] then
-                                hasMut = true
-                            end
-                            table.insert(mAttrs, k.."="..tostring(v))
+                            table.insert(firstAttrs, k.."="..tostring(v))
                         end
-                        if hasMut then
-                            mutasiCount = mutasiCount + 1
-                            if not mutasiAttrs then mutasiAttrs = mAttrs end
+                    end
+                    if attrs["Nightmare"] == true then
+                        count = count + 1
+                    end
+                    -- cek mutasi
+                    local hasMut = false
+                    local mAttrs = {}
+                    for k, v in pairs(attrs) do
+                        if v == true and not FRUIT_NON_MUTATIONS[k] then
+                            hasMut = true
                         end
+                        table.insert(mAttrs, k.."="..tostring(v))
+                    end
+                    if hasMut then
+                        mutasiCount = mutasiCount + 1
+                        if not mutasiAttrs then mutasiAttrs = mAttrs end
                     end
                 end
             end
