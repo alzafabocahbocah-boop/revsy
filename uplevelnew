@@ -1,4 +1,5 @@
--- uplevelnew v8.542
+-- uplevelnew v8.543
+-- v8.543: debug cleanFruit loop — tambah log tiap iter untuk lihat farm nil atau cleaned=0
 -- v8.542: fix NEWLOOP error :5119 (_activeUuids nil) + auto-restart NEWLOOP setelah error
 -- v8.541: autoCollect loop pakai _G._UPL_scanFruits — scanFruits local, tidak visible di do..end block lain
 -- v8.540: scanFruits ganti IsDescendantOf(farm) → cek langsung parent chain — cegah false negative
@@ -115,7 +116,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.542")
+print("[UPL] VERSION: v8.543")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -223,7 +224,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.542"
+local VERSION = "v8.543"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -7010,20 +7011,41 @@ do
                 pcall(function() c:Destroy() end)
             end
         end
+        local _cleanIter = 0
         while true do
             task.wait(1)
-            pcall(function()
+            _cleanIter = _cleanIter + 1
+            local ok2, err2 = pcall(function()
                 -- v8.541: pakai _G expose karena getPlayerFarm local, nil di do..end block ini
                 local _gpf = _G._UPL_getPlayerFarm
-                if not _gpf then return end
+                if not _gpf then
+                    if _cleanIter <= 3 or _cleanIter % 10 == 0 then
+                        print("[UPLVL-DBG][cleanFruit] _gpf nil iter="..tostring(_cleanIter))
+                    end
+                    return
+                end
                 local farm = _gpf()
-                if not farm then return end
-                for _, fruit in ipairs(_CS:GetTagged("Harvestable")) do
+                if not farm then
+                    if _cleanIter <= 3 or _cleanIter % 10 == 0 then
+                        print("[UPLVL-DBG][cleanFruit] farm nil iter="..tostring(_cleanIter))
+                    end
+                    return
+                end
+                local fruits = _CS:GetTagged("Harvestable")
+                local nClean = 0
+                for _, fruit in ipairs(fruits) do
                     if fruit:IsDescendantOf(farm) then
                         cleanFruit(fruit)
+                        nClean = nClean + 1
                     end
                 end
+                if _cleanIter <= 5 or _cleanIter % 30 == 0 then
+                    print("[UPLVL-DBG][cleanFruit] iter="..tostring(_cleanIter).." cleaned="..nClean.." total="..#fruits)
+                end
             end)
+            if not ok2 then
+                print("[UPLVL-DBG][cleanFruit] pcall ERR iter="..tostring(_cleanIter)..": "..tostring(err2))
+            end
         end
     end)
 
