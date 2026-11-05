@@ -1,4 +1,5 @@
--- uplevelnew v8.547
+-- uplevelnew v8.548
+-- v8.548: destroyVisualTags batasi ke subfarm player — pet di luar farm aman, debug print dihapus
 -- v8.547: FarmCleaner skip non-tree di Plants_Physical — cegah visual pet T-Rex ke-destroy
 -- v8.546: debug destroyVisualTags — print path object sebelum destroy, cek apakah kena pet
 -- v8.545: hapus destroyParticlesIn(workspace) — terlalu agresif, kena visual pet T-Rex dll
@@ -120,7 +121,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.547")
+print("[UPL] VERSION: v8.548")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -228,7 +229,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.547"
+local VERSION = "v8.548"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -6962,18 +6963,22 @@ do
         pcall(function() local t = workspace:FindFirstChildOfClass("Terrain"); if t then t.Decoration = false end end)
     end
 
-    -- v8.541: destroy visual effects by CollectionService tag (farm + workspace)
+    -- v8.548: destroyVisualTags — hanya destroy object di dalam subfarm sendiri
+    -- v8.546: debug destroyVisualTags — dihapus (sudah confirmed tidak kena pet jika dibatasi ke farm)
+    -- v8.541: destroy visual effects by CollectionService tag (farm only, bukan workspace)
     local VISUAL_TAGS = {"VisualEffects","CropMutationEffects","NightmareVisual","VampVisual","VariantVisual","1_Particle"}
     local _CS2 = game:GetService("CollectionService")
     local function destroyVisualTags()
         pcall(function()
+            -- v8.548: hanya destroy object di dalam subfarm player — pet di luar farm aman
+            local _gpf = _G._UPL_getPlayerFarm
+            local _farmRef = _gpf and _gpf()
             for _, tag in ipairs(VISUAL_TAGS) do
                 for _, obj in ipairs(_CS2:GetTagged(tag)) do
-                    -- v8.546: debug — print path object sebelum destroy
-                    local path = obj.Name
-                    local p = obj.Parent
-                    while p and p ~= game do path = p.Name.."."..path; p = p.Parent end
-                    print("[UPLVL-DBG][destroyVisualTags] tag="..tag.." obj="..path)
+                    -- v8.548: skip kalau object tidak ada di dalam farm player
+                    if _farmRef and not obj:IsDescendantOf(_farmRef) then
+                        continue
+                    end
                     pcall(function() obj:Destroy() end)
                 end
             end
