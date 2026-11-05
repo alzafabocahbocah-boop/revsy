@@ -1,4 +1,5 @@
--- uplevelnew v8.540
+-- uplevelnew v8.541
+-- v8.541: autoCollect loop pakai _G._UPL_scanFruits — scanFruits local, tidak visible di do..end block lain
 -- v8.540: scanFruits ganti IsDescendantOf(farm) → cek langsung parent chain — cegah false negative
 -- v8.539: doCollect hapus cek f.Parent — buah bisa hilang parent antara scan dan collect, kirim semua ke server
 -- v8.538: debug autoCollect — tambah print ke console saat cropsRE nil + confirm loop running
@@ -113,7 +114,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.540")
+print("[UPL] VERSION: v8.541")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -221,7 +222,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.540"
+local VERSION = "v8.541"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -4316,6 +4317,7 @@ local function scanFruits()
     return res
 end
 _G._UPL_scanFruits = scanFruits  -- expose untuk debug overlay tombol Scan
+_G._UPL_getPlayerFarm = getPlayerFarm  -- v8.541: expose untuk cleanFruit loop di do..end block
 
 -- ===================== COLLECT HELPERS =====================
 -- Ambil ProximityPrompt dari buah: ada di fruit["2"].ProximityPrompt
@@ -6997,7 +6999,10 @@ do
         while true do
             task.wait(1)
             pcall(function()
-                local farm = getPlayerFarm()
+                -- v8.541: pakai _G expose karena getPlayerFarm local, nil di do..end block ini
+                local _gpf = _G._UPL_getPlayerFarm
+                if not _gpf then return end
+                local farm = _gpf()
                 if not farm then return end
                 for _, fruit in ipairs(_CS:GetTagged("Harvestable")) do
                     if fruit:IsDescendantOf(farm) then
@@ -7017,14 +7022,19 @@ do
         while true do
             task.wait(0.7)
             local ok, err = pcall(function()
-                local data = scanFruits()
+                -- v8.541: pakai _G expose karena scanFruits/doCollect local, nil di do..end block ini
+                local _sf = _G._UPL_scanFruits
+                local _dc = _G._UPL_doCollect
+                if not _sf then print("[UPLVL-DBG][autoCollect] _G._UPL_scanFruits nil!") return end
+                if not _dc then print("[UPLVL-DBG][autoCollect] _G._UPL_doCollect nil!") return end
+                local data = _sf()
                 _acIter = _acIter + 1
                 -- v8.539: log tiap 10 iterasi (7s) untuk lihat shovel count
                 if _acIter % 10 == 0 then
                     print("[UPLVL-DBG][autoCollect] iter="..tostring(_acIter).." shovel="..#data.shovel)
                 end
                 if #data.shovel > 0 then
-                    doCollect(data.shovel)
+                    _dc(data.shovel)
                 end
             end)
             if not ok then
