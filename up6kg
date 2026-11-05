@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.267 (rejoin global aktif, selalu ON)              ║
+-- ║  UP KG — v10.270 (rejoin global aktif, selalu ON)              ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -2383,10 +2383,11 @@ do
         kgLog("skill-sound listener ON (diloph/peacock/gilded) — swap SKIP")
     end)
 
-    -- ready-loop: swap SUPPORT doang (bahan DIEM di kedua sesi). Cek cepet 0.05s.
+    -- ready-loop: swap SUPPORT doang (bahan DIEM di kedua sesi).
+    -- v10.270: 0.05s → 0.15s (hemat CPU 3x, fast-harvest bahan delay +100ms gak kritis)
     task.spawn(function()
         while _G.__ZenxKgEngineGen == engGen do
-            task.wait(0.05)
+            task.wait(0.15)
             if KG.aktif and not KG.reset then
                 for uuid in pairs(modelByUuid) do
                     -- lepas busy yg NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
@@ -5193,6 +5194,7 @@ do -- TAB TRADE block B (SCAN GARDEN + DL)
 
     -- DESTROY LAG: destroy pet + partikel/animasi di kebun orang lain (semua di server sekarang)
     local _dlOn = false
+    local _dlLoopRunning = false   -- v10.270: guard double loop (click ON + always-on bisa spawn 2 loop)
     -- v10.170: persistent listeners untuk subfarm orang lain (destroy realtime saat server re-create)
     local _dlListeners = {}  -- { conn, subfarmPath } per subfarm orang lain yang dipantau
     local _dlListenerConns = {}  -- array of RBXScriptConnection untuk cleanup
@@ -5436,9 +5438,13 @@ do -- TAB TRADE block B (SCAN GARDEN + DL)
             stroke(dlBtn, Color3.fromRGB(80,200,80), 1.5)
             dlCleanupListeners()
             dlStartup()
-            task.spawn(function()
-                while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
-            end)
+            if not _dlLoopRunning then   -- v10.270: guard double loop
+                _dlLoopRunning = true
+                task.spawn(function()
+                    while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
+                    _dlLoopRunning = false
+                end)
+            end
         else
             dlBtn.Text = "\u{25CB}  Destroy Pet & Animasi Kebun Orang — OFF"
             dlBtn.TextColor3 = C.textMute
@@ -5458,9 +5464,13 @@ do -- TAB TRADE block B (SCAN GARDEN + DL)
         dlBtn.BackgroundColor3 = Color3.fromRGB(20,50,20)
         stroke(dlBtn, Color3.fromRGB(80,200,80), 1.5)
         dlStartup()
-        task.spawn(function()
-            while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
-        end)
+        if not _dlLoopRunning then   -- v10.270: guard double loop (always-on jangan spawn kalau click handler udah spawn)
+            _dlLoopRunning = true
+            task.spawn(function()
+                while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
+                _dlLoopRunning = false
+            end)
+        end
     end)
 
 end -- TAB TRADE block B (split untuk kurangi locals, lanjut di block C)
