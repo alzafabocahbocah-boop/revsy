@@ -1,4 +1,5 @@
--- uplevelnew v8.519
+-- uplevelnew v8.520
+-- v8.520: lineup NEWW — T-Rex slot5 dan Baku tampil 1 baris side-by-side dengan label NM 1-199 / NM ≥200
 -- v8.519: swap main<->nobaku cukup tukar 1 slot (Baku<->T-Rex ke-5), pet lain tidak disentuh; pool5 simpan 5 T-Rex+1 Baku
 -- v8.518: fix render pool3/4 — Reset & initial render pakai NM0_DEF bukan SESI_CADANGAN_DEF (T-Rex/Peacock tidak lagi masuk NEW1<1)
 -- v8.517: threshold switch NM 100->200 — Baku masuk saat NM>=200, T-Rex×5 saat NM 1-199
@@ -1257,6 +1258,48 @@ local function openPetPicker(sesiNum, nama, idx, onPicked)
 end
 
 -- ===================== LINEUP RENDER =====================
+-- helper: buat 1 card pet di parent (bisa full-width atau half-width)
+local function makeLineupCard(parent, sesiNum, nm, i, defs, layoutOrder, widthScale, xOffset)
+    local pool=sesiPool[sesiNum] or {}
+    local entry=(pool[nm] or {})[i]
+    local col=petCol(nm)
+    local card=mk("TextButton",{BackgroundColor3=C.card,Text="",AutoButtonColor=true,
+        Size=UDim2.new(widthScale or 1, widthScale and -3 or 0, 0, 62),
+        Position=UDim2.new(xOffset or 0,0,0,0),
+        LayoutOrder=layoutOrder,Parent=parent}); corner(card,10)
+    stroke(card, entry and col or C.border, entry and 1.5 or 1)
+    mk("Frame",{Size=UDim2.new(0,3,1,-14),Position=UDim2.new(0,0,0,7),
+        BackgroundColor3=col,BorderSizePixel=0,Parent=card})
+    local shortNm=nm:gsub("Mimic Octopus","M.Oct"):gsub("T%-Rex","T-Rex")
+    local tyL=lbl(card,shortNm,9,col); tyL.Font=FONT_B
+    tyL.Position=UDim2.new(0,10,0,7); tyL.Size=UDim2.new(1,-14,0,12)
+    if entry then
+        local pnL=lbl(card,tostring(entry.fullName or nm):gsub("Rainbow ",""):gsub("Choc ",""),11,C.text)
+        pnL.Font=FONT_B; pnL.Position=UDim2.new(0,10,0,21); pnL.Size=UDim2.new(1,-12,0,18)
+        pnL.TextTruncate=Enum.TextTruncate.AtEnd
+        local liveData=_kgContainer and _kgContainer[entry.uuid]
+        local livePD=type(liveData)=="table" and liveData.PetData or nil
+        local liveAge=livePD and tonumber(livePD.Level) or entry.age or 0
+        local liveBW=livePD and tonumber(livePD.BaseWeight) or 0
+        local liveKg=liveBW>0 and liveBW*(liveAge+10)/10 or (entry.kg or 0)
+        local kgStr=liveKg>0 and string.format("%.1fkg",liveKg) or "? kg"
+        local ageL=lbl(card,kgStr.."  age "..(liveAge>0 and tostring(liveAge) or "?"),10,col)
+        ageL.Position=UDim2.new(0,10,0,39); ageL.Size=UDim2.new(1,-14,0,14)
+    else
+        local plusL=lbl(card,"+ pilih",12,C.textDim)
+        plusL.Position=UDim2.new(0,10,0,24); plusL.Size=UDim2.new(1,-14,0,20)
+    end
+    card.MouseButton1Click:Connect(function()
+        openPetPicker(sesiNum, nm, i, function(p)
+            if not sesiPool[sesiNum][nm] then sesiPool[sesiNum][nm]={} end
+            sesiPool[sesiNum][nm][i]=p
+            renderLineup(sesiNum, defs)
+            savePoolFile()
+        end)
+    end)
+    return card
+end
+
 local function renderLineup(sesiNum, defs)
     local holder=lineupHolders[sesiNum]; if not holder then return end
     for _,c in ipairs(holder:GetChildren()) do
@@ -1264,45 +1307,98 @@ local function renderLineup(sesiNum, defs)
     end
     local pool=sesiPool[sesiNum] or {}
     local order=0
+
+    -- v8.520: sesi5 (NEWW) — T-Rex slot ke-5 dan Baku tampil 1 baris side-by-side (swap slot)
+    if sesiNum == 5 then
+        -- kumpulkan slot yang akan di-render: T-Rex 1-4 normal, lalu swap row (T-Rex5 | Baku), lalu sisanya
+        local swapRow = nil  -- akan diisi kalau ketemu T-Rex jml>=5 dan ada Baku di defs
+        local hasTRex5 = false
+        local hasBaku = false
+        for _,sup in ipairs(defs) do
+            if sup.nama == "T-Rex" and sup.jml >= 5 then hasTRex5 = true end
+            if sup.nama == "Baku" then hasBaku = true end
+        end
+
+        for _,sup in ipairs(defs) do
+            local nm=sup.nama
+            if nm == "T-Rex" and hasTRex5 and hasBaku then
+                -- slot 1-4 normal
+                for i=1,4 do
+                    order=order+1
+                    makeLineupCard(holder, sesiNum, nm, i, defs, order)
+                end
+                -- swap row: T-Rex slot 5 | Baku — 1 baris
+                order=order+1
+                local swapFrame=mk("Frame",{Size=UDim2.new(1,0,0,62),BackgroundTransparency=1,
+                    LayoutOrder=order,Parent=holder})
+                mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,
+                    Padding=UDim.new(0,6),Parent=swapFrame})
+                -- label "SWAP" kecil di kiri atas
+                local swapLbl=lbl(swapFrame,"⇄ swap NM",8,C.textDim)
+                -- buat 2 card di dalam swapFrame (masing-masing 50%)
+                local c1=mk("TextButton",{BackgroundColor3=C.card,Text="",AutoButtonColor=true,
+                    Size=UDim2.new(0.5,-3,0,62),LayoutOrder=1,Parent=swapFrame}); corner(c1,10)
+                local entry5=(pool["T-Rex"] or {})[5]
+                local col1=petCol("T-Rex")
+                stroke(c1, entry5 and col1 or C.border, entry5 and 1.5 or 1)
+                mk("Frame",{Size=UDim2.new(0,3,1,-14),Position=UDim2.new(0,0,0,7),BackgroundColor3=col1,BorderSizePixel=0,Parent=c1})
+                local t1=lbl(c1,"T-Rex",9,col1); t1.Font=FONT_B; t1.Position=UDim2.new(0,10,0,7); t1.Size=UDim2.new(1,-14,0,12)
+                local nm1lbl=lbl(c1,"NM 1-199",9,Color3.fromRGB(255,200,80)); nm1lbl.Position=UDim2.new(0,10,0,18); nm1lbl.Size=UDim2.new(1,-14,0,12)
+                if entry5 then
+                    local pnL=lbl(c1,tostring(entry5.fullName or "T-Rex"):gsub("Rainbow ",""):gsub("Choc ",""),11,C.text)
+                    pnL.Font=FONT_B; pnL.Position=UDim2.new(0,10,0,30); pnL.Size=UDim2.new(1,-12,0,16)
+                    pnL.TextTruncate=Enum.TextTruncate.AtEnd
+                else
+                    local pl=lbl(c1,"+ pilih",12,C.textDim); pl.Position=UDim2.new(0,10,0,30); pl.Size=UDim2.new(1,-14,0,20)
+                end
+                c1.MouseButton1Click:Connect(function()
+                    openPetPicker(sesiNum,"T-Rex",5,function(p)
+                        if not sesiPool[sesiNum]["T-Rex"] then sesiPool[sesiNum]["T-Rex"]={} end
+                        sesiPool[sesiNum]["T-Rex"][5]=p
+                        renderLineup(sesiNum,defs); savePoolFile()
+                    end)
+                end)
+
+                local c2=mk("TextButton",{BackgroundColor3=C.card,Text="",AutoButtonColor=true,
+                    Size=UDim2.new(0.5,-3,0,62),LayoutOrder=2,Parent=swapFrame}); corner(c2,10)
+                local entryB=(pool["Baku"] or {})[1]
+                local col2=petCol("Baku")
+                stroke(c2, entryB and col2 or C.border, entryB and 1.5 or 1)
+                mk("Frame",{Size=UDim2.new(0,3,1,-14),Position=UDim2.new(0,0,0,7),BackgroundColor3=col2,BorderSizePixel=0,Parent=c2})
+                local t2=lbl(c2,"Baku",9,col2); t2.Font=FONT_B; t2.Position=UDim2.new(0,10,0,7); t2.Size=UDim2.new(1,-14,0,12)
+                local nm2lbl=lbl(c2,"NM ≥200",9,Color3.fromRGB(100,220,180)); nm2lbl.Position=UDim2.new(0,10,0,18); nm2lbl.Size=UDim2.new(1,-14,0,12)
+                if entryB then
+                    local pnL=lbl(c2,tostring(entryB.fullName or "Baku"):gsub("Rainbow ",""):gsub("Choc ",""),11,C.text)
+                    pnL.Font=FONT_B; pnL.Position=UDim2.new(0,10,0,30); pnL.Size=UDim2.new(1,-12,0,16)
+                    pnL.TextTruncate=Enum.TextTruncate.AtEnd
+                else
+                    local pl=lbl(c2,"+ pilih",12,C.textDim); pl.Position=UDim2.new(0,10,0,30); pl.Size=UDim2.new(1,-14,0,20)
+                end
+                c2.MouseButton1Click:Connect(function()
+                    openPetPicker(sesiNum,"Baku",1,function(p)
+                        if not sesiPool[sesiNum]["Baku"] then sesiPool[sesiNum]["Baku"]={} end
+                        sesiPool[sesiNum]["Baku"][1]=p
+                        renderLineup(sesiNum,defs); savePoolFile()
+                    end)
+                end)
+            elseif nm == "Baku" and hasTRex5 then
+                -- Baku sudah ditampilkan di swap row, skip
+            else
+                for i=1,sup.jml do
+                    order=order+1
+                    makeLineupCard(holder, sesiNum, nm, i, defs, order)
+                end
+            end
+        end
+        return
+    end
+
+    -- sesi lain: render normal
     for _,sup in ipairs(defs) do
-        local nm=sup.nama; local col=petCol(nm)
+        local nm=sup.nama
         for i=1,sup.jml do
             order=order+1
-            local entry=(pool[nm] or {})[i]
-            local card=mk("TextButton",{BackgroundColor3=C.card,Text="",AutoButtonColor=true,
-                LayoutOrder=order,Parent=holder}); corner(card,10)
-            stroke(card, entry and col or C.border, entry and 1.5 or 1)
-            mk("Frame",{Size=UDim2.new(0,3,1,-14),Position=UDim2.new(0,0,0,7),
-                BackgroundColor3=col,BorderSizePixel=0,Parent=card}); -- accent bar
-            local shortNm=nm:gsub("Mimic Octopus","M.Oct"):gsub("T%-Rex","T-Rex")
-            local tyL=lbl(card,shortNm,9,col); tyL.Font=FONT_B
-            tyL.Position=UDim2.new(0,10,0,7); tyL.Size=UDim2.new(1,-14,0,12)
-            if entry then
-                -- nama pet (fullName / tipe)
-                local pnL=lbl(card,tostring(entry.fullName or nm):gsub("Rainbow ",""):gsub("Choc ",""),11,C.text)
-                pnL.Font=FONT_B; pnL.Position=UDim2.new(0,10,0,21); pnL.Size=UDim2.new(1,-12,0,18)
-                pnL.TextTruncate=Enum.TextTruncate.AtEnd
-                -- kg dan age live dari container
-                local liveData=_kgContainer and _kgContainer[entry.uuid]
-                local livePD=type(liveData)=="table" and liveData.PetData or nil
-                local liveAge=livePD and tonumber(livePD.Level) or entry.age or 0
-                local liveBW=livePD and tonumber(livePD.BaseWeight) or 0
-                local liveKg=liveBW>0 and liveBW*(liveAge+10)/10 or (entry.kg or 0)
-                local kgStr=liveKg>0 and string.format("%.1fkg",liveKg) or "? kg"
-                local ageL=lbl(card,kgStr.."  age "..(liveAge>0 and tostring(liveAge) or "?"),10,col)
-                ageL.Position=UDim2.new(0,10,0,39); ageL.Size=UDim2.new(1,-14,0,14)
-            else
-                local plusL=lbl(card,"+ pilih",12,C.textDim)
-                plusL.Position=UDim2.new(0,10,0,24); plusL.Size=UDim2.new(1,-14,0,20)
-            end
-            card.MouseButton1Click:Connect(function()
-                openPetPicker(sesiNum, nm, i, function(p)
-                    if not sesiPool[sesiNum][nm] then sesiPool[sesiNum][nm]={} end
-                    sesiPool[sesiNum][nm][i]=p
-                    renderLineup(sesiNum, defs)
-                    savePoolFile()  -- persist ke file biar survive rejoin
-                end)
-            end)
+            makeLineupCard(holder, sesiNum, nm, i, defs, order)
         end
     end
 end
