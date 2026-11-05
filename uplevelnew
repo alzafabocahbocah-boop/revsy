@@ -1,4 +1,13 @@
--- uplevelnew v8.508
+-- uplevelnew v8.517
+-- v8.517: threshold switch NM 100->200 — Baku masuk saat NM>=200, T-Rex×5 saat NM 1-199
+-- v8.516: AUTOLVLNEW lineup 2 tab — NEWW (NM>=1 auto switch) dan NEW1<1 (NM0_DEF); pool3=NM0
+-- v8.515: lineup pet dibagi 2 grup — tab AUTOLVL (SESI1/SESI2) dan AUTOLVLNEW (NEWW/NEW1/NEW2)
+-- v8.514: autoIsiSemua usedGlobal -> usedLocal per sesi — antar sesi boleh UUID sama, dalam 1 sesi tidak
+-- v8.513: autoIsiSemua isi sesi5 (NEWW) duluan — T-Rex/Baku tidak habis diambil sesi1/sesi2
+-- v8.512: fix tab NEWW tampil sesiPool[5] — setLineupTab map tab3->s5Holder, tab4->s3Holder, tab5->s4Holder
+-- v8.511: tab lineup SESI 1, SESI 2, NEWW, NEW 1, NEW 2 — CAD.1/CAD.2 diganti jadi NEWW/NEW 1/NEW 2
+-- v8.510: doCollect hapus BATCH/DELAY filter — kirim semua sekaligus langsung
+-- v8.509: autoCollect loop independent tiap 0.7s — jalan walau AUTOLVLNEWW off, hapus collect dari runNewLoop
 -- v8.508: cleanFruit hapus SEMUA children buah (konfirmasi aman — collect tetap jalan)
 -- v8.507: cleanFruit loop tiap 1s — hapus visual Part/Particle/Highlight di buah via GetTagged Harvestable
 -- v8.506: AUTOLVLNEWW 3 tim — NM>=100 (main), NM 1-99 (noBaku), NM<1 (3 Mimic+1 Baku); sembunyiin tab CAD.1 & CAD.2
@@ -224,7 +233,7 @@ local AUTOLVLNEWW_DEF = {
     {nama="Peacock", jml=2},
     {nama="Bahan",   jml=1},
 }
--- tim saat nightmare < 100 (ganti Baku → T-Rex ke-5)
+-- tim saat nightmare 1-199 (ganti Baku → T-Rex ke-5)
 local AUTOLVLNEWW_NOBAKU_DEF = {
     {nama="T-Rex",   jml=5},
     {nama="Peacock", jml=2},
@@ -1513,24 +1522,36 @@ end
 do
 sectionHeader(cfgScroll,"• LINEUP PET",5)
 
+-- row atas: pilih grup AUTOLVL vs AUTOLVLNEW
+local groupTabRow=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.input,BorderSizePixel=0,
+    LayoutOrder=5,Parent=cfgScroll}); corner(groupTabRow,9)
+local grpW = 1/2
+local grpOldTab=mk("TextButton",{Size=UDim2.new(grpW,-3,1,-6),Position=UDim2.new(0,3,0,3),
+    BackgroundColor3=C.accent,Text="AUTOLVL",Font=FONT_B,TextSize=10,
+    TextColor3=Color3.fromRGB(0,0,0),AutoButtonColor=false,Parent=groupTabRow}); corner(grpOldTab,7)
+local grpNewTab=mk("TextButton",{Size=UDim2.new(grpW,-3,1,-6),Position=UDim2.new(grpW,0,0,3),
+    BackgroundColor3=C.card,Text="AUTOLVLNEW",Font=FONT_B,TextSize=10,
+    TextColor3=C.textDim,AutoButtonColor=false,Parent=groupTabRow}); corner(grpNewTab,7)
+
+-- row bawah: tab per sesi (berganti sesuai grup)
 local sesiTabRow=mk("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.input,BorderSizePixel=0,
     LayoutOrder=6,Parent=cfgScroll}); corner(sesiTabRow,9)
-local tabW = 1/5
+local tabW = 1/2
 local s1Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(0,3,0,3),
     BackgroundColor3=C.accent,Text="SESI 1",Font=FONT_B,TextSize=10,
     TextColor3=Color3.fromRGB(0,0,0),AutoButtonColor=false,Parent=sesiTabRow}); corner(s1Tab,7)
 local s2Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW,0,0,3),
     BackgroundColor3=C.card,Text="SESI 2",Font=FONT_B,TextSize=10,
     TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow}); corner(s2Tab,7)
-local s3Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW*2,0,0,3),
-    BackgroundColor3=C.card,Text="CAD. 1",Font=FONT_B,TextSize=10,
-    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow,Visible=false}); corner(s3Tab,7)
-local s4Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW*3,0,0,3),
-    BackgroundColor3=C.card,Text="CAD. 2",Font=FONT_B,TextSize=10,
-    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow,Visible=false}); corner(s4Tab,7)
-local s5Tab=mk("TextButton",{Size=UDim2.new(tabW,-3,1,-6),Position=UDim2.new(tabW*4,0,0,3),
-    BackgroundColor3=C.card,Text="NEWW",Font=FONT_B,TextSize=10,
-    TextColor3=C.textDim,AutoButtonColor=false,Parent=sesiTabRow}); corner(s5Tab,7)
+-- tab grup AUTOLVLNEW (awalnya hidden) — cuma 2: NEWW dan NEW 1 (NM<1)
+local tabW2n = 1/2
+local s3Tab=mk("TextButton",{Size=UDim2.new(tabW2n,-3,1,-6),Position=UDim2.new(0,3,0,3),
+    BackgroundColor3=C.accent,Text="NEWW",Font=FONT_B,TextSize=10,
+    TextColor3=Color3.fromRGB(0,0,0),AutoButtonColor=false,Visible=false,Parent=sesiTabRow}); corner(s3Tab,7)
+local s4Tab=mk("TextButton",{Size=UDim2.new(tabW2n,-3,1,-6),Position=UDim2.new(tabW2n,0,0,3),
+    BackgroundColor3=C.card,Text="NEW 1 (<1)",Font=FONT_B,TextSize=10,
+    TextColor3=C.textDim,AutoButtonColor=false,Visible=false,Parent=sesiTabRow}); corner(s4Tab,7)
+local s5Tab=nil  -- tidak dipakai di AUTOLVLNEW
 
 local s1Holder=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
     BackgroundTransparency=1,LayoutOrder=7,Parent=cfgScroll})
@@ -1572,20 +1593,64 @@ local resetPoolBtn=mk("TextButton",{Size=UDim2.new(0.35,-3,1,0),BackgroundColor3
     Text="🗑  Reset Semua",Font=FONT_B,TextSize=11,TextColor3=Color3.fromRGB(220,80,80),
     AutoButtonColor=false,LayoutOrder=2,Parent=btnRowBot}); corner(resetPoolBtn,8); stroke(resetPoolBtn,Color3.fromRGB(80,30,30),1)
 
+-- tab visual order: SESI1=1, SESI2=2, NEWW=3, NEW1=4, NEW2=5
+-- sesiPool order:   SESI1=1, SESI2=2, CAD1=3, CAD2=4, AUTOLVLNEWW=5
+-- map tab index -> holder yang ditampilkan
+local _tabHolderMap = {s1Holder, s2Holder, s5Holder, s3Holder, s4Holder}
+-- tab3(NEWW)->s5Holder(pool5), tab4(NEW1)->s3Holder(pool3), tab5(NEW2)->s4Holder(pool4)
+local _currentGroup = "old"  -- "old"=AUTOLVL, "new"=AUTOLVLNEW
+local _currentTab = 1
+
 local function setLineupTab(sesiNum)
-    local tabs={s1Tab,s2Tab,s3Tab,s4Tab,s5Tab}; local holders={s1Holder,s2Holder,s3Holder,s4Holder,s5Holder}
-    for i,tab in ipairs(tabs) do
-        local on=(i==sesiNum)
-        tab.BackgroundColor3=on and C.accent or C.card
-        tab.TextColor3=on and Color3.fromRGB(0,0,0) or C.textDim
-        holders[i].Visible=on
+    local allHolders={s1Holder,s2Holder,s3Holder,s4Holder,s5Holder}
+    for _,h in ipairs(allHolders) do h.Visible=false end
+    if _currentGroup == "old" then
+        local tabs={s1Tab,s2Tab}
+        for i,tab in ipairs(tabs) do
+            local on=(i==sesiNum)
+            tab.BackgroundColor3=on and C.accent or C.card
+            tab.TextColor3=on and Color3.fromRGB(0,0,0) or C.textDim
+        end
+        if sesiNum==1 then s1Holder.Visible=true
+        elseif sesiNum==2 then s2Holder.Visible=true end
+    else
+        -- grup AUTOLVLNEW: tab1=NEWW(pool5), tab2=NEW1<1(pool3)
+        local tabs={s3Tab,s4Tab}
+        for i,tab in ipairs(tabs) do
+            local on=(i==sesiNum)
+            tab.BackgroundColor3=on and C.accent or C.card
+            tab.TextColor3=on and Color3.fromRGB(0,0,0) or C.textDim
+        end
+        if sesiNum==1 then s5Holder.Visible=true      -- NEWW -> pool5
+        elseif sesiNum==2 then s3Holder.Visible=true  -- NEW1<1 -> pool3
+        end
+    end
+    _currentTab = sesiNum
+end
+
+local function switchGroup(grp)
+    _currentGroup = grp
+    if grp == "old" then
+        grpOldTab.BackgroundColor3=C.accent; grpOldTab.TextColor3=Color3.fromRGB(0,0,0)
+        grpNewTab.BackgroundColor3=C.card;   grpNewTab.TextColor3=C.textDim
+        s1Tab.Visible=true; s2Tab.Visible=true
+        s3Tab.Visible=false; s4Tab.Visible=false
+        setLineupTab(1)
+    else
+        grpNewTab.BackgroundColor3=C.accent; grpNewTab.TextColor3=Color3.fromRGB(0,0,0)
+        grpOldTab.BackgroundColor3=C.card;   grpOldTab.TextColor3=C.textDim
+        s1Tab.Visible=false; s2Tab.Visible=false
+        s3Tab.Visible=true; s4Tab.Visible=true
+        setLineupTab(1)
     end
 end
+
+grpOldTab.MouseButton1Click:Connect(function() switchGroup("old") end)
+grpNewTab.MouseButton1Click:Connect(function() switchGroup("new") end)
 s1Tab.MouseButton1Click:Connect(function() setLineupTab(1) end)
 s2Tab.MouseButton1Click:Connect(function() setLineupTab(2) end)
-s3Tab.MouseButton1Click:Connect(function() setLineupTab(3) end)
-s4Tab.MouseButton1Click:Connect(function() setLineupTab(4) end)
-s5Tab.MouseButton1Click:Connect(function() setLineupTab(5) end)
+s3Tab.MouseButton1Click:Connect(function() setLineupTab(1) end)  -- NEWW
+s4Tab.MouseButton1Click:Connect(function() setLineupTab(2) end)  -- NEW1<1
 
 -- Auto Isi Semua: pilih pet terbaik (kg terbesar) per tipe untuk semua sesi sekaligus
 -- Berguna setelah rejoin — 1 klik langsung semua slot terisi tanpa pilih manual
@@ -1599,9 +1664,9 @@ local function autoIsiSemua()
     for k in pairs(sesiPool[3]) do sesiPool[3][k]=nil end
     for k in pairs(sesiPool[4]) do sesiPool[4][k]=nil end
     for k in pairs(sesiPool[5]) do sesiPool[5][k]=nil end
-    -- uuid global yang sudah dipakai (satu pet tidak boleh di dua sesi sekaligus)
-    local usedGlobal={}
+    -- uuid lokal per sesi (boleh uuid sama di sesi berbeda, tapi tidak boleh uuid sama 2x dalam 1 sesi)
     local function isiSesi(sesiNum, defs)
+        local usedLocal={}
         for _,sup in ipairs(defs) do
             local nm=sup.nama
             local count=0
@@ -1611,24 +1676,26 @@ local function autoIsiSemua()
                 local uuidStr=tostring(p.uuid)
                 local tipeMatch = (p.tipe==nm) or
                     (p.fullName and p.fullName:find(nm,1,true) ~= nil)
-                if tipeMatch and not usedGlobal[uuidStr] then
+                if tipeMatch and not usedLocal[uuidStr] then
                     if not sesiPool[sesiNum][nm] then sesiPool[sesiNum][nm]={} end
                     count=count+1
                     sesiPool[sesiNum][nm][count]={uuid=p.uuid, tipe=p.tipe, kg=p.kg}
-                    usedGlobal[uuidStr]=true
+                    usedLocal[uuidStr]=true
                 end
             end
             addLog("AutoIsi S"..sesiNum.." "..nm..": "..count.."/"..sup.jml)
         end
     end
+    -- v8.516: pool3=NM0_DEF(NEW1<1), pool4 sama NM0_DEF, pool5=NEWW
+    isiSesi(5,AUTOLVLNEWW_DEF)         -- NEWW (NM>=100 tim, switch otomatis ke NOBAKU saat NM<100)
+    isiSesi(3,AUTOLVLNEWW_NM0_DEF)    -- NEW1 <1 (NM habis)
+    isiSesi(4,AUTOLVLNEWW_NM0_DEF)    -- pool4 sama NM0 (cadangan)
     isiSesi(1,SESI1_DEF); isiSesi(2,SESI2_DEF)
-    isiSesi(3,SESI_CADANGAN_DEF); isiSesi(4,SESI_CADANGAN2_DEF)
-    isiSesi(5,AUTOLVLNEWW_DEF)
     savePoolFile()  -- persist ke file biar survive rejoin
     -- re-render semua tab
-    renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
-    renderLineup(3,SESI_CADANGAN_DEF); renderLineup(4,SESI_CADANGAN2_DEF)
     renderLineup(5,AUTOLVLNEWW_DEF)
+    renderLineup(3,AUTOLVLNEWW_NM0_DEF); renderLineup(4,AUTOLVLNEWW_NM0_DEF)
+    renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
 end
 local _autoIsiBusy=false
 autoIsiBtn.MouseButton1Click:Connect(function()
@@ -4032,31 +4099,25 @@ local function doCollect(fruits)
         return 0
     end
 
-    -- kirim semua buah sekaligus dalam tabel (method yang terbukti jalan)
-    -- server menerima array of fruit instances, tanpa batas jarak
-    local BATCH = #fruits < 20 and 4 or 30
-    local DELAY = #fruits < 20 and 0.2 or 0.7
+    -- kirim 40 buah per FireServer call (v8.510)
     local i = 1
     while i <= #fruits do
         local batch = {}
-        for j = i, math.min(i + BATCH - 1, #fruits) do
+        for j = i, math.min(i + 39, #fruits) do
             local f = fruits[j]
-            if f and f.Parent then  -- skip buah yang sudah hilang
-                table.insert(batch, f)
-            end
+            if f and f.Parent then batch[#batch+1] = f end
         end
         if #batch > 0 then
             local ok, err = pcall(function() re:FireServer(batch) end)
             if ok then
                 collected = collected + #batch
-                dbgLog("batch "..i.."-"..(i+#batch-1)..": "..#batch.." fired OK")
+                dbgLog("doCollect batch "..i..": "..#batch.." fired OK")
             else
                 errLog = tostring(err)
-                dbgLog("ERR batch "..i..": "..errLog)
+                dbgLog("doCollect ERR: "..errLog)
             end
-            task.wait(DELAY)
         end
-        i = i + BATCH
+        i = i + 40
     end
 
     _isCollecting = false
@@ -4741,16 +4802,16 @@ local function runNewLoop()
             _activeSesiDef = AUTOLVLNEWW_NM0_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_NM0_DEF
             unequipAll(); equipSesi(5, AUTOLVLNEWW_NM0_DEF)
-        elseif nmCount >= 1 and nmCount < 100 and _newwTimAktif ~= "nobaku" then
-            -- NM 1-99 → 5 T-Rex + 2 Peacock + 1 Bahan
-            addLog("[newloop] NM "..nmCount.." 1-99 — swap ke noBaku (T-Rex×5)")
+        elseif nmCount >= 1 and nmCount < 200 and _newwTimAktif ~= "nobaku" then
+            -- NM 1-199 → 5 T-Rex + 2 Peacock + 1 Bahan
+            addLog("[newloop] NM "..nmCount.." 1-199 — swap ke noBaku (T-Rex×5)")
             _newwTimAktif = "nobaku"
             _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
             unequipAll(); equipSesi(5, AUTOLVLNEWW_NOBAKU_DEF)
-        elseif nmCount >= 100 and _newwTimAktif ~= "main" then
-            -- NM >= 100 → tim utama 4 T-Rex + 1 Baku + 2 Peacock + 1 Bahan
-            addLog("[newloop] NM "..nmCount.." >= 100 — swap ke main")
+        elseif nmCount >= 200 and _newwTimAktif ~= "main" then
+            -- NM >= 200 → tim utama 4 T-Rex + 1 Baku + 2 Peacock + 1 Bahan
+            addLog("[newloop] NM "..nmCount.." >= 200 — swap ke main")
             _newwTimAktif = "main"
             _activeSesiDef = AUTOLVLNEWW_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
@@ -4766,12 +4827,7 @@ local function runNewLoop()
             unequipBahanTua()
             equipOneBahan()
         end)
-        -- auto collect mutasi
-        if #data.shovel > 0 then
-            addLog("[newloop] collect: "..#data.shovel.." mutasi")
-            local collected = doCollect(data.shovel)
-            addLog("[newloop] collect done: "..collected.."/"..#data.shovel)
-        end
+        -- collect ditangani oleh autoCollect loop independent (v8.509)
         local shoveled = doShovelPlants()
         if shoveled > 0 then addLog("NewLoop shovel: "..shoveled.." pohon") end
         task.wait(0.5)
@@ -6546,6 +6602,19 @@ do
                     if fruit:IsDescendantOf(farm) then
                         cleanFruit(fruit)
                     end
+                end
+            end)
+        end
+    end)
+
+    -- v8.509: autoCollect loop independent — scan+collect mutasi tiap 0.7s, jalan terus walau AUTOLVLNEWW off
+    task.spawn(function()
+        while true do
+            task.wait(0.7)
+            pcall(function()
+                local data = scanFruits()
+                if #data.shovel > 0 then
+                    doCollect(data.shovel)
                 end
             end)
         end
