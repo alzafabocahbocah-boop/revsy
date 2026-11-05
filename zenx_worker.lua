@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.632"
+local VERSION = "9.633"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5981,11 +5981,13 @@ local function run(cfg)
                                 :format(ak, umur and (umur.."s") or "BELUM ADA FILE"))
                         end
                         -- v9.631: FORCE_PS_TEMBAK -- langsung tembak ke PS setelah start, skip grace denyut
+                        -- v9.633: setelah tembak selesai, _denyutTop di-reset -> timer 90s mulai dari sana
                         local forcePsTembak = _G.FORCE_PS_TEMBAK and _G.FORCE_PS_TEMBAK[pkg]
                             and (os.time() - _G.FORCE_PS_TEMBAK[pkg]) < 300   -- valid 5 menit
                         if forcePsTembak and mapLink and mapLink[pkg] and mapLink[pkg] ~= "" then
                             _G.FORCE_PS_TEMBAK[pkg] = nil
                             KICK_DIURUS["nofile_since:" .. pkg] = nil
+                            KICK_DIURUS["tembak_ts:" .. pkg] = nil   -- clear grace biar antrian gak block
                             perluTembak[#perluTembak+1] = pkg
                             info(("[antrian] %s FORCE_PS_TEMBAK -> langsung tembak PS (skip grace denyut)"):format(ak or pkg))
                         elseif umur ~= nil and umur <= denyut_fresh_sec(cfg) then
@@ -6104,6 +6106,7 @@ local function run(cfg)
                         end) end)
                         local tnowBuka = os.time()
                         for _, pkg in ipairs(perluTembak) do KICK_DIURUS["tembak_ts:" .. pkg] = tnowBuka end
+                        KICK_DIURUS["_denyutTop"] = os.time()   -- v9.633: reset timer 90s setelah tembak rotasi selesai
                     else
                     -- v9.499: FIX -- dulu hardcode 30 di dua tempat (log message + sleep loop beneran),
                     -- GAK baca cfg.stagger_sec sama sekali. Preset khusus (mis. newmarket-arceus,
