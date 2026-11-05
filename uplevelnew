@@ -4499,27 +4499,21 @@ local function doShovelPlants()
     local imp = farm:FindFirstChild("Important"); if not imp then return 0 end
     local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return 0 end
 
-    -- kumpulkan pohon bermutasi dulu
+    -- kumpulkan semua pohon (GetDescendants bypass limit 500)
     local targets = {}
-    for _, pt in ipairs(plants:GetChildren()) do
-        local fruits = pt:FindFirstChild("Fruits")
-        if fruits then
-            for _, fruit in ipairs(fruits:GetChildren()) do
-                if fruitHasMutation(fruit) then
-                    table.insert(targets, pt)
-                    break
-                end
-            end
+    for _, pt in ipairs(plants:GetDescendants()) do
+        if pt:IsA("Model") and pt.Parent == plants then
+            table.insert(targets, pt)
         end
     end
+    addLog("[shovel] total pohon: "..#targets)
     if #targets == 0 then return 0 end
 
     -- cari shovel di backpack
     local char = plr.Character; if not char then return 0 end
     local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return 0 end
-    local bp = plr.Backpack
     local shovelTool = nil
-    for _, t in ipairs(bp:GetChildren()) do
+    for _, t in ipairs(plr.Backpack:GetChildren()) do
         if t:IsA("Tool") and t.Name:lower():find("shovel") then shovelTool = t; break end
     end
     -- cek juga kalau sudah di tangan
@@ -4530,18 +4524,52 @@ local function doShovelPlants()
     end
     if not shovelTool then addLog("[shovel] shovel tool tidak ada di backpack"); return 0 end
 
-    -- unequip pet dulu, equip shovel
-    pcall(function() hum:UnequipTools() end); task.wait(0.2)
-    pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.3)
+    -- unequip dulu, equip shovel, tunggu confirm
+    pcall(function() hum:UnequipTools() end); task.wait(0.3)
+    pcall(function() hum:EquipTool(shovelTool) end)
+    local t0 = tick()
+    while tick()-t0 < 2 do
+        local found = false
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("shovel") then found=true; break end
+        end
+        if found then break end
+        task.wait(0.1)
+    end
+    task.wait(0.3)
+    addLog("[shovel] shovel equipped")
 
-    -- FireServer Remove_Item tiap pohon
+    -- InputGateway Activation REs
+    local wsIG = char:FindFirstChild("InputGateway")
+    local wsAct = wsIG and wsIG:FindFirstChild("Activation")
+    local psIG = plr:FindFirstChild("PlayerScripts") and plr.PlayerScripts:FindFirstChild("InputGateway")
+    local psAct = psIG and psIG:FindFirstChild("Activation")
+
+    -- FireServer tiap pohon: Activation(true) → Remove_Item(pohon) → Activation(false)
     local count = 0
     for _, pt in ipairs(targets) do
-        if not _G._UPL_AUTO_SHOVEL then break end -- cek lagi kalau toggle dimatikan
+        if not _G._UPL_AUTO_SHOVEL then break end
+        if not pt or not pt.Parent then continue end
+
+        local cf = CFrame.new()
+        pcall(function()
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then cf = hrp.CFrame end
+        end)
+
+        if wsAct then pcall(function() wsAct:FireServer(true, cf) end) end
+        if psAct then pcall(function() psAct:FireServer(true, cf) end) end
+        task.wait(0.05)
+
         local ok, err = pcall(function() re:FireServer(pt) end)
+        task.wait(0.05)
+
+        if wsAct then pcall(function() wsAct:FireServer(false, cf) end) end
+        if psAct then pcall(function() psAct:FireServer(false, cf) end) end
+
         if ok then
             count = count + 1
-            addLog("[shovel] Remove_Item: "..pt.Name)
+            addLog("[shovel] OK: "..pt.Name)
         else
             addLog("[shovel] ERR: "..tostring(err))
         end
@@ -4550,8 +4578,8 @@ local function doShovelPlants()
 
     -- unequip shovel, re-equip pet
     pcall(function() hum:UnequipTools() end); task.wait(0.2)
-    -- re-equip sesi aktif
     pcall(function() equipSesi(_activeSesiNum, _activeSesiDef) end)
+    addLog("[shovel] selesai: "..count.." pohon")
 
     return count
 end
