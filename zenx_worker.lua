@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.633"
+local VERSION = "9.634"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6191,7 +6191,7 @@ local function run(cfg)
             local _isHact = _sl:find("HACT")
             local _isUplevel = _sl:find("UPLEVEL")   -- v9.490: uplevel ikut restart terjadwal -- DIMATIIN user request
             -- v9.491: market ikut restart terjadwal -- DIMATIIN user request
-            if _isUp38 or _isUp6 then   -- v9.520: hact DIKELUARIN dari restart terjadwal (user request)
+            if false and (_isUp38 or _isUp6) then   -- v9.634: restart terjadwal up3.8kg/up6kg DIMATIIN user request
                 local wibNow = os.time() + 7 * 3600
                 local wt = os.date("!*t", wibNow)
                 local per2jam = _isUp38 or _isUp6 -- up3.8kg: tiap 2 jam (00/02/04/... WIB); up6kg: 120 menit (v9.552: dari 45min)
