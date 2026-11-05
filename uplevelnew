@@ -1,4 +1,5 @@
--- uplevelnew v8.524
+-- uplevelnew v8.525
+-- v8.525: startup auto-isi tunggu container ada isinya (next check) — cegah T-Rex slot5 kosong saat container belum ready
 -- v8.524: runNewLoop cek NM sebelum equip pertama — tidak salah masukkan Baku saat NM<200
 -- v8.523: s5Holder ganti UIListLayout vertikal — slot T-Rex 1-4 dibuat row 2 kolom manual, swap row full width
 -- v8.522: auto isi otomatis waktu startup kalau pool kosong — tidak perlu pencet tombol setelah rejoin
@@ -1880,9 +1881,17 @@ end)
 -- AUTO ISI saat startup kalau pool kosong (fresh execute / rejoin + file kosong)
 if _poolKosong then
     task.spawn(function()
-        -- tunggu container load dulu (max 15s)
+        -- v8.525: tunggu container ada isinya (bukan hanya non-nil) — cegah auto-isi saat data belum penuh
         local t0 = tick()
-        while not _kgContainer and tick() - t0 < 15 do task.wait(0.5) end
+        while tick() - t0 < 20 do
+            local c = _kgContainer
+            if c and next(c) then break end  -- container ada dan punya setidaknya 1 entry
+            task.wait(0.5)
+        end
+        if not _kgContainer or not next(_kgContainer) then
+            addLog("AutoIsi startup: container masih kosong setelah 20s, skip")
+            return
+        end
         autoIsiSemua()
         addLog("AutoIsi startup: pool kosong -> auto-pick kg terbesar")
     end)
