@@ -1,4 +1,5 @@
--- uplevelnew v8.522
+-- uplevelnew v8.523
+-- v8.523: s5Holder ganti UIListLayout vertikal — slot T-Rex 1-4 dibuat row 2 kolom manual, swap row full width
 -- v8.522: auto isi otomatis waktu startup kalau pool kosong — tidak perlu pencet tombol setelah rejoin
 -- v8.521: fix renderLineup sesi5 pakai POOL_DEF — swap row T-Rex/Baku sekarang muncul setelah auto isi
 -- v8.520: lineup NEWW — T-Rex slot5 dan Baku tampil 1 baris side-by-side dengan label NM 1-199 / NM ≥200
@@ -1310,7 +1311,8 @@ local function renderLineup(sesiNum, defs)
     local pool=sesiPool[sesiNum] or {}
     local order=0
 
-    -- v8.522: auto isi otomatis waktu startup kalau pool kosong — tidak perlu pencet tombol setelah rejoin
+    -- v8.523: s5Holder ganti UIListLayout vertikal — slot T-Rex 1-4 dibuat row 2 kolom manual, swap row full width
+-- v8.522: auto isi otomatis waktu startup kalau pool kosong — tidak perlu pencet tombol setelah rejoin
 -- v8.521: fix renderLineup sesi5 pakai POOL_DEF — swap row T-Rex/Baku sekarang muncul setelah auto isi
 -- v8.520: sesi5 (NEWW) — T-Rex slot ke-5 dan Baku tampil 1 baris side-by-side (swap slot)
     if sesiNum == 5 then
@@ -1326,22 +1328,59 @@ local function renderLineup(sesiNum, defs)
         for _,sup in ipairs(defs) do
             local nm=sup.nama
             if nm == "T-Rex" and hasTRex5 and hasBaku then
-                -- slot 1-4 normal
-                for i=1,4 do
+                -- slot 1-4: dibuat 2 card per baris (row frame manual, masing-masing 50%)
+                for pair=0,1 do  -- pair 0 = slot 1&2, pair 1 = slot 3&4
                     order=order+1
-                    makeLineupCard(holder, sesiNum, nm, i, defs, order)
+                    local rowF=mk("Frame",{Size=UDim2.new(1,0,0,62),BackgroundTransparency=1,
+                        LayoutOrder=order,Parent=holder})
+                    mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,
+                        Padding=UDim.new(0,8),Parent=rowF})
+                    for col=1,2 do
+                        local i = pair*2+col
+                        local entry=(pool[nm] or {})[i]
+                        local colr=petCol(nm)
+                        local card=mk("TextButton",{BackgroundColor3=C.card,Text="",AutoButtonColor=true,
+                            Size=UDim2.new(0.5,-4,0,62),LayoutOrder=col,Parent=rowF}); corner(card,10)
+                        stroke(card, entry and colr or C.border, entry and 1.5 or 1)
+                        mk("Frame",{Size=UDim2.new(0,3,1,-14),Position=UDim2.new(0,0,0,7),BackgroundColor3=colr,BorderSizePixel=0,Parent=card})
+                        local shortNm=nm:gsub("T%-Rex","T-Rex")
+                        local tyL=lbl(card,shortNm,9,colr); tyL.Font=FONT_B
+                        tyL.Position=UDim2.new(0,10,0,7); tyL.Size=UDim2.new(1,-14,0,12)
+                        if entry then
+                            local pnL=lbl(card,tostring(entry.fullName or nm):gsub("Rainbow ",""):gsub("Choc ",""),11,C.text)
+                            pnL.Font=FONT_B; pnL.Position=UDim2.new(0,10,0,21); pnL.Size=UDim2.new(1,-12,0,18)
+                            pnL.TextTruncate=Enum.TextTruncate.AtEnd
+                            local liveData=_kgContainer and _kgContainer[entry.uuid]
+                            local livePD=type(liveData)=="table" and liveData.PetData or nil
+                            local liveAge=livePD and tonumber(livePD.Level) or entry.age or 0
+                            local liveBW=livePD and tonumber(livePD.BaseWeight) or 0
+                            local liveKg=liveBW>0 and liveBW*(liveAge+10)/10 or (entry.kg or 0)
+                            local kgStr=liveKg>0 and string.format("%.1fkg",liveKg) or "? kg"
+                            local ageL=lbl(card,kgStr.."  age "..(liveAge>0 and tostring(liveAge) or "?"),10,colr)
+                            ageL.Position=UDim2.new(0,10,0,39); ageL.Size=UDim2.new(1,-14,0,14)
+                        else
+                            local plusL=lbl(card,"+ pilih",12,C.textDim)
+                            plusL.Position=UDim2.new(0,10,0,24); plusL.Size=UDim2.new(1,-14,0,20)
+                        end
+                        local iCopy=i
+                        card.MouseButton1Click:Connect(function()
+                            openPetPicker(sesiNum,nm,iCopy,function(p)
+                                if not sesiPool[sesiNum][nm] then sesiPool[sesiNum][nm]={} end
+                                sesiPool[sesiNum][nm][iCopy]=p
+                                renderLineup(sesiNum,defs); savePoolFile()
+                            end)
+                        end)
+                    end
                 end
-                -- swap row: T-Rex slot 5 | Baku — 1 baris
+                -- swap row: T-Rex slot 5 | Baku — 1 baris full width
                 order=order+1
                 local swapFrame=mk("Frame",{Size=UDim2.new(1,0,0,62),BackgroundTransparency=1,
                     LayoutOrder=order,Parent=holder})
                 mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,
-                    Padding=UDim.new(0,6),Parent=swapFrame})
-                -- label "SWAP" kecil di kiri atas
-                local swapLbl=lbl(swapFrame,"⇄ swap NM",8,C.textDim)
+                    Padding=UDim.new(0,8),Parent=swapFrame})
                 -- buat 2 card di dalam swapFrame (masing-masing 50%)
                 local c1=mk("TextButton",{BackgroundColor3=C.card,Text="",AutoButtonColor=true,
-                    Size=UDim2.new(0.5,-3,0,62),LayoutOrder=1,Parent=swapFrame}); corner(c1,10)
+                    Size=UDim2.new(0.5,-4,0,62),LayoutOrder=1,Parent=swapFrame}); corner(c1,10)
                 local entry5=(pool["T-Rex"] or {})[5]
                 local col1=petCol("T-Rex")
                 stroke(c1, entry5 and col1 or C.border, entry5 and 1.5 or 1)
@@ -1364,7 +1403,7 @@ local function renderLineup(sesiNum, defs)
                 end)
 
                 local c2=mk("TextButton",{BackgroundColor3=C.card,Text="",AutoButtonColor=true,
-                    Size=UDim2.new(0.5,-3,0,62),LayoutOrder=2,Parent=swapFrame}); corner(c2,10)
+                    Size=UDim2.new(0.5,-4,0,62),LayoutOrder=2,Parent=swapFrame}); corner(c2,10)
                 local entryB=(pool["Baku"] or {})[1]
                 local col2=petCol("Baku")
                 stroke(c2, entryB and col2 or C.border, entryB and 1.5 or 1)
@@ -1688,7 +1727,8 @@ lineupHolders[4]=s4Holder
 
 local s5Holder=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
     BackgroundTransparency=1,LayoutOrder=7,Visible=false,Parent=cfgScroll})
-mk("UIGridLayout",{CellSize=UDim2.new(0.5,-4,0,62),CellPadding=UDim2.new(0,8,0,8),
+-- v8.523: s5Holder pakai UIListLayout vertikal (bukan UIGridLayout) agar swap row bisa full-width
+mk("UIListLayout",{FillDirection=Enum.FillDirection.Vertical,Padding=UDim.new(0,8),
     SortOrder=Enum.SortOrder.LayoutOrder,Parent=s5Holder})
 lineupHolders[5]=s5Holder
 
@@ -1859,6 +1899,7 @@ resetPoolBtn.MouseButton1Click:Connect(function()
     resetPoolBtn.Text="✓  Reset!"; resetPoolBtn.TextColor3=C.accent
     task.delay(2,function() resetPoolBtn.Text="🗑  Reset Semua"; resetPoolBtn.TextColor3=Color3.fromRGB(220,80,80) end)
 end)
+-- v8.523: s5Holder ganti UIListLayout vertikal — slot T-Rex 1-4 dibuat row 2 kolom manual, swap row full width
 -- v8.522: initial render — kalau pool ada isinya (dari loadPoolFile), render langsung
 -- kalau pool kosong, auto isi otomatis setelah container ready
 renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
