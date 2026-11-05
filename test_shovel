@@ -161,13 +161,21 @@ local function doShovel()
     local plants = imp:FindFirstChild("Plants_Physical")
     if not plants then addLog("ERR: Plants_Physical nil"); busy = false; return end
 
-    -- kumpulkan semua pohon
+    -- kumpulkan semua buah dari semua pohon
     local targets = {}
     for _, pt in ipairs(plants:GetChildren()) do
-        table.insert(targets, pt)
+        local fruits = pt:FindFirstChild("Fruits")
+        if fruits then
+            for _, fruit in ipairs(fruits:GetChildren()) do
+                table.insert(targets, { pohon=pt, buah=fruit })
+            end
+        else
+            -- kalau gak ada folder Fruits, coba pohonnya langsung
+            table.insert(targets, { pohon=pt, buah=pt })
+        end
     end
-    addLog("Total pohon: "..#targets)
-    if #targets == 0 then addLog("Tidak ada pohon"); busy = false; return end
+    addLog("Total buah/pohon: "..#targets)
+    if #targets == 0 then addLog("Tidak ada target"); busy = false; return end
 
     -- cari shovel
     local char = plr.Character
@@ -197,32 +205,31 @@ local function doShovel()
     if not wsAct then addLog("WARN: Workspace InputGateway.Activation nil") end
     if not psAct then addLog("WARN: PlayerScripts InputGateway.Activation nil") end
 
-    -- FireServer tiap pohon dengan sequence: Activation(true) → Remove_Item → Activation(false)
+    -- FireServer tiap buah: Activation(true) → Remove_Item(buah) → Activation(false)
     local count = 0
-    for _, pt in ipairs(targets) do
-        -- ambil CFrame karakter saat ini
+    for _, t in ipairs(targets) do
+        local buah = t.buah
+        if not buah or not buah.Parent then continue end
+
         local cf = CFrame.new()
         pcall(function()
             local hrp = char:FindFirstChild("HumanoidRootPart")
             if hrp then cf = hrp.CFrame end
         end)
 
-        -- Activation true
         if wsAct then pcall(function() wsAct:FireServer(true, cf) end) end
         if psAct then pcall(function() psAct:FireServer(true, cf) end) end
         task.wait(0.05)
 
-        -- Remove_Item
-        local ok, err = pcall(function() re:FireServer(pt) end)
+        local ok, err = pcall(function() re:FireServer(buah) end)
         task.wait(0.05)
 
-        -- Activation false
         if wsAct then pcall(function() wsAct:FireServer(false, cf) end) end
         if psAct then pcall(function() psAct:FireServer(false, cf) end) end
 
         if ok then
             count = count + 1
-            addLog("OK: "..pt.Name)
+            addLog("OK: "..t.pohon.Name.."/"..buah.Name)
         else
             addLog("ERR: "..tostring(err))
         end
