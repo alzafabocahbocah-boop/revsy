@@ -1,4 +1,5 @@
--- uplevelnew v8.556
+-- uplevelnew v8.557
+-- v8.557: fix Bahan masuk saat nobaku — equipOneBahan return early kalau DEF tidak punya Bahan
 -- v8.556: fix FPS panel top-right stuck 60 — counter RenderStepped lokal, tidak pakai _G.__ZenxFps
 -- v8.555: fix panel top-right tidak mengecil saat disentuh — now→tick() di shrink loop
 -- v8.554: fix UUID Bahan ganti-ganti — set _bahanUuids di equipSesi, clear di unequipAll
@@ -129,7 +130,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.556")
+print("[UPL] VERSION: v8.557")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -237,7 +238,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.556"
+local VERSION = "v8.557"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3950,12 +3951,22 @@ end
 
 -- v8.455: equipOneBahan -> equipBahans, support 2 slot bahan aging bersamaan
 equipOneBahan = function()
-    -- baca jml Bahan dari sesi aktif (AUTOLVLNEWW=1, SESI2=2), fallback 2
-    local BAHAN_SLOT = 2
+    -- baca jml Bahan dari sesi aktif
+    -- v8.557: fallback 0 (bukan 2) agar tim tanpa Bahan (nobaku/nm0) tidak equip Bahan sama sekali
+    local BAHAN_SLOT = 0
+    local bahanAdaDiDef = false
     if _activeSesiDef then
         for _, d in ipairs(_activeSesiDef) do
-            if d.nama == "Bahan" then BAHAN_SLOT = d.jml; break end
+            if d.nama == "Bahan" then BAHAN_SLOT = d.jml; bahanAdaDiDef = true; break end
         end
+    end
+    -- kalau DEF aktif tidak punya Bahan sama sekali, langsung return — unequip bahan yang ada juga
+    if not bahanAdaDiDef then
+        for uuid in pairs(_bahanUuids) do
+            pcall(function() unequipPet(uuid) end)
+            _bahanUuids[uuid] = nil
+        end
+        return
     end
     local pool2 = sesiPool[2] or {}
 
