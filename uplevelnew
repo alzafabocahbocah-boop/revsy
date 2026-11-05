@@ -186,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.511"
+local VERSION = "v8.512"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3870,11 +3870,17 @@ do
     _nmDbgLbl.TextWrapped = true; _nmDbgLbl.TextXAlignment = Enum.TextXAlignment.Left
     _nmDbgLbl.TextYAlignment = Enum.TextYAlignment.Top; _nmDbgLbl.Text = "menunggu buah..."
     _nmDbgLbl.Parent = fr
-    _nmDbgCopy = Instance.new("TextButton"); _nmDbgCopy.Size = UDim2.new(0,80,0,22)
-    _nmDbgCopy.Position = UDim2.new(1,-88,1,-26); _nmDbgCopy.BackgroundColor3 = Color3.fromRGB(30,80,70)
+    _nmDbgCopy = Instance.new("TextButton"); _nmDbgCopy.Size = UDim2.new(0,75,0,22)
+    _nmDbgCopy.Position = UDim2.new(1,-164,1,-26); _nmDbgCopy.BackgroundColor3 = Color3.fromRGB(30,80,70)
     _nmDbgCopy.Font = Enum.Font.GothamBold; _nmDbgCopy.TextSize = 11; _nmDbgCopy.TextColor3 = Color3.fromRGB(0,220,180)
     _nmDbgCopy.Text = "📋 Copy"; _nmDbgCopy.BorderSizePixel = 0; _nmDbgCopy.Parent = fr
     Instance.new("UICorner",_nmDbgCopy).CornerRadius = UDim.new(0,6)
+    -- tombol Dump lengkap semua buah
+    local _nmDbgDump = Instance.new("TextButton"); _nmDbgDump.Size = UDim2.new(0,75,0,22)
+    _nmDbgDump.Position = UDim2.new(1,-84,1,-26); _nmDbgDump.BackgroundColor3 = Color3.fromRGB(80,40,10)
+    _nmDbgDump.Font = Enum.Font.GothamBold; _nmDbgDump.TextSize = 11; _nmDbgDump.TextColor3 = Color3.fromRGB(255,180,60)
+    _nmDbgDump.Text = "🔍 Dump"; _nmDbgDump.BorderSizePixel = 0; _nmDbgDump.Parent = fr
+    Instance.new("UICorner",_nmDbgDump).CornerRadius = UDim.new(0,6)
     local _nmDbgLastText = ""
     _nmDbgCopy.MouseButton1Click:Connect(function()
         pcall(function()
@@ -3883,11 +3889,37 @@ do
             task.delay(1.5, function() _nmDbgCopy.Text = "📋 Copy" end)
         end)
     end)
-    -- simpan ref lastText buat copy
-    local _origSet = function(txt)
-        _nmDbgLbl.Text = txt
-        _nmDbgLastText = txt
-    end
+    _nmDbgDump.MouseButton1Click:Connect(function()
+        pcall(function()
+            local farm = getPlayerFarm(); if not farm then return end
+            local imp = farm:FindFirstChild("Important"); if not imp then return end
+            local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
+            local lines = {}
+            local fruitIdx = 0
+            for _, pt in ipairs(plants:GetChildren()) do
+                local fruits = pt:FindFirstChild("Fruits"); if not fruits then continue end
+                for _, fruit in ipairs(fruits:GetChildren()) do
+                    fruitIdx = fruitIdx + 1
+                    local attrs = {}
+                    for k, v in pairs(fruit:GetAttributes()) do
+                        table.insert(attrs, k.."="..tostring(v))
+                    end
+                    table.sort(attrs)
+                    -- juga dump child names
+                    local children = {}
+                    for _, ch in ipairs(fruit:GetChildren()) do
+                        table.insert(children, ch.ClassName..":"..ch.Name)
+                    end
+                    table.insert(lines, "["..fruitIdx.."] attrs={"..table.concat(attrs,", ").."} children={"..table.concat(children,", ").."}")
+                end
+            end
+            local result = "DUMP "..fruitIdx.." buah:\n"..table.concat(lines,"\n")
+            setclipboard(result)
+            _nmDbgDump.Text = "✅ Copied!"
+            task.delay(2, function() _nmDbgDump.Text = "🔍 Dump" end)
+            print("[NMDump]\n"..result)
+        end)
+    end)
     _nmDbgLbl.Changed:Connect(function(prop)
         if prop == "Text" then _nmDbgLastText = _nmDbgLbl.Text end
     end)
