@@ -1,4 +1,5 @@
--- uplevelnew v8.523
+-- uplevelnew v8.524
+-- v8.524: runNewLoop cek NM sebelum equip pertama — tidak salah masukkan Baku saat NM<200
 -- v8.523: s5Holder ganti UIListLayout vertikal — slot T-Rex 1-4 dibuat row 2 kolom manual, swap row full width
 -- v8.522: auto isi otomatis waktu startup kalau pool kosong — tidak perlu pencet tombol setelah rejoin
 -- v8.521: fix renderLineup sesi5 pakai POOL_DEF — swap row T-Rex/Baku sekarang muncul setelah auto isi
@@ -1311,7 +1312,8 @@ local function renderLineup(sesiNum, defs)
     local pool=sesiPool[sesiNum] or {}
     local order=0
 
-    -- v8.523: s5Holder ganti UIListLayout vertikal — slot T-Rex 1-4 dibuat row 2 kolom manual, swap row full width
+    -- v8.524: runNewLoop cek NM sebelum equip pertama — tidak salah masukkan Baku saat NM<200
+-- v8.523: s5Holder ganti UIListLayout vertikal — slot T-Rex 1-4 dibuat row 2 kolom manual, swap row full width
 -- v8.522: auto isi otomatis waktu startup kalau pool kosong — tidak perlu pencet tombol setelah rejoin
 -- v8.521: fix renderLineup sesi5 pakai POOL_DEF — swap row T-Rex/Baku sekarang muncul setelah auto isi
 -- v8.520: sesi5 (NEWW) — T-Rex slot ke-5 dan Baku tampil 1 baris side-by-side (swap slot)
@@ -1727,6 +1729,7 @@ lineupHolders[4]=s4Holder
 
 local s5Holder=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
     BackgroundTransparency=1,LayoutOrder=7,Visible=false,Parent=cfgScroll})
+-- v8.524: runNewLoop cek NM sebelum equip pertama — tidak salah masukkan Baku saat NM<200
 -- v8.523: s5Holder pakai UIListLayout vertikal (bukan UIGridLayout) agar swap row bisa full-width
 mk("UIListLayout",{FillDirection=Enum.FillDirection.Vertical,Padding=UDim.new(0,8),
     SortOrder=Enum.SortOrder.LayoutOrder,Parent=s5Holder})
@@ -1899,6 +1902,7 @@ resetPoolBtn.MouseButton1Click:Connect(function()
     resetPoolBtn.Text="✓  Reset!"; resetPoolBtn.TextColor3=C.accent
     task.delay(2,function() resetPoolBtn.Text="🗑  Reset Semua"; resetPoolBtn.TextColor3=Color3.fromRGB(220,80,80) end)
 end)
+-- v8.524: runNewLoop cek NM sebelum equip pertama — tidak salah masukkan Baku saat NM<200
 -- v8.523: s5Holder ganti UIListLayout vertikal — slot T-Rex 1-4 dibuat row 2 kolom manual, swap row full width
 -- v8.522: initial render — kalau pool ada isinya (dari loadPoolFile), render langsung
 -- kalau pool kosong, auto isi otomatis setelah container ready
@@ -4953,13 +4957,24 @@ local function runNewLoop()
     setStatus("AUTOLVLNEWW — equip", C.accent)
     _clusterPos = farmCenter()
     waitForContainer(10)
-    _activeSesiNum = 5; _activeSesiDef = AUTOLVLNEWW_DEF
-    _G._UPL_SESI_NUM = 5; _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
+    -- v8.524: cek NM sebelum equip pertama — langsung pakai DEF yang tepat
+    local _initData = scanFruits()
+    local _initNM = _initData.nightmareCount
+    local _newwTimAktif
+    local _startDef
+    if _initNM < 1 then
+        _newwTimAktif = "nm0"; _startDef = AUTOLVLNEWW_NM0_DEF
+    elseif _initNM < 200 then
+        _newwTimAktif = "nobaku"; _startDef = AUTOLVLNEWW_NOBAKU_DEF
+    else
+        _newwTimAktif = "main"; _startDef = AUTOLVLNEWW_DEF
+    end
+    addLog("[newloop] start NM="..tostring(_initNM).." → tim "..tostring(_newwTimAktif))
+    _activeSesiNum = 5; _activeSesiDef = _startDef
+    _G._UPL_SESI_NUM = 5; _G._UPL_SESI_DEF = _startDef
     unequipAll()
-    equipSesi(5, AUTOLVLNEWW_DEF)
+    equipSesi(5, _startDef)
     setStatus("AUTOLVLNEWW — running", C.accent)
-    local _usingBaku = true  -- track tim aktif (true=pakai Baku, false=no Baku)
-    local _newwTimAktif = "main"  -- "main"=NM>=100 | "nobaku"=NM<100 | "nm0"=NM<1
     while not _newStopRequested do
         local data = scanFruits()
         updateUI(totalNightmareCollected, data.nightmareCount, 1)
