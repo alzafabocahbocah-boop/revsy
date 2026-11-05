@@ -1,4 +1,5 @@
--- uplevelnew v8.550
+-- uplevelnew v8.551
+-- v8.551: cooldown 20s setelah swap ke Baku — anti bolak-balik T-Rex<->Baku di sekitar NM 300
 -- v8.550: NM swap loop independent (task.spawn 2s) — tidak ketahan doShovelPlants
 -- v8.549: threshold NM 200->300 — Baku masuk saat NM>=300, T-Rex saat NM 1-299
 -- v8.548: destroyVisualTags batasi ke subfarm player — pet di luar farm aman, debug print dihapus
@@ -123,7 +124,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.550")
+print("[UPL] VERSION: v8.551")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -231,7 +232,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.550"
+local VERSION = "v8.551"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5101,8 +5102,9 @@ local function runNewLoop()
     equipSesi(5, _startDef)
     setStatus("AUTOLVLNEWW — running", C.accent)
 
-    -- v8.550: NM swap loop independent — tidak tergantung lamanya doShovelPlants
-    -- cek tiap 2s sehingga swap Baku<->T-Rex tidak ketahan oleh shovel loop
+    -- v8.551: NM swap loop independent — cek tiap 2s, ada cooldown 20s setelah swap ke Baku
+    -- logika: NM>=300 → swap Baku → tunggu 20s → baru cek lagi (anti bolak-balik)
+    local _bakuCooldownUntil = 0  -- timestamp (tick()) sampai kapan Baku wajib aktif
     task.spawn(function()
         while not _newStopRequested do
             task.wait(2)
@@ -5111,31 +5113,20 @@ local function runNewLoop()
             if not ok_nm then continue end
             local nmC = _d.nightmareCount
             updateUI(totalNightmareCollected, nmC, 1)
+
             if nmC < 1 and _newwTimAktif ~= "nm0" then
+                -- NM habis total → swap ke NM0
                 addLog("[newloop-fast] NM "..nmC.." < 1 — swap ke NM0")
+                _bakuCooldownUntil = 0  -- reset cooldown
                 _newwTimAktif = "nm0"
                 _activeSesiDef = AUTOLVLNEWW_NM0_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NM0_DEF
                 unequipAll(); equipSesi(5, AUTOLVLNEWW_NM0_DEF)
-            elseif nmC >= 1 and nmC < 300 and _newwTimAktif ~= "nobaku" then
-                addLog("[newloop-fast] NM "..nmC.." 1-299 — swap Baku→T-Rex ke-5")
-                _newwTimAktif = "nobaku"
-                _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
-                local pool5 = sesiPool[5] or {}
-                local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
-                if bakuSlot and bakuSlot.uuid then
-                    unequipPet(bakuSlot.uuid)
-                    local _au = _G._ZenxActiveUuids
-                    if _au then _au[tostring(bakuSlot.uuid)] = nil end
-                    task.wait(0.8)
-                end
-                local trexPool = pool5["T-Rex"] or {}
-                local trex5 = trexPool[5]
-                if trex5 and trex5.uuid then
-                    equipPet(trex5.uuid); task.wait(0.5)
-                end
+
             elseif nmC >= 300 and _newwTimAktif ~= "main" then
-                addLog("[newloop-fast] NM "..nmC.." >= 300 — swap T-Rex ke-5→Baku")
+                -- NM nyentuh 300 → swap ke Baku + set cooldown 20s
+                addLog("[newloop-fast] NM "..nmC.." >= 300 — swap T-Rex→Baku (cooldown 20s)")
                 _newwTimAktif = "main"
+                _bakuCooldownUntil = tick() + 20  -- wajib pakai Baku minimal 20s
                 _activeSesiDef = AUTOLVLNEWW_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
                 local pool5 = sesiPool[5] or {}
                 local trexPool = pool5["T-Rex"] or {}
@@ -5149,6 +5140,31 @@ local function runNewLoop()
                 local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
                 if bakuSlot and bakuSlot.uuid then
                     equipPet(bakuSlot.uuid); task.wait(0.5)
+                end
+
+            elseif nmC >= 1 and nmC < 300 and _newwTimAktif ~= "nobaku" then
+                -- NM di bawah 300 → swap ke T-Rex, TAPI hanya kalau cooldown Baku sudah habis
+                if tick() < _bakuCooldownUntil then
+                    -- masih dalam cooldown 20s — tahan dulu
+                    local sisa = math.ceil(_bakuCooldownUntil - tick())
+                    addLog("[newloop-fast] NM "..nmC.." < 300 tapi cooldown Baku "..sisa.."s lagi")
+                else
+                    addLog("[newloop-fast] NM "..nmC.." 1-299 — swap Baku→T-Rex ke-5")
+                    _newwTimAktif = "nobaku"
+                    _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
+                    local pool5 = sesiPool[5] or {}
+                    local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
+                    if bakuSlot and bakuSlot.uuid then
+                        unequipPet(bakuSlot.uuid)
+                        local _au = _G._ZenxActiveUuids
+                        if _au then _au[tostring(bakuSlot.uuid)] = nil end
+                        task.wait(0.8)
+                    end
+                    local trexPool = pool5["T-Rex"] or {}
+                    local trex5 = trexPool[5]
+                    if trex5 and trex5.uuid then
+                        equipPet(trex5.uuid); task.wait(0.5)
+                    end
                 end
             end
         end
