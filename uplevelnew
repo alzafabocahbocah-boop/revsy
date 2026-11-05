@@ -1,4 +1,5 @@
--- uplevelnew v8.534
+-- uplevelnew v8.535
+-- v8.535: tambah log debug startup — cek kenapa auto-isi tidak jalan (pool3 kosong tapi skip)
 -- v8.534: revert v8.532 — renderLineup sesi5 pakai POOL_DEF, Baku selalu muncul di display (standby/aktif)
 -- v8.533: auto-isi startup cek pool3 (NEW 1) — sesi3 tidak disimpan di file, selalu kosong setelah rejoin
 -- v8.532: renderLineup sesi5 pakai _activeSesiDef — slot Baku tidak muncul saat tim nobaku (NM 1-199)
@@ -107,7 +108,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.534")
+print("[UPL] VERSION: v8.535")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -215,7 +216,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.534"
+local VERSION = "v8.535"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -1874,6 +1875,7 @@ local function autoIsiSemua()
     end
     -- v8.519: pool5 pakai POOL_DEF (5 T-Rex+1 Baku) agar slot ke-5 ada untuk swap
     isiSesi(5,AUTOLVLNEWW_POOL_DEF)    -- NEWW: simpan 5 T-Rex+1 Baku, swap 1 slot saat NM berubah
+    addLog("AutoIsi: pool5 selesai, isi pool3 (NEW1<1)...")
     isiSesi(3,AUTOLVLNEWW_NM0_DEF)    -- NEW1 <1 (NM habis)
     isiSesi(4,AUTOLVLNEWW_NM0_DEF)    -- pool4 sama NM0 (cadangan)
     isiSesi(1,SESI1_DEF); isiSesi(2,SESI2_DEF)
@@ -1913,8 +1915,11 @@ autoIsiBtn.MouseButton1Click:Connect(function()
 end)
 -- AUTO ISI saat startup kalau pool kosong (fresh execute / rejoin + file kosong)
 -- v8.533: tambah _pool3Kosong — sesi3 (NEW 1) tidak disimpan di file, selalu kosong setelah rejoin
+-- v8.535: log debug — cek kenapa auto-isi tidak jalan
+addLog("Startup cek pool: poolKosong="..tostring(_poolKosong).." pool5Kosong="..tostring(_pool5Kosong).." pool3Kosong="..tostring(_pool3Kosong))
 if _poolKosong or _pool5Kosong or _pool3Kosong then
     task.spawn(function()
+        addLog("AutoIsi startup: MASUK block — tunggu container...")
         -- v8.525: tunggu container ada isinya (bukan hanya non-nil) — cegah auto-isi saat data belum penuh
         local t0 = tick()
         while tick() - t0 < 20 do
@@ -1926,9 +1931,12 @@ if _poolKosong or _pool5Kosong or _pool3Kosong then
             addLog("AutoIsi startup: container masih kosong setelah 20s, skip")
             return
         end
+        addLog("AutoIsi startup: container OK, panggil autoIsiSemua...")
         autoIsiSemua()
-        addLog("AutoIsi startup: "..((_poolKosong and "semua pool" or "pool5 NEWW").." kosong -> auto-pick kg terbesar"))
+        addLog("AutoIsi startup: SELESAI — "..((_poolKosong and "semua pool" or (_pool5Kosong and "pool5" or "pool3")).." kosong -> auto-pick kg terbesar"))
     end)
+else
+    addLog("AutoIsi startup: SKIP — semua pool sudah ada isi")
 end
 
 -- reset SEMUA pool — bersihkan pool (uuid jadi kosong, pilih manual lagi)
