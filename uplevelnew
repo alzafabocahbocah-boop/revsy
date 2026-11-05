@@ -186,7 +186,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.530"
+local VERSION = "v8.531"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -582,7 +582,7 @@ do
 end
 
 -- mini logo Z
-local miniLogo = mk("TextButton",{Size=UDim2.new(0,50,0,50),Position=UDim2.new(0,70,0.4,0),
+local miniLogo = mk("TextButton",{Size=UDim2.new(0,50,0,50),Position=UDim2.new(0,20,0.3,0),
     BackgroundColor3=Color3.fromRGB(20,20,20),Text="",AutoButtonColor=false,Visible=false,ZIndex=60,Parent=gui})
 mk("UICorner",{CornerRadius=UDim.new(1,0),Parent=miniLogo})
 mk("UIGradient",{Color=ColorSequence.new(Color3.fromRGB(34,34,34),Color3.fromRGB(16,16,16)),Rotation=90,Parent=miniLogo})
@@ -3854,98 +3854,8 @@ local _nmCached = 0
 local _nmCachedAt = 0
 local _nmPollerDebugDone = false
 
--- v8.514: debug overlay mengambang kiri tengah — tampil attrs buah + NM count + log collect
-local _nmDbgLbl, _nmDbgCopy, _nmDbgCollectLbl
-do
-    local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-    local sg = Instance.new("ScreenGui"); sg.Name = "ZenxNMDbg"; sg.ResetOnSpawn = false
-    sg.DisplayOrder = 9999; sg.IgnoreGuiInset = true; sg.Enabled = false; sg.Parent = pg  -- v8.530: hidden
-    local fr = Instance.new("Frame"); fr.Size = UDim2.new(0,340,0,290)
-    fr.Position = UDim2.new(0,10,0.5,-145); fr.AnchorPoint = Vector2.new(0,0)
-    fr.BackgroundColor3 = Color3.fromRGB(10,10,10); fr.BackgroundTransparency = 0.15
-    fr.BorderSizePixel = 0; fr.Parent = sg
-    Instance.new("UICorner",fr).CornerRadius = UDim.new(0,10)
-    local ttl = Instance.new("TextLabel"); ttl.Size = UDim2.new(1,0,0,22)
-    ttl.Position = UDim2.new(0,0,0,0); ttl.BackgroundTransparency = 1
-    ttl.Font = Enum.Font.GothamBold; ttl.TextSize = 11; ttl.TextColor3 = Color3.fromRGB(0,220,180)
-    ttl.Text = "🔍 NM DEBUG"; ttl.TextXAlignment = Enum.TextXAlignment.Left
-    ttl.Parent = fr
-    local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0,8); pad.PaddingTop = UDim.new(0,4); pad.Parent = ttl
-    _nmDbgLbl = Instance.new("TextLabel"); _nmDbgLbl.Size = UDim2.new(1,-16,0,150)
-    _nmDbgLbl.Position = UDim2.new(0,8,0,22); _nmDbgLbl.BackgroundTransparency = 1
-    _nmDbgLbl.Font = Enum.Font.Gotham; _nmDbgLbl.TextSize = 10; _nmDbgLbl.TextColor3 = Color3.fromRGB(220,220,220)
-    _nmDbgLbl.TextWrapped = true; _nmDbgLbl.TextXAlignment = Enum.TextXAlignment.Left
-    _nmDbgLbl.TextYAlignment = Enum.TextYAlignment.Top; _nmDbgLbl.Text = "menunggu buah..."
-    _nmDbgLbl.Parent = fr
-    -- separator
-    local sep = Instance.new("Frame"); sep.Size = UDim2.new(1,-16,0,1)
-    sep.Position = UDim2.new(0,8,0,175); sep.BackgroundColor3 = Color3.fromRGB(60,60,60)
-    sep.BorderSizePixel = 0; sep.Parent = fr
-    -- label collect log
-    _nmDbgCollectLbl = Instance.new("TextLabel"); _nmDbgCollectLbl.Size = UDim2.new(1,-16,0,76)
-    _nmDbgCollectLbl.Position = UDim2.new(0,8,0,178); _nmDbgCollectLbl.BackgroundTransparency = 1
-    _nmDbgCollectLbl.Font = Enum.Font.Gotham; _nmDbgCollectLbl.TextSize = 10
-    _nmDbgCollectLbl.TextColor3 = Color3.fromRGB(255,220,100)
-    _nmDbgCollectLbl.TextWrapped = true; _nmDbgCollectLbl.TextXAlignment = Enum.TextXAlignment.Left
-    _nmDbgCollectLbl.TextYAlignment = Enum.TextYAlignment.Top; _nmDbgCollectLbl.Text = "[COLLECT] menunggu..."
-    _nmDbgCollectLbl.Parent = fr
-    -- tombol Copy (kiri bawah)
-    _nmDbgCopy = Instance.new("TextButton"); _nmDbgCopy.Size = UDim2.new(0,100,0,22)
-    _nmDbgCopy.Position = UDim2.new(0,8,1,-26); _nmDbgCopy.BackgroundColor3 = Color3.fromRGB(30,80,70)
-    _nmDbgCopy.Font = Enum.Font.GothamBold; _nmDbgCopy.TextSize = 11; _nmDbgCopy.TextColor3 = Color3.fromRGB(0,220,180)
-    _nmDbgCopy.Text = "📋 Copy All"; _nmDbgCopy.BorderSizePixel = 0; _nmDbgCopy.Parent = fr
-    Instance.new("UICorner",_nmDbgCopy).CornerRadius = UDim.new(0,6)
-    -- tombol Dump lengkap semua buah
-    local _nmDbgDump = Instance.new("TextButton"); _nmDbgDump.Size = UDim2.new(0,80,0,22)
-    _nmDbgDump.Position = UDim2.new(1,-88,1,-26); _nmDbgDump.BackgroundColor3 = Color3.fromRGB(80,40,10)
-    _nmDbgDump.Font = Enum.Font.GothamBold; _nmDbgDump.TextSize = 11; _nmDbgDump.TextColor3 = Color3.fromRGB(255,180,60)
-    _nmDbgDump.Text = "🔍 Dump"; _nmDbgDump.BorderSizePixel = 0; _nmDbgDump.Parent = fr
-    Instance.new("UICorner",_nmDbgDump).CornerRadius = UDim.new(0,6)
-    local _nmDbgLastText = ""
-    _nmDbgCopy.MouseButton1Click:Connect(function()
-        pcall(function()
-            -- copy semua: info buah + status collect
-            local collectTxt = (_nmDbgCollectLbl and _nmDbgCollectLbl.Text) or ""
-            local full = _nmDbgLastText.."\n\n"..collectTxt
-            setclipboard(full)
-            _nmDbgCopy.Text = "✅ Copied!"
-            task.delay(1.5, function() _nmDbgCopy.Text = "📋 Copy All" end)
-        end)
-    end)
-    _nmDbgDump.MouseButton1Click:Connect(function()
-        pcall(function()
-            local farm = getPlayerFarm(); if not farm then return end
-            local imp = farm:FindFirstChild("Important"); if not imp then return end
-            local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
-            local lines = {}
-            local fruitIdx = 0
-            for _, pt in ipairs(plants:GetChildren()) do
-                local fruits = pt:FindFirstChild("Fruits"); if not fruits then continue end
-                for _, fruit in ipairs(fruits:GetChildren()) do
-                    fruitIdx = fruitIdx + 1
-                    local attrs = {}
-                    for k, v in pairs(fruit:GetAttributes()) do
-                        table.insert(attrs, k.."="..tostring(v))
-                    end
-                    table.sort(attrs)
-                    local children = {}
-                    for _, ch in ipairs(fruit:GetChildren()) do
-                        table.insert(children, ch.ClassName..":"..ch.Name)
-                    end
-                    table.insert(lines, "["..fruitIdx.."] attrs={"..table.concat(attrs,", ").."} ch={"..table.concat(children,", ").."}")
-                end
-            end
-            local full = "DUMP "..fruitIdx.." buah:\n"..table.concat(lines,"\n")
-            setclipboard(full)
-            print("[NMDump]\n"..full)
-            _nmDbgDump.Text = "✅ Copied!"
-            task.delay(2, function() _nmDbgDump.Text = "🔍 Dump" end)
-        end)
-    end)
-    _nmDbgLbl.Changed:Connect(function(prop)
-        if prop == "Text" then _nmDbgLastText = _nmDbgLbl.Text end
-    end)
-end
+-- v8.531: debug overlay dihapus total (tidak ada overhead)
+local _nmDbgLbl, _nmDbgCopy, _nmDbgCollectLbl = nil, nil, nil
 
 task.spawn(function()
     while true do
