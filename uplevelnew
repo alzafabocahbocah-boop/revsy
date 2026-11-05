@@ -1,4 +1,5 @@
--- uplevelnew v8.555
+-- uplevelnew v8.556
+-- v8.556: fix FPS panel top-right stuck 60 — counter RenderStepped lokal, tidak pakai _G.__ZenxFps
 -- v8.555: fix panel top-right tidak mengecil saat disentuh — now→tick() di shrink loop
 -- v8.554: fix UUID Bahan ganti-ganti — set _bahanUuids di equipSesi, clear di unequipAll
 -- v8.553: fix TIME selalu "—" — set _bahanEquipTime di equipSesi PASS1+PASS2 saat equip Bahan
@@ -128,8 +129,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.555")
-
+print("[UPL] VERSION: v8.556")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -237,7 +237,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.555"
+local VERSION = "v8.556"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -3166,8 +3166,19 @@ do
     local dot2 = Instance.new("Frame"); dot2.Size = UDim2.new(0,9,0,9); dot2.Position = UDim2.new(0,2,0.5,-4); dot2.BackgroundColor3 = _AQ; dot2.BorderSizePixel = 0; dot2.Parent = hdr2
     Instance.new("UICorner",dot2).CornerRadius = UDim.new(1,0)
     local ttl2 = Instance.new("TextLabel"); ttl2.BackgroundTransparency = 1; ttl2.Font = Enum.Font.GothamBold; ttl2.TextSize = 15; ttl2.TextColor3 = _AQ; ttl2.Text = "UPLEVEL STAT"; ttl2.Position = UDim2.new(0,17,0,0); ttl2.Size = UDim2.new(1,-17,1,0); ttl2.TextXAlignment = Enum.TextXAlignment.Left; ttl2.Parent = hdr2
-    -- v8.509: FPS label di kanan header
+    -- v8.556: FPS label di kanan header — counter lokal sendiri (sama akuratnya dengan HUD hijau)
     local fpsLbl2 = Instance.new("TextLabel"); fpsLbl2.BackgroundTransparency = 1; fpsLbl2.Font = Enum.Font.GothamBold; fpsLbl2.TextSize = 13; fpsLbl2.TextColor3 = Color3.fromRGB(180,180,180); fpsLbl2.Text = "-- FPS"; fpsLbl2.Position = UDim2.new(1,-60,0,0); fpsLbl2.Size = UDim2.new(0,60,1,0); fpsLbl2.TextXAlignment = Enum.TextXAlignment.Right; fpsLbl2.Parent = hdr2
+    -- counter RenderStepped lokal — tidak tergantung _G.__ZenxFps yang bisa stale
+    local _fpsCnt2 = 0
+    local _fpsVal2 = 0
+    pcall(function()
+        game:GetService("RunService").RenderStepped:Connect(function() _fpsCnt2 = _fpsCnt2 + 1 end)
+    end)
+    task.spawn(function()
+        while sg2.Parent do
+            task.wait(1); _fpsVal2 = _fpsCnt2; _fpsCnt2 = 0
+        end
+    end)
 
     -- grid 2x2 (sama up6kg: CellSize 0.5,-5 / CellPadding 0,10,0,10)
     local gridF2 = Instance.new("Frame"); gridF2.Size = UDim2.new(1,0,1,-31); gridF2.BackgroundTransparency = 1; gridF2.BorderSizePixel = 0; gridF2.LayoutOrder = 2; gridF2.Parent = frame2
@@ -3203,10 +3214,9 @@ do
     task.spawn(function()
         local lastFpsTime = tick(); local lastFpsFrame = 0
         while sg2.Parent do
-            -- v8.556: baca FPS dari _G.__ZenxFps (di-update tiap 1s oleh RenderStepped counter)
+            -- v8.556: pakai counter lokal _fpsVal2 — tidak tergantung _G.__ZenxFps yang bisa stuck 60
             pcall(function()
-                local fps = tonumber(_G.__ZenxFps) or 0
-                fpsLbl2.Text = fps.." FPS"
+                fpsLbl2.Text = _fpsVal2.." FPS"
             end)
             -- scale bertahap: 0-5s=0.3, 5-10s=0.7, 10-15s=asal
             local elapsed2 = tick() - touchAt2
