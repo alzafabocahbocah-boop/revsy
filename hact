@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.63  ══════════════════════════
+-- ══════════════════════════  HACT  v34.64  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -3860,7 +3860,8 @@ end
 function favTeamPets()
     -- v27.112: MATI TOTAL selama trade (Auto.giftBusy nyala SELAMA trade, gak peduli berapa lama)
     -- + 30s grace setelah trade selesai. Dulu cuma timer 30s -> trade lama, fav nyala mid-trade.
-    if (Auto and Auto.giftBusy) or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then return end
+    -- v34.64: tambah __hactTradeRunning (mode trade loop aktif = target online)
+    if (Auto and Auto.giftBusy) or _G.__hactTradeRunning or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin p.fav salah -> favoritePet (toggle) malah UNFAV pet tim
     local teamSel = {}
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
@@ -3888,7 +3889,8 @@ end
 -- pet keep -> fav (terlindungi). dipanggil tiap rule diubah.
 function syncFavByRules()
     -- v27.112: MATI TOTAL selama trade (Auto.giftBusy) + 30s grace setelah. Gak fav/unfav pas trade.
-    if (Auto and Auto.giftBusy) or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then return end
+    -- v34.64: tambah __hactTradeRunning
+    if (Auto and Auto.giftBusy) or _G.__hactTradeRunning or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin fav salah toggle
     -- pet tim selalu keep (jgn di-unfav walau masuk rule)
     local teamSel = {}
@@ -4245,9 +4247,10 @@ local function holdEggTool()
         print("[HactTelur] holdEggTool: giftBusy nyangkut >30s -> paksa reset")
         Auto.giftBusy = false
     end
-    if Auto.giftBusy or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then
+    -- v34.64: tambah __hactTradeRunning
+    if Auto.giftBusy or _G.__hactTradeRunning or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then
         if _G.__hactPushNotifLog then
-            _G.__hactPushNotifLog("HLD", ("skip gb=%s jeda=%.0fs"):format(tostring(Auto.giftBusy), math.max(0,_jedaSisa)))
+            _G.__hactPushNotifLog("HLD", ("skip gb=%s tr=%s jeda=%.0fs"):format(tostring(Auto.giftBusy), tostring(_G.__hactTradeRunning), math.max(0,_jedaSisa)))
         end
         return false
     end   -- v27.119: JEDA (30s abis trade) JUGA stop hatch (bukan cuma fav) -> equip telur di-hold. Samain pill JEDA.
@@ -4713,7 +4716,8 @@ local function hatchAllEggs()
     if not Auto.eggRE then return 0 end
     -- v27.119: pas TRADE atau JEDA (30s abis trade) -> JANGAN hatch (bener-bener stop, samain pill). Ini
     -- gate UTAMA aksi netas -> dulu cuma equip telur yg di-hold, tapi hatchAllEggs tetep netas pas jeda.
-    if Auto.giftBusy or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then return 0 end
+    -- v34.64: tambah __hactTradeRunning
+    if Auto.giftBusy or _G.__hactTradeRunning or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then return 0 end
     if not globalRunning then return 0 end  -- v28.2: STOP langsung, jangan hatch
     local eggBefore = totalEggNow()  -- egg sebelum hatch
     -- v32.6: pakai cache (scan farm kita doang, bukan Workspace:GetDescendants() penuh)
@@ -8564,6 +8568,29 @@ local function _buildGiftSection() do
             task.spawn(function()
                 local wasFull = false  -- lacak status full sebelumnya
                 while running do
+                    -- v34.64: kalau method=trade, cek target online tiap iterasi (poll 2s)
+                    -- target online -> __hactTradeRunning=true (hact stop semua)
+                    -- target offline -> __hactTradeRunning=false (hact jalan normal), skip trade
+                    if cfg.method == "trade" then
+                        local targetOnline = false
+                        for name in pairs(cfg.targets or {}) do
+                            if Players:FindFirstChild(name) then targetOnline = true; break end
+                        end
+                        if targetOnline then
+                            if not _G.__hactTradeRunning then
+                                _G.__hactTradeRunning = true
+                                print("[HactTelur] v34.64: target online -> MODE TRADE aktif, hact STOP")
+                            end
+                        else
+                            if _G.__hactTradeRunning then
+                                _G.__hactTradeRunning = false
+                                print("[HactTelur] v34.64: target offline -> mode trade BERHENTI, hact resume")
+                            end
+                            statL.Text = "nunggu target online..."
+                            task.wait(2)
+                            continue
+                        end
+                    end
                     if cfg.minCount and cfg.minCount > 0 then
                             -- v27.55: mode TUNGGU JENIS PET >= N (buat hactotomatis). trade CUMA kalau
                             -- pet cocok (mis Peacock 2+) >= threshold. stok di bawah threshold -> trade GAK
@@ -8653,6 +8680,7 @@ local function _buildGiftSection() do
                 else
                     running = false
                     cfg._running = false
+                    _G.__hactTradeRunning = false  -- v34.64: clear mode trade
                     syncWaitFullFlag()
                     gBtn.Text = "Auto Gift: OFF"
                     gBtn.BackgroundColor3 = C.accent
