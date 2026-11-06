@@ -1,4 +1,5 @@
--- uplevelnew v8.563
+-- uplevelnew v8.564
+-- v8.564: swap loop equip/unequip T-Rex slot5 DAN slot6 (sebelumnya hanya slot5)
 -- v8.563: swap row NEWW tambah T-Rex slot6 — jadi 3 card: T-Rex#5 | T-Rex#6 | Baku
 -- v8.562: fix label display line T-Rex "NM 1-299" → "NM 1-149" di renderLineup sesi5
 -- v8.561: fix TIME kosong — _bahanUuids/_bahanEquipTime jadikan _G supaya GUI loop bisa baca
@@ -136,7 +137,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.563")
+print("[UPL] VERSION: v8.564")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -244,7 +245,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.563"
+local VERSION = "v8.564"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -5274,19 +5275,22 @@ local function runNewLoop()
                 unequipAll(); equipSesi(5, AUTOLVLNEWW_NM0_DEF)
 
             elseif nmC >= 150 and _newwTimAktif ~= "main" then
-                -- NM nyentuh 150 → swap ke Baku + set cooldown 20s
-                addLog("[newloop-fast] NM "..nmC.." >= 150 — swap T-Rex→Baku (cooldown 20s)")
+                -- NM nyentuh 150 → cabut T-Rex slot5+6, pasang Baku + set cooldown 20s
+                addLog("[newloop-fast] NM "..nmC.." >= 150 — swap T-Rex(5+6)→Baku (cooldown 20s)")
                 _newwTimAktif = "main"
-                _bakuCooldownUntil = tick() + 20  -- wajib pakai Baku minimal 20s
+                _bakuCooldownUntil = tick() + 20
                 _activeSesiDef = AUTOLVLNEWW_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
                 local pool5 = sesiPool[5] or {}
                 local trexPool = pool5["T-Rex"] or {}
-                local trex5 = trexPool[5]
-                if trex5 and trex5.uuid then
-                    unequipPet(trex5.uuid)
-                    local _au = _G._ZenxActiveUuids
-                    if _au then _au[tostring(trex5.uuid)] = nil end
-                    task.wait(0.8)
+                -- v8.564: cabut slot 5 DAN slot 6 (nobaku pakai 6 T-Rex)
+                for _, si in ipairs({5, 6}) do
+                    local trexN = trexPool[si]
+                    if trexN and trexN.uuid then
+                        unequipPet(trexN.uuid)
+                        local _au = _G._ZenxActiveUuids
+                        if _au then _au[tostring(trexN.uuid)] = nil end
+                        task.wait(0.4)
+                    end
                 end
                 local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
                 if bakuSlot and bakuSlot.uuid then
@@ -5294,13 +5298,12 @@ local function runNewLoop()
                 end
 
             elseif nmC >= 1 and nmC < 150 and _newwTimAktif ~= "nobaku" then
-                -- NM di bawah 150 → swap ke T-Rex, TAPI hanya kalau cooldown Baku sudah habis
+                -- NM di bawah 150 → cabut Baku, pasang T-Rex slot5+6
                 if tick() < _bakuCooldownUntil then
-                    -- masih dalam cooldown 20s — tahan dulu
                     local sisa = math.ceil(_bakuCooldownUntil - tick())
                     addLog("[newloop-fast] NM "..nmC.." < 150 tapi cooldown Baku "..sisa.."s lagi")
                 else
-                    addLog("[newloop-fast] NM "..nmC.." 1-149 — swap Baku→T-Rex ke-5")
+                    addLog("[newloop-fast] NM "..nmC.." 1-149 — swap Baku→T-Rex slot5+6")
                     _newwTimAktif = "nobaku"
                     _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
                     local pool5 = sesiPool[5] or {}
@@ -5311,10 +5314,13 @@ local function runNewLoop()
                         if _au then _au[tostring(bakuSlot.uuid)] = nil end
                         task.wait(0.8)
                     end
+                    -- v8.564: equip slot 5 DAN slot 6 (nobaku butuh 6 T-Rex)
                     local trexPool = pool5["T-Rex"] or {}
-                    local trex5 = trexPool[5]
-                    if trex5 and trex5.uuid then
-                        equipPet(trex5.uuid); task.wait(0.5)
+                    for _, si in ipairs({5, 6}) do
+                        local trexN = trexPool[si]
+                        if trexN and trexN.uuid then
+                            equipPet(trexN.uuid); task.wait(0.5)
+                        end
                     end
                 end
             end
