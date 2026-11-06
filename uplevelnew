@@ -1,4 +1,5 @@
--- uplevelnew v8.583
+-- uplevelnew v8.584
+-- v8.584: debug log _bahanUuids + fallback cari Bahan dari pool5 kalau _bahanUuids kosong saat nobaku
 -- v8.583: threshold nobaku 150→100 (cabut Baku saat NM<100, pasang balik saat NM>=150, hysteresis 100-149)
 -- v8.582: clear _bahanUuids saat unequip Bahan di nobaku — agar swap ke main bisa equip Bahan baru
 -- v8.581: fast loop enforce Baku di _activeUuids saat mode main (healer re-equip kalau unequip manual)
@@ -5504,6 +5505,21 @@ local function runNewLoop()
                         uuidsToWait[ustr] = true
                     end
                     -- unequip Bahan + clear _bahanUuids
+                    -- v8.584: debug log isi _bahanUuids sebelum unequip
+                    local bahanCount = 0; for _ in pairs(_bahanUuids) do bahanCount = bahanCount + 1 end
+                    addLog("[newloop-fast] _bahanUuids count="..bahanCount.." sebelum unequip")
+                    -- v8.584: kalau _bahanUuids kosong, coba cari Bahan dari pool5 langsung
+                    if bahanCount == 0 then
+                        local pool5b = sesiPool[5] or {}
+                        local bahanPool = pool5b["Bahan"] or {}
+                        for _, e in pairs(bahanPool) do
+                            if e and e.uuid then
+                                local ustr = tostring(e.uuid)
+                                addLog("[newloop-fast] Bahan tidak di _bahanUuids, ambil dari pool5: "..ustr:sub(1,12))
+                                _bahanUuids[ustr] = true
+                            end
+                        end
+                    end
                     local bahanToUnequip = {}
                     for ustr in pairs(_bahanUuids) do bahanToUnequip[ustr] = true end
                     for ustr in pairs(bahanToUnequip) do
