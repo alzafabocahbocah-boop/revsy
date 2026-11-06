@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.27  ══════════════════════════
+-- ══════════════════════════  HACT  v35.28  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.27"
+local VERSION = "v35.28"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1532,7 +1532,7 @@ task.spawn(function()
                     local entry = ("[%s] fase=%s gr=%s | %s"):format(t, phase, gr2, extra)
                     if entry ~= buf[#buf] then  -- skip kalau sama persis
                         table.insert(buf, entry)
-                        if #buf > 200 then table.remove(buf, 1) end
+                        if #buf > 1000 then table.remove(buf, 1) end  -- v35.28: 200→1000
                     end
                 end
             end
@@ -2911,7 +2911,7 @@ local function giftPetsByFilter(cfg)
                 for _, line in ipairs(txt:split("\n")) do
                     if line ~= "" then
                         table.insert(buf, ("[%s] %s"):format(t, line))
-                        if #buf > 200 then table.remove(buf, 1) end
+                        if #buf > 1000 then table.remove(buf, 1) end  -- v35.28: 200→1000
                     end
                 end
             end
@@ -5749,14 +5749,23 @@ local function automationLoop()
         -- v16.4: jaga fav terus-menerus. Pet tim + pet KEEP (yg gak ada di list sell)
         -- difavoritkan dari awal (saat tim Reduce/Hatch), gak nunggu masuk tim Seal.
         favTick = favTick + 1
-        if favTick >= 10 and not isGiftRunning() and not _G.__hactTradeRunning then
-            -- v25.5: pakai isGiftRunning (bukan cuma giftBusy) — saat gift aktif JANGAN fav,
-            -- biar pet yg di-unfav buat gift gak ke-fav ulang -> bentrok.
-            -- v35.27: tambah __hactTradeRunning — isGiftRunning() cuma cek method="gift",
-            -- method="trade" lolos -> favTeamPets re-fav pet yang baru di-unfav trade
-            favTick = 0
-            favTeamPets()           -- fav pet tim
-            pcall(syncFavByRules)   -- fav pet keep + unfav pet sell (lebih awal)
+        if favTick >= 10 then
+            if _G.__hactTradeRunning then
+                -- v35.28: skip + kasih tau di debug panel kenapa
+                favTick = 0
+                local buf = _G.__hactEggLogBuf
+                if buf then
+                    local t = os.date("%H:%M:%S")
+                    local msg = ("[%s] ⏸ favTeamPets+syncFav SKIP: trade aktif (__hactTradeRunning=true)"):format(t)
+                    if msg ~= buf[#buf] then table.insert(buf, msg); if #buf > 1000 then table.remove(buf, 1) end end
+                end
+            elseif not isGiftRunning() then
+                -- v25.5: pakai isGiftRunning (bukan cuma giftBusy) — saat gift aktif JANGAN fav,
+                -- biar pet yg di-unfav buat gift gak ke-fav ulang -> bentrok.
+                favTick = 0
+                favTeamPets()           -- fav pet tim
+                pcall(syncFavByRules)   -- fav pet keep + unfav pet sell (lebih awal)
+            end
         end
         -- backpack penuh? equip tim SEAL dulu, baru jual.
         -- TAPI kalo mode gift-tunggu-full ON, auto-sell dimatiin (gift yg ambil alih)
