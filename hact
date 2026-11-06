@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.28  ══════════════════════════
+-- ══════════════════════════  HACT  v35.29  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.28"
+local VERSION = "v35.29"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2884,11 +2884,13 @@ end
 
 local clearGarden  -- v26.7: forward-declare (giftPetsByFilter manggil clearGarden yg didefinisi nanti)
 local function giftPetsByFilter(cfg)
-    -- v35.26: guard giftBusy di awal — cegah 2 slot Gift jalan bersamaan (double unfav = toggle balik)
-    if Auto and Auto.giftBusy then
-        print("[HactTelur] giftPetsByFilter SKIP: giftBusy masih true (instance lain lagi jalan)")
+    -- v35.29: mutex global — set SEKETIKA sebelum apapun, cegah 2 instance masuk bersamaan
+    -- (giftBusy di-set jauh di bawah, race condition: 2 instance lolos sebelum salah satu set giftBusy)
+    if _G.__hactGiftMutex then
+        print("[HactTelur] giftPetsByFilter SKIP: mutex aktif (instance lain lagi jalan)")
         return 0
     end
+    _G.__hactGiftMutex = true
     local Players = game:GetService("Players")
     -- kumpulin target ONLINE dari set cfg.targets
     local targetList = {}
@@ -3104,6 +3106,7 @@ local function giftPetsByFilter(cfg)
     task.wait(0.5)
     end)  -- end pcall
     Auto.giftBusy = false  -- v20.3: SELALU reset (di luar pcall) — walau gift error
+    _G.__hactGiftMutex = false  -- v35.29: release mutex
     _G.__hactTradeAktif = tick()   -- v27.112: RESTART grace 30s dari SINI (trade baru selesai) -> fav
     Auto.lastTradeComplete = tick()   -- v27.112: tandain trade complete (doAutoSell tunda + jeda)
     task.wait(0.6)   -- v27.112: jeda dikit biar backpack/fav settle sebelum automation lain lanjut
