@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.64  ══════════════════════════
+-- ══════════════════════════  HACT  v34.65  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -2914,24 +2914,33 @@ local function giftPetsByFilter(cfg)
     -- v34.62: method=trade selalu unfav dulu (gak perlu flag unfavFirst)
     if cfg.unfavFirst or cfg.method == "trade" then
         local _t0 = tick()   -- v27.144: timing diagnostik
+        -- v34.65: track UUID yang sudah di-fire unfav -> JANGAN fire 2x (toggle balik jadi fav!)
+        -- Race condition lama: server belum update d=false dalam 0.4s -> attempt berikut fire lagi -> fav lagi
+        local alreadyFired = {}
         for attempt = 1, 4 do
             local _ta = tick()
             local stillFav = 0
             -- v34.63: cek fav via attribute "d" langsung dari tool (d=true = fav, confirmed debug)
-            -- lebih akurat dari IsFavorite/pd ref yang bisa basi/nil
             for _, u in ipairs(matched) do
                 local ref = _G.__hactMatchedRef[u]
                 if ref and ref.tool then
                     local isFav = ref.tool:GetAttribute("d") == true
-                    if isFav then favoritePet(ref.tool,"keepFav"); stillFav = stillFav + 1; task.wait(0.05) end
+                    if isFav and not alreadyFired[u] then
+                        favoritePet(ref.tool,"keepFav")
+                        alreadyFired[u] = true  -- v34.65: tandai sudah di-fire, skip attempt berikut
+                        stillFav = stillFav + 1
+                        task.wait(0.05)
+                    elseif isFav and alreadyFired[u] then
+                        stillFav = stillFav + 1  -- masih fav tapi sudah di-fire, hitung aja jangan re-fire
+                    end
                 end
             end
             if stillFav == 0 then
-                print(("[HactTelur] TIMING unfav OK attempt %d, %.2fs (0 getgc, referensi langsung)"):format(attempt, tick()-_ta))
+                print(("[HactTelur] TIMING unfav OK attempt %d, %.2fs"):format(attempt, tick()-_ta))
                 break
             end
-            print(("[HactTelur] unfav list: masih %d pet ke-fav, retry (%d/4), attempt makan %.2fs"):format(stillFav, attempt, tick()-_ta))
-            task.wait(0.4)   -- kasih waktu server proses unfav (gak perlu getgc buat nunggu, cukup delay)
+            print(("[HactTelur] unfav list: masih %d pet ke-fav (sudah fire=%d), retry (%d/4), %.2fs"):format(stillFav, #alreadyFired, attempt, tick()-_ta))
+            task.wait(0.5)   -- kasih waktu server proses unfav sebelum re-check
         end
         print(("[HactTelur] TIMING total unfav-confirm loop: %.2fs"):format(tick()-_t0))
         task.wait(0.3)   -- jeda biar unfav bener-bener ke-apply
