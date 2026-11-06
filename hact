@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.20  ══════════════════════════
+-- ══════════════════════════  HACT  v35.21  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.20"
+local VERSION = "v35.21"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2944,6 +2944,31 @@ local function giftPetsByFilter(cfg)
         end
         print(("[HactTelur] TIMING total unfav-confirm loop: %.2fs"):format(tick()-_t0))
         task.wait(0.3)   -- jeda biar unfav bener-bener ke-apply
+        -- v35.21: VERIFY semua pet matched beneran d=false sebelum send
+        -- poll sampai semua clear (max 10s), JANGAN send kalau masih ada d=true
+        local _tVerify = tick()
+        local verifyOk = false
+        for vAttempt = 1, 20 do  -- max 20x * 0.5s = 10s
+            local favStillOn = 0
+            for _, u in ipairs(matched) do
+                local ref = _G.__hactMatchedRef[u]
+                if ref and ref.tool and ref.tool:GetAttribute("d") == true then
+                    favStillOn = favStillOn + 1
+                end
+            end
+            if favStillOn == 0 then
+                verifyOk = true
+                print(("[HactTelur] v35.21 VERIFY OK: semua d=false, aman send (%.2fs)"):format(tick()-_tVerify))
+                break
+            end
+            print(("[HactTelur] v35.21 VERIFY: masih %d pet d=true, tunggu... (%d/20)"):format(favStillOn, vAttempt))
+            task.wait(0.5)
+        end
+        if not verifyOk then
+            print("[HactTelur] v35.21 VERIFY GAGAL: masih ada pet fav setelah 10s, ABORT send!")
+            Auto.giftBusy = false
+            return 0
+        end
         -- v34.51: hapus getMatchedPets() ke-2 (rebuild lagi = lag). Filter langsung dari matched yg ada:
         -- cukup cek UUID masih ada di backpack (bukan rebuild penuh + petFate per-pet lagi)
         local _t1 = tick()
