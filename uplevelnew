@@ -171,7 +171,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.601"  -- v8.601: guard pairs(_bahanUuids or {}) di fast loop, fix BODY ERR nil pairs
+local VERSION = "v8.602"  -- v8.602: fix fast loop fallback bahan — cari age<bahanMaxAge bukan CFG.bahanType (nama pet)
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -5621,20 +5621,39 @@ local function runNewLoop()
                             end
                         end
                     end
+                    -- v8.602: cari bahan dari container by age<bahanMaxAge (bukan by nama tipe)
+                    -- sama dengan logic equipBahan Prioritas 2: skip GG/Mega/Transenden, skip usedBahan
                     local c = _kgContainer or {}
+                    local bestBahan = nil
                     for cuuid, ce in pairs(c) do
                         if not usedBahan[cuuid] then
-                            local nm = stripMutation(tostring(ce.PetType or (ce.PetData and ce.PetData.PetType) or ""))
-                            if nm == CFG.bahanType then
-                                local lv = tonumber((ce.PetData or {}).Level) or 0
-                                local bw = tonumber((ce.PetData or {}).BaseWeight) or 0
-                                bahanSlot = {uuid=cuuid, tipe=CFG.bahanType, age=lv, kg=bw*(lv+10)/10}
-                                if not sesiPool[5]["Bahan"] then sesiPool[5]["Bahan"] = {} end
-                                sesiPool[5]["Bahan"][1] = bahanSlot
-                                dbgLog("[newloop-fast] Bahan auto-pick dari container: "..cuuid:sub(1,12))
-                                break
+                            local pd = ce.PetData or {}
+                            local lv = tonumber(pd.Level) or 0
+                            if lv < CFG.bahanMaxAge then
+                                local nm = stripMutation(tostring(ce.PetType or pd.PetType or ""))
+                                local dnl = nm:lower()
+                                local mt = tostring(ce.MutationType or pd.MutationType or "")
+                                local isTimPet = false
+                                -- skip pet yang ada di sesiPool lain (pool tim)
+                                -- usedBahan sudah handle itu, jadi cukup skip GG/Mega/Transenden
+                                if mt == "GG" or dnl:find("gigantic") or dnl:find("mega") or dnl:find("transenden") then
+                                    -- skip tier tinggi
+                                else
+                                    local bw = tonumber(pd.BaseWeight) or 0
+                                    local kg = bw * (lv + 10) / 10
+                                    -- ambil yang age terkecil (paling butuh uplevel)
+                                    if not bestBahan or lv < bestBahan.age then
+                                        bestBahan = {uuid=cuuid, tipe=nm, age=lv, kg=kg}
+                                    end
+                                end
                             end
                         end
+                    end
+                    if bestBahan then
+                        bahanSlot = bestBahan
+                        if not sesiPool[5]["Bahan"] then sesiPool[5]["Bahan"] = {} end
+                        sesiPool[5]["Bahan"][1] = bahanSlot
+                        dbgLog("[newloop-fast] Bahan auto-pick (age<"..CFG.bahanMaxAge..") dari container: "..bahanSlot.uuid:sub(1,12).." tipe="..bahanSlot.tipe.." age="..bahanSlot.age)
                     end
                 end
                 -- v8.591: equip ulang semua UUID di _bahanUuids (tidak dinil saat nobaku)
@@ -5713,17 +5732,26 @@ local function runNewLoop()
                     end
                     -- v8.588: fallback scan modelByUuid — unequip semua Bahan di workspace
                     -- kalau _bahanUuids + pool5 kosong, Bahan tetap ter-equip → scan langsung
+                    -- v8.602: cari by age<bahanMaxAge bukan by CFG.bahanType (nama pet)
                     local bahanCount2 = 0; for _ in pairs(_bahanUuids or {}) do bahanCount2 = bahanCount2 + 1 end
                     if bahanCount2 == 0 and modelByUuid then
                         for ustr, model in pairs(modelByUuid) do
-                            local nm = model and stripMutation(tostring(
-                                (model:FindFirstChild("PetType") and model.PetType.Value)
-                                or (model:FindFirstChild("PetData") and model.PetData:FindFirstChild("PetType") and model.PetData.PetType.Value)
-                                or ""
-                            )) or ""
-                            if nm == CFG.bahanType then
-                                dbgLog("[newloop-fast] Bahan scan fallback: "..ustr:sub(1,12))
-                                _bahanUuids[ustr] = true
+                            if model then
+                                local pd = model:FindFirstChild("PetData")
+                                local lv = tonumber(pd and pd:FindFirstChild("Level") and pd.Level.Value) or 0
+                                local nm = stripMutation(tostring(
+                                    (model:FindFirstChild("PetType") and model.PetType.Value)
+                                    or (pd and pd:FindFirstChild("PetType") and pd.PetType.Value)
+                                    or ""
+                                ))
+                                local dnl = nm:lower()
+                                local mt = tostring((pd and pd:FindFirstChild("MutationType") and pd.MutationType.Value) or "")
+                                -- v8.602: bahan = age<bahanMaxAge, bukan GG/Mega/Transenden
+                                if lv < CFG.bahanMaxAge and mt ~= "GG"
+                                    and not dnl:find("gigantic") and not dnl:find("mega") and not dnl:find("transenden") then
+                                    dbgLog("[newloop-fast] Bahan scan fallback (age "..lv.."<"..CFG.bahanMaxAge.."): "..ustr:sub(1,12))
+                                    _bahanUuids[ustr] = true
+                                end
                             end
                         end
                     end
