@@ -1,4 +1,5 @@
--- uplevelnew v8.566
+-- uplevelnew v8.567
+-- v8.567: GUI 500- skip pet tim (hanya kalau sesiPool sudah terisi)
 -- v8.566: equipOneBahan guard semua sesiPool — cegah pet tim sesi 1/2/NEWW jadi bahan
 -- v8.565: cooldown Baku langsung aktif 20s saat init mode "main" (cegah langsung swap ke T-Rex)
 -- v8.564: swap loop equip/unequip T-Rex slot5 DAN slot6 (sebelumnya hanya slot5)
@@ -139,7 +140,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.566")
+print("[UPL] VERSION: v8.567")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -247,7 +248,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.566"
+local VERSION = "v8.567"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -1635,11 +1636,29 @@ do
                 local c = _kgContainer
                 local plus, minus, total = 0, 0, 0
                 if c then
-                    for _, entry in pairs(c) do
+                    -- v8.567: skip pet tim — tapi hanya kalau sesiPool sudah terisi
+                    -- (kalau pool masih kosong/awal exe, tampil semua seperti biasa)
+                    local timUuids = {}
+                    local poolAdaIsi = false
+                    for _, sPool in pairs(sesiPool) do
+                        if next(sPool) then poolAdaIsi = true end
+                        if poolAdaIsi then
+                            for tipe, slots in pairs(sPool) do
+                                if tipe ~= "Bahan" then
+                                    for _, e in pairs(slots) do
+                                        if e and e.uuid then timUuids[tostring(e.uuid)] = true end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    for uuid, entry in pairs(c) do
                         if type(entry) == "table" and entry.PetData then
-                            total = total + 1
-                            local lv = tonumber(entry.PetData.Level) or 0
-                            if lv >= 500 then plus = plus + 1 else minus = minus + 1 end
+                            if not poolAdaIsi or not timUuids[tostring(uuid)] then
+                                total = total + 1
+                                local lv = tonumber(entry.PetData.Level) or 0
+                                if lv >= 500 then plus = plus + 1 else minus = minus + 1 end
+                            end
                         end
                     end
                 end
@@ -1714,8 +1733,23 @@ do
                 local plus, minus, total = 0, 0, 0
                 local tipeUdah, tipeBelum = {}, {}
                 local petAgePlus, petAgeMinus = {}, {}
-                for _, entry in pairs(c) do
-                    if type(entry) == "table" and entry.PetData then
+                -- v8.567: skip pet tim — hanya kalau sesiPool sudah ada isi (bukan awal exe)
+                local timUuids2 = {}
+                local poolAdaIsi2 = false
+                for _, sPool in pairs(sesiPool) do
+                    if next(sPool) then poolAdaIsi2 = true end
+                    if poolAdaIsi2 then
+                        for tipe2, slots in pairs(sPool) do
+                            if tipe2 ~= "Bahan" then
+                                for _, e in pairs(slots) do
+                                    if e and e.uuid then timUuids2[tostring(e.uuid)] = true end
+                                end
+                            end
+                        end
+                    end
+                end
+                for uuid, entry in pairs(c) do
+                    if type(entry) == "table" and entry.PetData and (not poolAdaIsi2 or not timUuids2[tostring(uuid)]) then
                         total = total + 1
                         local lv = tonumber(entry.PetData.Level) or 0
                         local tipe = tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "")
