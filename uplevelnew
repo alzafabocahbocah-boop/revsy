@@ -171,7 +171,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.607"  -- v8.607: hapus floating debug panel kanan tengah (ZenxUplDbg ScreenGui)
+local VERSION = "v8.608"  -- v8.608: format AGE/KG di card TIM, history bahan selesai, fix TIME saat nobaku
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -1427,8 +1427,8 @@ local function makeLineupCard(parent, sesiNum, nm, i, defs, layoutOrder, widthSc
         local liveAge=livePD and tonumber(livePD.Level) or entry.age or 0
         local liveBW=livePD and tonumber(livePD.BaseWeight) or 0
         local liveKg=liveBW>0 and liveBW*(liveAge+10)/10 or (entry.kg or 0)
-        local kgStr=liveKg>0 and string.format("%.1fkg",liveKg) or "? kg"
-        local ageL=lbl(card,kgStr.."  age "..(liveAge>0 and tostring(liveAge) or "?"),10,col)
+        local kgStr=liveKg>0 and string.format("%.1f",liveKg) or "?"
+        local ageL=lbl(card,"AGE: "..(liveAge>0 and tostring(liveAge) or "?").."  KG: "..kgStr,10,col)
         ageL.Position=UDim2.new(0,10,0,39); ageL.Size=UDim2.new(1,-14,0,14)
     else
         local plusL=lbl(card,"+ pilih",12,C.textDim)
@@ -1498,8 +1498,8 @@ local function renderLineup(sesiNum, defs)
                             local liveAge=livePD and tonumber(livePD.Level) or entry.age or 0
                             local liveBW=livePD and tonumber(livePD.BaseWeight) or 0
                             local liveKg=liveBW>0 and liveBW*(liveAge+10)/10 or (entry.kg or 0)
-                            local kgStr=liveKg>0 and string.format("%.1fkg",liveKg) or "? kg"
-                            local ageL=lbl(card,kgStr.."  age "..(liveAge>0 and tostring(liveAge) or "?"),10,colr)
+                            local kgStr=liveKg>0 and string.format("%.1f",liveKg) or "?"
+                            local ageL=lbl(card,"AGE: "..(liveAge>0 and tostring(liveAge) or "?").."  KG: "..kgStr,10,colr)
                             ageL.Position=UDim2.new(0,10,0,39); ageL.Size=UDim2.new(1,-14,0,14)
                         else
                             local plusL=lbl(card,"+ pilih",12,C.textDim)
@@ -1530,8 +1530,8 @@ local function renderLineup(sesiNum, defs)
                     local liveAge=livePD and tonumber(livePD.Level) or entry.age or 0
                     local liveBW=livePD and tonumber(livePD.BaseWeight) or 0
                     local liveKg=liveBW>0 and liveBW*(liveAge+10)/10 or (entry.kg or 0)
-                    local kgStr=liveKg>0 and string.format("%.1fkg",liveKg) or "? kg"
-                    return kgStr.."  age "..(liveAge>0 and tostring(liveAge) or "?")
+                    local kgStr=liveKg>0 and string.format("%.1f",liveKg) or "?"
+                    return "AGE: "..(liveAge>0 and tostring(liveAge) or "?").."  KG: "..kgStr
                 end
                 -- v8.563: 3 card di swap row — T-Rex slot5 | T-Rex slot6 | Baku (masing-masing ~33%)
                 -- nobaku sekarang 6 T-Rex, jadi slot 5 & 6 ikut tampil di swap row
@@ -1600,6 +1600,25 @@ local function renderLineup(sesiNum, defs)
                 for i=1,sup.jml do
                     order=order+1
                     makeLineupCard(holder, sesiNum, nm, i, defs, order)
+                end
+                -- v8.608: history bahan di bawah card Bahan
+                if nm == "Bahan" then
+                    local hist = type(_G._ZenxBahanHistory)=="table" and _G._ZenxBahanHistory or {}
+                    if #hist > 0 then
+                        order=order+1
+                        local hF=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
+                            BackgroundColor3=C.card,BorderSizePixel=0,LayoutOrder=order,Parent=holder})
+                        corner(hF,8); stroke(hF,C.border,1)
+                        local hPad=mk("UIPadding",{PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),
+                            PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6)}); hPad.Parent=hF
+                        mk("UIListLayout",{Padding=UDim.new(0,2),SortOrder=Enum.SortOrder.LayoutOrder,Parent=hF})
+                        local hTitle=lbl(hF,"HISTORY",8,C.textMute); hTitle.Font=FONT_B
+                        hTitle.Size=UDim2.new(1,0,0,12); hTitle.LayoutOrder=0
+                        for hi,he in ipairs(hist) do
+                            local row=lbl(hF,he.tipe.."  "..he.durStr,10,Color3.fromRGB(160,200,255))
+                            row.Size=UDim2.new(1,0,0,14); row.LayoutOrder=hi
+                        end
+                    end
                 end
             end
         end
@@ -2792,10 +2811,13 @@ local function updateUI(collected,kebun,sesiNum)
             end
             age500plusL.Text=tostring(plus); age500minusL.Text=tostring(minus)
             -- bahan time (elapsed sejak equip)
+            -- v8.608: baca dari _G langsung agar tidak stale
             do
                 local times = {}
-                for uuid in pairs(_bahanUuids) do
-                    local t0 = _bahanEquipTime[uuid]
+                local _bu = type(_G._ZenxBahanUuids)=="table" and _G._ZenxBahanUuids or {}
+                local _bt = type(_G._ZenxBahanEquipTime)=="table" and _G._ZenxBahanEquipTime or {}
+                for uuid in pairs(_bu) do
+                    local t0 = _bt[uuid]
                     if t0 then
                         local elapsed = math.floor(tick() - t0)
                         local m = math.floor(elapsed / 60)
@@ -3884,8 +3906,11 @@ local _activeUuids = _G._ZenxActiveUuids
 -- v8.561: jadikan _G supaya GUI loop (deklarasi di atas) bisa akses tabel yang sama
 if type(_G._ZenxBahanUuids) ~= "table" then _G._ZenxBahanUuids = {} end
 if type(_G._ZenxBahanEquipTime) ~= "table" then _G._ZenxBahanEquipTime = {} end
+-- v8.608: history bahan selesai (nama + durasi) — max 5 entry terakhir
+if type(_G._ZenxBahanHistory) ~= "table" then _G._ZenxBahanHistory = {} end
 local _bahanUuids = _G._ZenxBahanUuids
 local _bahanEquipTime = _G._ZenxBahanEquipTime
+local _bahanHistory = _G._ZenxBahanHistory
 local _isCollecting = false  -- pause healer saat doCollect berjalan
 local _isTransisi   = false  -- pause healer+swapLoop saat ganti sesi / unequipAll
 local _geLogged = false      -- gameEvents log cukup sekali
@@ -5603,8 +5628,36 @@ local function runNewLoop()
                             end
                         end
                     end
+                    -- v8.608: catat history bahan sebelum di-unequip
                     local bahanToUnequip = {}
-                    for ustr in pairs(_bahanUuids or {}) do bahanToUnequip[ustr] = true end
+                    for ustr in pairs(_bahanUuids or {}) do
+                        bahanToUnequip[ustr] = true
+                        local t0 = _bahanEquipTime[ustr]
+                        if t0 then
+                            local elapsed = math.floor(tick() - t0)
+                            local m = math.floor(elapsed/60)
+                            local s = elapsed % 60
+                            local durStr = m..":"..string.format("%02d",s)
+                            -- cari nama pet dari pool5 atau container
+                            local tipeNm = "Bahan"
+                            local pool5bh = sesiPool[5] or {}
+                            local bahanPoolBh = pool5bh["Bahan"] or {}
+                            for _, e in pairs(bahanPoolBh) do
+                                if e and e.uuid and tostring(e.uuid)==ustr then
+                                    tipeNm = tostring(e.fullName or e.tipe or "Bahan"):gsub("Rainbow ",""):gsub("Choc ","")
+                                    break
+                                end
+                            end
+                            if tipeNm == "Bahan" then
+                                local ce = _kgContainer and _kgContainer[ustr]
+                                if ce then tipeNm = tostring(ce.PetType or (ce.PetData and ce.PetData.PetType) or "Bahan") end
+                            end
+                            local entry = {tipe=tipeNm, durStr=durStr, t=tick()}
+                            table.insert(_bahanHistory, 1, entry)
+                            if #_bahanHistory > 5 then _bahanHistory[#_bahanHistory] = nil end
+                            dbgLog("[newloop-fast] Bahan history: "..tipeNm.." "..durStr)
+                        end
+                    end
                     for ustr in pairs(bahanToUnequip) do
                         -- v8.591: hapus dari _activeUuids SAJA — _bahanUuids TIDAK di-nil
                         -- UUID Bahan tetap ter-track agar saat balik ke main bisa re-equip UUID yang sama
@@ -5688,6 +5741,8 @@ local function runNewLoop()
                         end
                     end
                     _newwSwapping = false  -- v8.591: swap ke nobaku selesai
+                    -- v8.608: refresh lineup NEWW agar history bahan muncul
+                    pcall(renderLineup, 5, AUTOLVLNEWW_POOL_DEF)
                 end
             else
                 -- v8.594: NM di hysteresis zone (100-149) atau kondisi tidak memerlukan swap
