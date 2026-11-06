@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.31  ══════════════════════════
+-- ══════════════════════════  HACT  v35.32  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.31"
+local VERSION = "v35.32"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1514,7 +1514,15 @@ task.spawn(function()
                 local gcLine = ("%s fps=%d next=%ds"):format(_gcDbg, fps, gcNext)
                 local gr = tostring(_G.__hactGlobalRunning)
                 local fase = extra ~= "" and extra or ("loop idle | gr="..gr)
-                _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, gcLine)
+                -- v35.31: tambah keep list di baris bawah
+                local keepLine = ""
+                local kn = _G.__hactKeepNames
+                if kn then
+                    local parts = {}
+                    for nm, cnt in pairs(kn) do parts[#parts+1] = nm..(cnt>1 and "x"..cnt or "") end
+                    if #parts > 0 then keepLine = "\nkeep: "..table.concat(parts,", ") end
+                end
+                _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s%s"):format(tuiEn, ltVis, gr, fase, status, gcLine, keepLine)
             end
             -- v34.63: update egg debug panel kanan tengah
             -- v35.23: skip kalau trade tab ON (running atau idle nunggu target) — panel dipakai trade debug
@@ -3862,9 +3870,18 @@ do
                     local ok3, e3 = pcall(function() egg = totalEggNow() end)
                     if not ok3 then pcall(function() pushLog("[stat] totalEggNow err: "..tostring(e3)) end) end
                     local keep, sell = 0, 0
+                    local keepNames = {}
                     for _, p in ipairs(pets) do
-                        if p and petFate(p) == "keep" then keep = keep + 1 else sell = sell + 1 end
+                        if p and petFate(p) == "keep" then
+                            keep = keep + 1
+                            -- v35.31: kumpul nama pet keep buat debug
+                            local nm = (p.name or "?"):gsub("%s*%[.-%]",""):gsub("%s+$","")
+                            local kg = p.age1Kg or p.dispKg or 0
+                            keepNames[nm] = (keepNames[nm] or 0) + 1
+                        else sell = sell + 1 end
                     end
+                    -- v35.31: expose ke _G buat DBG panel
+                    _G.__hactKeepNames = keepNames
                     -- v34.60: curTotal dari RC direct (PetInventory.Data) — paling akurat
                     -- v35.05: hapus pcall wrapper — countTotalPets sudah handle error sendiri
                     local curTotal = total  -- fallback ke listBackpackPets jika ada
