@@ -1,4 +1,5 @@
--- uplevelnew v8.578
+-- uplevelnew v8.579
+-- v8.579: swap ke nobaku unequip Baku+Bahan dulu (retry 3x, tunggu hilang) baru equip T-Rex slot5+6
 -- v8.578: tunggu T-Rex slot5+6 hilang dari workspace (timeout 5s) sebelum equip Baku+Bahan
 -- v8.577: unequip T-Rex slot5+6 retry max 3x sampai model hilang dari workspace
 -- v8.576: cek slot kosong (timeout 5s) sebelum equip Baku+Bahan saat swap ke main
@@ -5433,18 +5434,59 @@ local function runNewLoop()
                     local sisa = math.ceil(_bakuCooldownUntil - tick())
                     addLog("[newloop-fast] NM "..nmC.." < 150 tapi cooldown Baku "..sisa.."s lagi")
                 else
-                    addLog("[newloop-fast] NM "..nmC.." 1-149 — swap Baku→T-Rex slot5+6")
+                    addLog("[newloop-fast] NM "..nmC.." 1-149 — swap Baku+Bahan→T-Rex slot5+6")
                     _newwTimAktif = "nobaku"
                     _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
                     local pool5 = sesiPool[5] or {}
+                    -- v8.579: unequip Baku + Bahan dulu, retry max 3x, tunggu hilang dari workspace
+                    local uuidsToWait = {}
+                    -- unequip Baku
                     local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
                     if bakuSlot and bakuSlot.uuid then
-                        unequipPet(bakuSlot.uuid)
-                        local _au = _G._ZenxActiveUuids
-                        if _au then _au[tostring(bakuSlot.uuid)] = nil end
-                        task.wait(0.8)
+                        local ustr = tostring(bakuSlot.uuid)
+                        for attempt = 1, 3 do
+                            unequipPet(bakuSlot.uuid)
+                            local _au = _G._ZenxActiveUuids
+                            if _au then _au[ustr] = nil end
+                            task.wait(0.5)
+                            if not modelByUuid[ustr] then
+                                addLog("[newloop-fast] Baku unequip OK (attempt "..attempt..")")
+                                break
+                            end
+                            addLog("[newloop-fast] Baku masih ada di workspace, retry "..attempt)
+                        end
+                        uuidsToWait[ustr] = true
                     end
-                    -- v8.573: equip slot 5 DAN slot 6 + update _activeUuids (healer bisa re-equip)
+                    -- unequip Bahan
+                    for ustr in pairs(_bahanUuids) do
+                        for attempt = 1, 3 do
+                            unequipPet(ustr)
+                            local _au = _G._ZenxActiveUuids
+                            if _au then _au[ustr] = nil end
+                            task.wait(0.5)
+                            if not modelByUuid[ustr] then
+                                addLog("[newloop-fast] Bahan unequip OK (attempt "..attempt..")")
+                                break
+                            end
+                            addLog("[newloop-fast] Bahan masih ada di workspace, retry "..attempt)
+                        end
+                        uuidsToWait[ustr] = true
+                    end
+                    -- tunggu semua uuid benar-benar hilang dari workspace (timeout 5s)
+                    local checkStart = tick()
+                    while tick() - checkStart < 5 do
+                        local masihAda = false
+                        for ustr in pairs(uuidsToWait) do
+                            if modelByUuid[ustr] then masihAda = true; break end
+                        end
+                        if not masihAda then
+                            addLog("[newloop-fast] Baku+Bahan sudah hilang — siap equip T-Rex slot5+6")
+                            break
+                        end
+                        addLog("[newloop-fast] masih tunggu Baku/Bahan hilang dari workspace...")
+                        task.wait(0.5)
+                    end
+                    -- equip T-Rex slot5+6
                     local trexPool = pool5["T-Rex"] or {}
                     for _, si in ipairs({5, 6}) do
                         local trexN = trexPool[si]
