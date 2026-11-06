@@ -171,7 +171,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.627"  -- v8.627: blacklist UUID bahan tua agar tidak di-equip ulang
+local VERSION = "v8.628"  -- v8.628: revert v8.627 blacklist bahan
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -3912,12 +3912,9 @@ if type(_G._ZenxBahanUuids) ~= "table" then _G._ZenxBahanUuids = {} end
 if type(_G._ZenxBahanEquipTime) ~= "table" then _G._ZenxBahanEquipTime = {} end
 -- v8.608: history bahan selesai (nama + durasi) — max 5 entry terakhir
 if type(_G._ZenxBahanHistory) ~= "table" then _G._ZenxBahanHistory = {} end
--- v8.627: blacklist UUID bahan yang sudah di-unequip karena tua — jangan equip ulang
-if type(_G._ZenxBahanBlacklist) ~= "table" then _G._ZenxBahanBlacklist = {} end
 local _bahanUuids = _G._ZenxBahanUuids
 local _bahanEquipTime = _G._ZenxBahanEquipTime
 local _bahanHistory = _G._ZenxBahanHistory
-local _bahanBlacklist = _G._ZenxBahanBlacklist
 local _isCollecting = false  -- pause healer saat doCollect berjalan
 local _isTransisi   = false  -- pause healer+swapLoop saat ganti sesi / unequipAll
 local _geLogged = false      -- gameEvents log cukup sekali
@@ -4163,7 +4160,6 @@ equipOneBahan = function()
             addLog("Bahan kunci age="..age.." >= "..CFG.bahanMaxAge.." — unequip + lepas slot")
             pcall(function() unequipPet(uuid) end)
             _bahanUuids[uuid] = nil
-            _bahanBlacklist[uuid] = true  -- v8.627: blacklist agar tidak masuk lagi
         end
     end
 
@@ -4203,7 +4199,7 @@ equipOneBahan = function()
         local slotBahan = slotBahanPool[i]
         if slotBahan and slotBahan.uuid then
             local ustr = tostring(slotBahan.uuid)
-            if not _bahanUuids[ustr] and not _bahanBlacklist[ustr] then  -- v8.627: skip blacklist
+            if not _bahanUuids[ustr] then
                 local age = getAgeFallback(slotBahan.uuid)
                 if age < CFG.bahanMaxAge then
                     equipPet(slotBahan.uuid)
@@ -4225,13 +4221,15 @@ equipOneBahan = function()
         for _, p in ipairs(all) do
             if countBahan() >= BAHAN_SLOT then break end
             local ustr = tostring(p.uuid)
-            if not pooledUuids[ustr] and not _bahanUuids[ustr] and not _bahanBlacklist[ustr] then  -- v8.627: skip blacklist
+            if not pooledUuids[ustr] and not _bahanUuids[ustr] then
                 local dn = (p.displayName or p.fullName or p.tipe or ""):lower()
                 local mt = p.mutationType or ""
                 if mt == "GG" or dn:find("gigantic") or dn:find("mega") or dn:find("transenden") then
                     addLog("Skip bahan size tier: "..(p.tipe or "?").." ("..dn..")")
                 else
                     local age = getAgeFallback(p.uuid)
+                    -- v8.628: debug kenapa bahan tidak di-equip
+                    dbgLog("[equipBahan-auto] "..tostring(p.tipe).." uuid="..ustr:sub(1,12).." age="..tostring(age).." maxAge="..CFG.bahanMaxAge.." pooled="..tostring(pooledUuids[ustr]~=nil).." inUuids="..tostring(_bahanUuids[ustr]~=nil))
                     if age < CFG.bahanMaxAge then
                         equipPet(p.uuid)
                         _bahanUuids[ustr] = true
@@ -4258,9 +4256,10 @@ unequipBahanTua = function()
                 if uuid then
                     local ustr = tostring(uuid)
                     local age=getAgeFallback(uuid)
+                    -- v8.628: debug bahan age check
+                    dbgLog("[bahanTua] uuid="..ustr:sub(1,12).." age="..tostring(age).." maxAge="..tostring(CFG.bahanMaxAge).." inUuids="..tostring(_bahanUuids[ustr]~=nil))
                     if age>=CFG.bahanMaxAge then
                         unequipPet(uuid); _bahanUuids[ustr]=nil
-                        _bahanBlacklist[ustr]=true  -- v8.627: blacklist agar tidak masuk lagi
                         addLog("Unequip bahan tua age="..age); task.wait(CFG.equipWait)
                     end
                 end
