@@ -1,4 +1,5 @@
--- uplevelnew v8.590
+-- uplevelnew v8.591
+-- v8.591: swap ke nobaku — tidak nil _bahanUuids saat unequip, UUID tetap ter-track agar bisa re-equip saat balik main
 -- v8.590: swap ke main equip Bahan — fallback cari dari container kalau pool5["Bahan"] kosong
 -- v8.589: swap ke nobaku equip T-Rex slot5+6 — tambah log + fallback cari dari container kalau slot kosong
 -- v8.588: swap ke nobaku — fallback scan modelByUuid unequip semua Bahan kalau _bahanUuids + pool5 kosong
@@ -2182,6 +2183,7 @@ local swNewRow; swNewRow,setSwNew,_getSwNew,swNewEv=makeSwitch(cfgScroll,"AUTOLV
 local swNewLbl=swNewRow:FindFirstChildWhichIsA("TextLabel")
 local _newRunning = false
 local _newStopRequested = false
+local _newwSwapping = false  -- v8.591: true saat fast loop sedang swap, skip enforceEquip
 
 local statusCard=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.card,BorderSizePixel=0,
     LayoutOrder=11,Parent=cfgScroll}); corner(statusCard,8); stroke(statusCard,C.border,1)
@@ -5385,6 +5387,7 @@ local function runNewLoop()
             elseif nmC >= 150 and _newwTimAktif ~= "main" then
                 -- NM >= 150 → pasang Baku+Bahan (v8.583: threshold masuk main tetap 150)
                 addLog("[newloop-fast] NM "..nmC.." >= 150 — swap T-Rex(5+6)→Baku+Bahan (cooldown 20s)")
+                _newwSwapping = true  -- v8.591: block enforceEquip selama swap
                 _newwTimAktif = "main"
                 _bakuCooldownUntil = tick() + 20
                 _activeSesiDef = AUTOLVLNEWW_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
@@ -5496,19 +5499,32 @@ local function runNewLoop()
                         end
                     end
                 end
-                if bahanSlot and bahanSlot.uuid then
-                    local ustr = tostring(bahanSlot.uuid)
-                    if not _bahanUuids[ustr] then
+                -- v8.591: equip ulang semua UUID di _bahanUuids (tidak dinil saat nobaku)
+                -- kalau _bahanUuids ada isi, equip ulang dari sana langsung
+                local bahanEquipped = false
+                for ustr in pairs(_bahanUuids) do
+                    equipPet(ustr); task.wait(0.5)
+                    _bahanEquipTime[ustr] = _bahanEquipTime[ustr] or tick()
+                    local _au = _G._ZenxActiveUuids
+                    if _au then _au[ustr] = true end
+                    addLog("[newloop-fast] Bahan re-equip dari _bahanUuids saat swap ke main: "..ustr:sub(1,12))
+                    bahanEquipped = true
+                end
+                -- kalau _bahanUuids kosong, fallback pool5 / container
+                if not bahanEquipped then
+                    if bahanSlot and bahanSlot.uuid then
+                        local ustr = tostring(bahanSlot.uuid)
                         equipPet(bahanSlot.uuid); task.wait(0.5)
                         _bahanUuids[ustr] = true
                         _bahanEquipTime[ustr] = _bahanEquipTime[ustr] or tick()
                         local _au = _G._ZenxActiveUuids
                         if _au then _au[ustr] = true end
-                        addLog("[newloop-fast] Bahan equip saat swap ke main: "..ustr:sub(1,12))
+                        addLog("[newloop-fast] Bahan equip (pool/container) saat swap ke main: "..ustr:sub(1,12))
+                    else
+                        addLog("[newloop-fast] WARN: Bahan tidak ditemukan di _bahanUuids, pool, maupun container!")
                     end
-                else
-                    addLog("[newloop-fast] WARN: Bahan tidak ditemukan di pool maupun container!")
                 end
+                _newwSwapping = false  -- v8.591: swap ke main selesai
 
             elseif nmC >= 1 and nmC < 100 and _newwTimAktif ~= "nobaku" then
                 -- NM < 100 → cabut Baku, pasang T-Rex slot5+6 (v8.583: 150→100, hysteresis 100-149)
@@ -5517,6 +5533,7 @@ local function runNewLoop()
                     addLog("[newloop-fast] NM "..nmC.." < 100 tapi cooldown Baku "..sisa.."s lagi")
                 else
                     addLog("[newloop-fast] NM "..nmC.." < 100 — swap Baku+Bahan→T-Rex slot5+6")
+                    _newwSwapping = true  -- v8.591: block enforceEquip selama swap
                     _newwTimAktif = "nobaku"
                     _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
                     local pool5 = sesiPool[5] or {}
@@ -5575,11 +5592,12 @@ local function runNewLoop()
                     local bahanToUnequip = {}
                     for ustr in pairs(_bahanUuids) do bahanToUnequip[ustr] = true end
                     for ustr in pairs(bahanToUnequip) do
-                        -- v8.585: hapus dari _activeUuids + _bahanUuids DULU sebelum unequip
-                        -- supaya healer tidak re-equip saat proses unequip berjalan
+                        -- v8.591: hapus dari _activeUuids SAJA — _bahanUuids TIDAK di-nil
+                        -- UUID Bahan tetap ter-track agar saat balik ke main bisa re-equip UUID yang sama
+                        -- v8.585: hapus dari _activeUuids DULU supaya healer tidak re-equip saat proses unequip
                         local _au = _G._ZenxActiveUuids
                         if _au then _au[ustr] = nil end
-                        _bahanUuids[ustr] = nil
+                        -- _bahanUuids[ustr] = nil  -- v8.591: JANGAN nil, biar UUID tetap ter-track
                         for attempt = 1, 3 do
                             unequipPet(ustr)
                             task.wait(0.5)
@@ -5653,6 +5671,7 @@ local function runNewLoop()
                             addLog("[newloop-fast] T-Rex slot"..si.." tidak ditemukan — skip")
                         end
                     end
+                    _newwSwapping = false  -- v8.591: swap ke nobaku selesai
                 end
             end
         end
@@ -5791,12 +5810,15 @@ local function runNewLoop()
         local curDef = _newwTimAktif == "nm0" and AUTOLVLNEWW_NM0_DEF
                     or _newwTimAktif == "nobaku" and AUTOLVLNEWW_NOBAKU_DEF
                     or AUTOLVLNEWW_DEF
-        local okEE, errEE = pcall(enforceEquip, curDef)
-        if not okEE then addLog("[newloop] enforceEquip ERR: "..tostring(errEE)) end
-        pcall(function()
-            unequipBahanTua()
-            equipOneBahan()
-        end)
+        -- v8.591: skip enforceEquip + equipOneBahan saat fast loop sedang swap (cegah interrupt)
+        if not _newwSwapping then
+            local okEE, errEE = pcall(enforceEquip, curDef)
+            if not okEE then addLog("[newloop] enforceEquip ERR: "..tostring(errEE)) end
+            pcall(function()
+                unequipBahanTua()
+                equipOneBahan()
+            end)
+        end
         -- collect ditangani oleh autoCollect loop independent (v8.509)
         local shoveled = doShovelPlants()
         if shoveled > 0 then addLog("NewLoop shovel: "..shoveled.." pohon") end
