@@ -172,7 +172,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.633"  -- v8.633: auto buy tambah Strawberry
+local VERSION = "v8.634"  -- v8.634: Spider weave → swap ke tengah kayak Peacock fan
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -3692,10 +3692,12 @@ do
         if not ds2 then tsLog("ERR: DataStream nil"); return end
         tsLog("ds2 ON")
 
-        -- animStr trigger: Peacock=fan, T-Rex=roar (v8.623)
-        local SWAP_ANIM = { fan=true, roar=true }
+        -- animStr trigger: Peacock=fan, T-Rex=roar, Spider=weave (v8.634)
+        local SWAP_ANIM = { fan=true, roar=true, weave=true }
         local PEACOCK_CENTER = Vector3.new(10, 3, 12)  -- koordinat target spawn Peacock (dari up3.8kg)
         local PEACOCK_THRESH = 2.0  -- stud — re-swap kalau spawn jauh dari CENTER
+        local SPIDER_CENTER = Vector3.new(10, 3, 12)   -- v8.634: Spider sama kayak Peacock
+        local SPIDER_THRESH = 2.0
 
         local _debounce = {}  -- [raw8] = tick()
 
@@ -3756,6 +3758,42 @@ do
                                     local dist = (spawnPos - PEACOCK_CENTER).Magnitude
                                     if dist > PEACOCK_THRESH then
                                         tsLog("Peacock respawn "..string.format("%.1f",dist).."stud → re-swap")
+                                        pcall(function() unequipPet(raw) end); task.wait(0.03)
+                                        pcall(function() equipPet(raw) end)
+                                    end
+                                end
+                            end)
+                        -- v8.634: Spider weave → swap ke tengah kayak Peacock
+                        elseif anim == "weave" and tl:find("spider",1,true) then
+                            if not (_newRunning or running) then continue end
+                            _debounce[r8] = now
+                            tsLog("Spider weave → swap "..r8)
+                            task.spawn(function()
+                                pcall(function() unequipPet(raw) end); task.wait(0.03)
+                                pcall(function() equipPet(raw) end)
+                                local done, spawnPos = false, nil
+                                local conn2 = workspace.DescendantAdded:Connect(function(d)
+                                    if done then return end
+                                    if not d:IsA("Model") then return end
+                                    local dn = d.Name
+                                    local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
+                                    if d8 ~= r8 then return end
+                                    task.defer(function()
+                                        if done then return end
+                                        pcall(function()
+                                            local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
+                                            if p then spawnPos = p.Position end
+                                        end)
+                                        done = true
+                                    end)
+                                end)
+                                local t0 = tick()
+                                while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
+                                conn2:Disconnect()
+                                if spawnPos then
+                                    local dist = (spawnPos - SPIDER_CENTER).Magnitude
+                                    if dist > SPIDER_THRESH then
+                                        tsLog("Spider respawn "..string.format("%.1f",dist).."stud → re-swap")
                                         pcall(function() unequipPet(raw) end); task.wait(0.03)
                                         pcall(function() equipPet(raw) end)
                                     end
