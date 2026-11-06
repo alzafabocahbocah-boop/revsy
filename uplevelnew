@@ -171,7 +171,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.599"  -- v8.599: fast loop body di-wrap pcall agar error tidak diam-diam matikan loop
+local VERSION = "v8.600"  -- v8.600: HEALER debounce 10s per-UUID, cegah re-equip loop akibat server respawn model
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -5231,6 +5231,8 @@ end)
 -- gunakan generasi untuk kill healer lama saat script di-re-exec
 local _healerGen = (_G._ZenxHealerGen or 0) + 1
 _G._ZenxHealerGen = _healerGen
+-- v8.600: debounce per-UUID — jangan re-equip kalau baru di-equip dalam 10s (cegah loop akibat server respawn model)
+local _healerLastEquip = {}  -- uuid → tick() terakhir HEALER equip uuid ini
 print("[UPLVL-DBG] HEALER LOOP: spawn gen="..tostring(_healerGen))
 task.spawn(function()
     print("[UPLVL-DBG] HEALER LOOP: thread started gen="..tostring(_healerGen))
@@ -5254,11 +5256,18 @@ task.spawn(function()
                 print("[UPLVL-DBG] HEALER: activeUuids="..activeCount.." modelByUuid="..mbuCount)
                 for uuid in pairs(au) do
                     if not modelByUuid[uuid] then
-                        print("[UPLVL-DBG] HEAL: re-equip uuid="..tostring(uuid))
-                        -- model belum muncul/hilang -> re-equip
-                        unequipPet(uuid); task.wait(0.15)
-                        equipPet(uuid); task.wait(0.12)
-                        healed = healed + 1
+                        -- v8.600: debounce — skip re-equip kalau baru di-equip dalam 10s terakhir
+                        local lastT = _healerLastEquip[uuid] or 0
+                        if tick() - lastT < 10 then
+                            print("[UPLVL-DBG] HEAL: skip re-equip "..tostring(uuid).." (debounce "..(math.ceil(10-(tick()-lastT))).."s)")
+                        else
+                            print("[UPLVL-DBG] HEAL: re-equip uuid="..tostring(uuid))
+                            -- model belum muncul/hilang -> re-equip
+                            unequipPet(uuid); task.wait(0.15)
+                            equipPet(uuid); task.wait(0.12)
+                            _healerLastEquip[uuid] = tick()
+                            healed = healed + 1
+                        end
                     end
                 end
                 if healed > 0 then addLog("HEAL: "..healed.." pet model hilang -> re-equip") end
