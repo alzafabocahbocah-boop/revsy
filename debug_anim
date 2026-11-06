@@ -1,0 +1,69 @@
+-- debug_anim: print semua CustomAnimationState dari ActivePets
+-- jalankan di executor, lihat console untuk tau nama animasi Mimic Octopus
+
+local ds2 = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultServerStorage")
+    or game:GetService("ReplicatedStorage"):FindFirstChild("DS2")
+    or game:GetService("ReplicatedStorage"):WaitForChild("DefaultServerStorage", 5)
+
+if not ds2 then print("[debug_anim] DS2 tidak ketemu"); return end
+
+local Players = game:GetService("Players")
+local plr = Players.LocalPlayer
+
+-- ambil nama pet dari container
+local function getPetName(uuid)
+    local raw = uuid:gsub("[{}]","")
+    local kg = nil
+    pcall(function()
+        kg = game:GetService("ReplicatedStorage"):FindFirstChild("KGContainer")
+            or game:GetService("ReplicatedStorage"):FindFirstChild("PetsContainer")
+    end)
+    if not kg then return "?" end
+    local c = kg:GetChildren and kg:GetChildren() or {}
+    -- coba langsung
+    local e = kg:FindFirstChild("{"..raw.."}")
+        or kg:FindFirstChild(raw)
+    if e then
+        local pt = e:GetAttribute("PetType") or ""
+        return tostring(pt)
+    end
+    return "uuid:"..raw:sub(1,8)
+end
+
+local seen = {}  -- debounce per uuid+anim
+
+local function deepFind(t, depth)
+    depth = depth or 0
+    if depth > 12 or type(t) ~= "table" then return end
+    for _, v in pairs(t) do
+        if type(v) == "table" then
+            local v1 = tostring(v[1] or "")
+            if v1:find("CustomAnimationState", 1, true) then
+                local animStr = tostring(v[2] or "")
+                local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                local raw = uuid:gsub("[{}]","")
+                local key = raw:sub(1,8).."|"..animStr
+                if not seen[key] then
+                    seen[key] = true
+                    -- print ke console
+                    print("[debug_anim] anim='"..animStr.."'  uuid="..raw:sub(1,12))
+                    -- reset debounce setelah 3s supaya bisa capture lagi
+                    task.delay(3, function() seen[key] = nil end)
+                end
+            else
+                deepFind(v, depth + 1)
+            end
+        end
+    end
+end
+
+ds2.OnClientEvent:Connect(function(...)
+    local args = {...}
+    local svc = tostring(args[2] or "")
+    if not svc:find("ActivePets", 1, true) then return end
+    local data = type(args[3]) == "table" and args[3]
+        or (type(args[4]) == "table" and args[4] or nil)
+    if data then deepFind(data, 0) end
+end)
+
+print("[debug_anim] listener aktif — tunggu pet pakai skill, lihat console")
