@@ -1,4 +1,5 @@
--- uplevelnew v8.596
+-- uplevelnew v8.597
+-- v8.597: tambah print debug di runNewLoop — equipSesi pcall + fast loop started
 -- v8.596: AUTO TENGAH default ON
 -- v8.595: AUTO TENGAH toggle di MISC + hold loop pivot pet aktif ke tengah kebun tiap 0.25s
 -- v8.594: fast loop log status NM tiap ~10s (hysteresis zone 100-149 + status baku/bahan/ws)
@@ -169,7 +170,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.596"  -- v8.596: dipindah ke atas agar print VERSION tidak nil
+local VERSION = "v8.597"  -- v8.596: dipindah ke atas agar print VERSION tidak nil
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -5459,15 +5460,22 @@ local function runNewLoop()
     dbgLog("[newloop] start NM="..tostring(_initNM).." → tim "..tostring(_newwTimAktif))
     _activeSesiNum = 5; _activeSesiDef = _startDef
     _G._UPL_SESI_NUM = 5; _G._UPL_SESI_DEF = _startDef
+    print("[NEWLOOP] sebelum unequipAll")
     unequipAll()
-    equipSesi(5, _startDef)
+    print("[NEWLOOP] sebelum equipSesi")
+    local okES, errES = pcall(equipSesi, 5, _startDef)
+    print("[NEWLOOP] equipSesi ok=", okES, "err=", tostring(errES))
+    if not okES then dbgLog("[newloop] equipSesi ERR: "..tostring(errES)) end
+    print("[NEWLOOP] sebelum setStatus running")
     setStatus("AUTOLVLNEWW — running", C.accent)
 
     -- v8.551: NM swap loop independent — cek tiap 2s, ada cooldown 20s setelah swap ke Baku
     -- logika: NM>=150 → swap Baku → tunggu 20s → baru cek lagi (anti bolak-balik)
     -- v8.565: kalau init dalam mode "main", set cooldown langsung supaya tidak langsung dicabut
     local _bakuCooldownUntil = (_newwTimAktif == "main") and (tick() + 20) or 0
+    print("[NEWLOOP] fast loop spawn")
     task.spawn(function()
+        print("[NEWLOOP] fast loop STARTED")
         while not _newStopRequested do
             task.wait(2)
             if _newStopRequested then break end
