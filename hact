@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v34.62  ══════════════════════════
+-- ══════════════════════════  HACT  v34.63  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -972,14 +972,10 @@ function PetDetect._listBackpackPetsRaw()
             mut = pd and pd.MutationType and tostring(pd.MutationType) or nil
             if mut and PetDetect.MUT_SHORT[mut] then mut = PetDetect.MUT_SHORT[mut] end
         end
-        -- favorit: PetData.IsFavorite, fallback atribut tool
+        -- favorit: attribute "d" di tool (confirmed dari debug — d=true = fav)
+        -- v34.63: ganti IsFavorite/Favorited/dll -> cek "d" langsung (lebih akurat, selalu ke-set)
         local fav = false
-        if pd and pd.IsFavorite == true then fav = true end
-        if not fav and tool then
-            for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
-                if tool:GetAttribute(attr) == true then fav = true break end
-            end
-        end
+        if tool then fav = tool:GetAttribute("d") == true end
         table.insert(out, {
             uuid = clean,
             name = baseName,
@@ -2921,19 +2917,14 @@ local function giftPetsByFilter(cfg)
         for attempt = 1, 4 do
             local _ta = tick()
             local stillFav = 0
-            -- v27.145: baca ULANG referensi pd yg UDAH DIPEGANG dari getMatchedPets (Lua table
-            -- by-reference -> kalau game update IsFavorite in-place, kebaca update TANPA getgc lagi).
-            -- Dulu: rebuild(true)+listBackpackPets(true) tiap attempt = getgc SCAN SELURUH MEMORI GAME
-            -- berkali-kali (5x) -> ini yg bikin 15-30 detik, bukan soal jumlah pet di backpack.
+            -- v34.63: cek fav via attribute "d" langsung dari tool (d=true = fav, confirmed debug)
+            -- lebih akurat dari IsFavorite/pd ref yang bisa basi/nil
             for _, u in ipairs(matched) do
                 local ref = _G.__hactMatchedRef[u]
-                local isFav = ref and ref.pd and ref.pd.IsFavorite
-                if isFav == nil and ref and ref.tool then   -- fallback: attribute tool (kalau PetData gak ke-pegang)
-                    for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
-                        if ref.tool:GetAttribute(attr) == true then isFav = true break end
-                    end
+                if ref and ref.tool then
+                    local isFav = ref.tool:GetAttribute("d") == true
+                    if isFav then favoritePet(ref.tool,"keepFav"); stillFav = stillFav + 1; task.wait(0.05) end
                 end
-                if isFav and ref and ref.tool then favoritePet(ref.tool,"keepFav"); stillFav = stillFav + 1; task.wait(0.05) end
             end
             if stillFav == 0 then
                 print(("[HactTelur] TIMING unfav OK attempt %d, %.2fs (0 getgc, referensi langsung)"):format(attempt, tick()-_ta))
