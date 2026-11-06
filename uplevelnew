@@ -171,7 +171,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.598"  -- v8.596: dipindah ke atas agar print VERSION tidak nil
+local VERSION = "v8.599"  -- v8.599: fast loop body di-wrap pcall agar error tidak diam-diam matikan loop
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -5480,10 +5480,12 @@ local function runNewLoop()
         while not _newStopRequested do
             task.wait(2)
             if _newStopRequested then break end
+            -- v8.599: wrap seluruh body dengan pcall supaya error tidak diam-diam matikan loop
+            local okBody, errBody = pcall(function()
             local ok_nm, _d = pcall(scanFruits)
             if not ok_nm then
                 print("[NEWLOOP-FAST] scanFruits ERR:", tostring(_d))
-                continue
+                return  -- continue equivalent inside pcall
             end
             local nmC = _d.nightmareCount
             print("[NEWLOOP-FAST] tick nmC=", nmC, "tim=", tostring(_newwTimAktif))
@@ -5816,6 +5818,10 @@ local function runNewLoop()
                     local inWs = modelByUuid and (function() local n=0; for _ in pairs(modelByUuid) do n=n+1 end; return n end)() or 0
                     dbgLog("[newloop-fast] status NM="..nmC.." tim="..tostring(_newwTimAktif).." baku="..bakuUuid.." _bahanUuids="..bahanCount.." ws="..inWs.." swap="..tostring(_newwSwapping))
                 end
+            end
+            end) -- end pcall body
+            if not okBody then
+                print("[NEWLOOP-FAST] BODY ERR (loop lanjut):", tostring(errBody))
             end
         end
     end)
