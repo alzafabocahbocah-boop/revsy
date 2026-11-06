@@ -1,4 +1,5 @@
--- uplevelnew v8.594
+-- uplevelnew v8.595
+-- v8.595: AUTO TENGAH toggle di MISC + hold loop pivot pet aktif ke tengah kebun tiap 0.25s
 -- v8.594: fast loop log status NM tiap ~10s (hysteresis zone 100-149 + status baku/bahan/ws)
 -- v8.593: debug panel kanan tengah mengambang + dbgLog() di runNewLoop forward ke panel
 -- v8.592: T-Rex slot5+6 fallback container — usedTrex tidak exclude slot1-4 (yang masih ter-equip)
@@ -275,7 +276,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.594"
+local VERSION = "v8.595"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2646,6 +2647,14 @@ do
     _swCleanEv:Connect(function(nowOn)
         _G._UPL_FARM_CLEANER = nowOn
         addLog("FARM CLEANER: "..(nowOn and "ON" or "OFF"))
+    end)
+    -- v8.595: AUTO TENGAH — tahan semua pet aktif pivot ke tengah kebun tiap 0.25s
+    local _swTengahRow,_setSwTengah,_getSwTengah,_swTengahEv
+    _swTengahRow,_setSwTengah,_getSwTengah,_swTengahEv=makeSwitch(miscScroll,"AUTO TENGAH",10.5,false)
+    _G._UPL_AUTO_TENGAH = false
+    _swTengahEv:Connect(function(nowOn)
+        _G._UPL_AUTO_TENGAH = nowOn
+        addLog("AUTO TENGAH: "..(nowOn and "ON" or "OFF"))
     end)
 end
 sectionHeader(miscScroll,"• INFO",7)
@@ -5793,6 +5802,36 @@ local function runNewLoop()
                     local bahanCount = 0; for _ in pairs(_bahanUuids) do bahanCount = bahanCount + 1 end
                     local inWs = modelByUuid and (function() local n=0; for _ in pairs(modelByUuid) do n=n+1 end; return n end)() or 0
                     dbgLog("[newloop-fast] status NM="..nmC.." tim="..tostring(_newwTimAktif).." baku="..bakuUuid.." _bahanUuids="..bahanCount.." ws="..inWs.." swap="..tostring(_newwSwapping))
+                end
+            end
+        end
+    end)
+
+    -- v8.595: AUTO TENGAH hold loop — pivot T-Rex + Baku ke tengah kebun tiap 0.25s
+    task.spawn(function()
+        while not _newStopRequested do
+            task.wait(0.25)
+            if _G._UPL_AUTO_TENGAH and not _newwSwapping then
+                local center = farmCenter()
+                if center and modelByUuid then
+                    -- kumpulkan UUID T-Rex + Baku dari sesiPool[5]
+                    local pool5 = sesiPool[5] or {}
+                    local targetUuids = {}
+                    for _, e in ipairs(pool5["T-Rex"] or {}) do
+                        if e and e.uuid then targetUuids[tostring(e.uuid)] = true end
+                    end
+                    for _, e in ipairs(pool5["Baku"] or {}) do
+                        if e and e.uuid then targetUuids[tostring(e.uuid)] = true end
+                    end
+                    for uuid in pairs(targetUuids) do
+                        local m = modelByUuid[uuid]
+                        if m and m.Parent then
+                            local ok, p = pcall(function() return m:GetPivot().Position end)
+                            if ok and (p - center).Magnitude > 3 then
+                                pcall(function() m:PivotTo(CFrame.new(center)) end)
+                            end
+                        end
+                    end
                 end
             end
         end
