@@ -1,4 +1,5 @@
--- uplevelnew v8.579
+-- uplevelnew v8.580
+-- v8.580: swap ke main equip Baku pakai fallback cari dari container kalau pool5 kosong
 -- v8.579: swap ke nobaku unequip Baku+Bahan dulu (retry 3x, tunggu hilang) baru equip T-Rex slot5+6
 -- v8.578: tunggu T-Rex slot5+6 hilang dari workspace (timeout 5s) sebelum equip Baku+Bahan
 -- v8.577: unequip T-Rex slot5+6 retry max 3x sampai model hilang dari workspace
@@ -5406,12 +5407,40 @@ local function runNewLoop()
                     addLog("[newloop-fast] masih tunggu T-Rex slot5/6 hilang dari workspace...")
                     task.wait(0.5)
                 end
-                -- equip Baku
+                -- equip Baku: ambil dari pool5, fallback cari dari container
                 local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
+                if not (bakuSlot and bakuSlot.uuid) then
+                    -- fallback: cari Baku dari container yang belum dipakai pool lain
+                    local usedInPool = {}
+                    for _, sPool in pairs(sesiPool) do
+                        for _, slots in pairs(sPool) do
+                            for _, e in pairs(slots) do
+                                if e and e.uuid then usedInPool[tostring(e.uuid)] = true end
+                            end
+                        end
+                    end
+                    local c = _kgContainer or {}
+                    for cuuid, ce in pairs(c) do
+                        if not usedInPool[cuuid] then
+                            local nm = stripMutation(tostring(ce.PetType or (ce.PetData and ce.PetData.PetType) or ""))
+                            if nm == "Baku" then
+                                local lv = tonumber((ce.PetData or {}).Level) or 0
+                                local bw = tonumber((ce.PetData or {}).BaseWeight) or 0
+                                bakuSlot = {uuid=cuuid, tipe="Baku", age=lv, kg=bw*(lv+10)/10}
+                                if not sesiPool[5]["Baku"] then sesiPool[5]["Baku"] = {} end
+                                sesiPool[5]["Baku"][1] = bakuSlot
+                                addLog("[newloop-fast] Baku auto-pick dari container: "..cuuid:sub(1,12))
+                                break
+                            end
+                        end
+                    end
+                end
                 if bakuSlot and bakuSlot.uuid then
                     equipPet(bakuSlot.uuid); task.wait(0.5)
                     local _au = _G._ZenxActiveUuids
                     if _au then _au[tostring(bakuSlot.uuid)] = true end
+                else
+                    addLog("[newloop-fast] WARN: Baku tidak ditemukan di pool maupun container!")
                 end
                 -- v8.575: equip Bahan langsung bareng Baku, tidak nunggu equipOneBahan loop
                 local bahanPool = pool5["Bahan"] or {}
