@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.21  ══════════════════════════
+-- ══════════════════════════  HACT  v35.22  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.21"
+local VERSION = "v35.22"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1460,7 +1460,7 @@ corner(eggDbgFrame, 6)
 local eggDbgLbl = mk("TextLabel", {
     Size = UDim2.new(1, -8, 1, -34), Position = UDim2.new(0, 4, 0, 4),
     BackgroundTransparency = 1,
-    Text = "🥚 hact debug...", TextColor3 = Color3.fromRGB(255,230,100),
+    Text = "⏸ trade idle\n(nunggu target online...)", TextColor3 = Color3.fromRGB(255,230,100),
     Font = FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left,
     TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, Parent = eggDbgFrame })
@@ -1517,7 +1517,8 @@ task.spawn(function()
                 _G.__hactDbgLbl.Text = ("TUI=%s LT=%s gr=%s\n%s\n%s\n%s"):format(tuiEn, ltVis, gr, fase, status, gcLine)
             end
             -- v34.63: update egg debug panel kanan tengah
-            if _G.__hactEggDbgLbl then
+            -- v35.22: skip kalau trade running (panel dipakai debug trade)
+            if _G.__hactEggDbgLbl and not _G.__hactTradeRunning then
                 local extra = _G.__hactDbgExtra or "idle"
                 local _Auto = _G.__hactAuto
                 local phase = _Auto and _Auto.eggPhase or "?"
@@ -2893,6 +2894,23 @@ local function giftPetsByFilter(cfg)
     if #targetList == 0 then _G.__hactStep="target NIL (gak online)"; print("[HactTelur] gak ada target online"); return 0 end
     _G.__hactStep = "target OK ("..#targetList..")"
     local matched = getMatchedPets(cfg)
+    -- v35.22: update debug panel kanan tengah setelah getMatchedPets
+    local function _tradeDbg(txt)
+        if _G.__hactEggDbgLbl then
+            pcall(function() _G.__hactEggDbgLbl.Text = txt end)
+        end
+    end
+    do
+        local nFav, nUnfav = 0, 0
+        for _, u in ipairs(matched) do
+            local ref = _G.__hactMatchedRef[u]
+            if ref and ref.tool then
+                if ref.tool:GetAttribute("d") == true then nFav = nFav + 1
+                else nUnfav = nUnfav + 1 end
+            end
+        end
+        _tradeDbg(("🔍 getMatchedPets\ntotal: %d pet\nfav (d=true): %d\nunfav (d=false): %d\n\n⏳ siap unfav..."):format(#matched, nFav, nUnfav))
+    end
     if #matched == 0 then return 0 end
     local _tMatch1 = tick()   -- v27.144: timing diagnostik
     Auto.giftBusy = true  -- automation hatch pause selama gift/trade jalan
@@ -2935,11 +2953,16 @@ local function giftPetsByFilter(cfg)
                     end
                 end
             end
+            -- v35.22: update debug panel per attempt
+            local nFired = 0; for _ in pairs(alreadyFired) do nFired = nFired + 1 end
+            _tradeDbg(("🔓 Unfav loop\nattempt: %d/4\nsudah fire: %d\nmasih fav: %d\n\n%s"):format(
+                attempt, nFired, stillFav,
+                stillFav == 0 and "✅ semua unfav!" or "⏳ nunggu server..."))
             if stillFav == 0 then
                 print(("[HactTelur] TIMING unfav OK attempt %d, %.2fs"):format(attempt, tick()-_ta))
                 break
             end
-            print(("[HactTelur] unfav list: masih %d pet ke-fav (sudah fire=%d), retry (%d/4), %.2fs"):format(stillFav, #alreadyFired, attempt, tick()-_ta))
+            print(("[HactTelur] unfav list: masih %d pet ke-fav (sudah fire=%d), retry (%d/4), %.2fs"):format(stillFav, nFired, attempt, tick()-_ta))
             task.wait(0.5)   -- kasih waktu server proses unfav sebelum re-check
         end
         print(("[HactTelur] TIMING total unfav-confirm loop: %.2fs"):format(tick()-_t0))
@@ -2956,6 +2979,10 @@ local function giftPetsByFilter(cfg)
                     favStillOn = favStillOn + 1
                 end
             end
+            -- v35.22: update debug panel verify
+            _tradeDbg(("✅ Verify d=false\nattempt: %d/20\nmasih fav: %d / %d\n\n%s"):format(
+                vAttempt, favStillOn, #matched,
+                favStillOn == 0 and "🟢 AMAN — siap send!" or "⏳ nunggu server settle..."))
             if favStillOn == 0 then
                 verifyOk = true
                 print(("[HactTelur] v35.21 VERIFY OK: semua d=false, aman send (%.2fs)"):format(tick()-_tVerify))
@@ -2965,6 +2992,7 @@ local function giftPetsByFilter(cfg)
             task.wait(0.5)
         end
         if not verifyOk then
+            _tradeDbg("❌ VERIFY GAGAL\nmasih ada pet fav\nsetelah 10s\n\nABORT — gak send!")
             print("[HactTelur] v35.21 VERIFY GAGAL: masih ada pet fav setelah 10s, ABORT send!")
             Auto.giftBusy = false
             return 0
@@ -10693,7 +10721,8 @@ local SAVE_FILE = "hact_telur_save_" .. tostring(game:GetService("Players").Loca
 _G.__hactSaveFile = SAVE_FILE
 local function saveConfig()
     local function setEggLbl(msg)
-        if _G.__hactEggDbgLbl then
+        -- v35.22: skip kalau trade running (panel dipakai debug trade)
+        if _G.__hactEggDbgLbl and not _G.__hactTradeRunning then
             pcall(function() _G.__hactEggDbgLbl.Text = msg end)
         end
         _G.__hactDbgExtra = msg
@@ -10745,7 +10774,7 @@ end end do local ok,err=pcall(_buildSave) if not ok then
     _G.__hactDbgSave=msg
     _G.__hactDbgExtra=msg
     shared.__hactPendingNotif=tostring(_G.__hactVersion or "?").."\n"..msg
-    if _G.__hactEggDbgLbl then _G.__hactEggDbgLbl.Text=msg end
+    if _G.__hactEggDbgLbl and not _G.__hactTradeRunning then _G.__hactEggDbgLbl.Text=msg end  -- v35.22
     print("[HactTelur] _buildSave GAGAL: "..tostring(err))
 end end  -- v34.63
 local function _buildLoad() do
@@ -10907,7 +10936,7 @@ end end do local ok,err=pcall(_buildLoad) if not ok then
     _G.__hactDbgSave=msg
     _G.__hactDbgExtra=msg
     shared.__hactPendingNotif=tostring(_G.__hactVersion or "?").."\n"..msg
-    if _G.__hactEggDbgLbl then _G.__hactEggDbgLbl.Text=msg end
+    if _G.__hactEggDbgLbl and not _G.__hactTradeRunning then _G.__hactEggDbgLbl.Text=msg end  -- v35.22
     print("[HactTelur] _buildLoad GAGAL: "..tostring(err))
 end end  -- v34.63
 -- v34.63: dipindah keluar _buildSaveLoad biar gak kena limit 200 locals Luau
