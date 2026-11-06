@@ -1,4 +1,5 @@
--- uplevelnew v8.577
+-- uplevelnew v8.578
+-- v8.578: tunggu T-Rex slot5+6 hilang dari workspace (timeout 5s) sebelum equip Baku+Bahan
 -- v8.577: unequip T-Rex slot5+6 retry max 3x sampai model hilang dari workspace
 -- v8.576: cek slot kosong (timeout 5s) sebelum equip Baku+Bahan saat swap ke main
 -- v8.575: swap ke main equip Bahan+Baku bareng, unequip T-Rex slot5+6 dulu tunggu server
@@ -5382,28 +5383,28 @@ local function runNewLoop()
                         end
                     end
                 end
-                task.wait(0.3)  -- v8.575: tunggu server proses unequip sebelum equip baru
-                -- v8.576: cek slot kosong sebelum equip Baku+Bahan
-                -- hitung pet yang beneran equip (ada modelnya di workspace)
-                local function countEquipped()
-                    local n = 0
-                    for _ in pairs(modelByUuid) do n = n + 1 end
-                    return n
+                -- v8.578: pastiin T-Rex slot5+6 benar-benar hilang dari workspace sebelum equip
+                -- tunggu sampai kedua uuid tidak ada di modelByUuid, timeout 5s
+                local trexUuidsToCheck = {}
+                for _, si in ipairs({5, 6}) do
+                    local trexN = trexPool[si]
+                    if trexN and trexN.uuid then
+                        trexUuidsToCheck[tostring(trexN.uuid)] = true
+                    end
                 end
-                local function getMaxSlot()
-                    local mp = nil
-                    pcall(function() mp = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory") end)
-                    return tonumber(mp) or 8
-                end
-                local maxSlot = getMaxSlot()
-                -- tunggu sampai ada 2 slot kosong (timeout 5s)
-                local waitStart = tick()
-                while (maxSlot - countEquipped()) < 2 and (tick() - waitStart) < 5 do
-                    addLog("[newloop-fast] tunggu slot kosong: equip="..countEquipped().." max="..maxSlot)
+                local checkStart = tick()
+                while tick() - checkStart < 5 do
+                    local masihAda = false
+                    for ustr in pairs(trexUuidsToCheck) do
+                        if modelByUuid[ustr] then masihAda = true; break end
+                    end
+                    if not masihAda then
+                        addLog("[newloop-fast] T-Rex slot5+6 sudah hilang — siap equip Baku+Bahan")
+                        break
+                    end
+                    addLog("[newloop-fast] masih tunggu T-Rex slot5/6 hilang dari workspace...")
                     task.wait(0.5)
                 end
-                local slotKosong = maxSlot - countEquipped()
-                addLog("[newloop-fast] slot kosong="..slotKosong.." — lanjut equip Baku+Bahan")
                 -- equip Baku
                 local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
                 if bakuSlot and bakuSlot.uuid then
