@@ -1,4 +1,5 @@
--- uplevelnew v8.598
+-- uplevelnew v8.633
+-- v8.633: P5 destroy animasi kebun orang selalu jalan, tidak ikut toggle _dlOn
 -- v8.598: fast loop — print error kalau scanFruits fail + print nmC tiap tick
 -- v8.597: tambah print debug di runNewLoop — equipSesi pcall + fast loop started
 -- v8.596: AUTO TENGAH default ON
@@ -6904,6 +6905,78 @@ do
         task.spawn(function()
             while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
         end)
+    end)
+    -- v8.633: P5 destroy animasi kebun orang selalu jalan, tidak ikut toggle _dlOn
+    task.spawn(function()
+        task.wait(5)
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        while true do
+            task.wait(2)
+            pcall(function()
+                local farm = workspace:FindFirstChild("Farm")
+                if not farm then return end
+                local mySubfarms = {}
+                local myBBmin, myBBmax = nil, nil
+                for _, sf in ipairs(farm:GetChildren()) do
+                    local owner = nil
+                    pcall(function()
+                        local sign = sf:FindFirstChild("Sign")
+                        if sign then owner = sign:GetAttribute("_owner") or sign:GetAttribute("Owner") end
+                    end)
+                    if not owner then
+                        pcall(function() owner = sf:GetAttribute("_owner") or sf:GetAttribute("Owner") end)
+                    end
+                    if owner and tostring(owner) == plrName then
+                        mySubfarms[sf] = true
+                        for _, obj in ipairs(sf:GetDescendants()) do
+                            if obj:IsA("BasePart") then
+                                local pos = obj.Position
+                                if not myBBmin then myBBmin = pos; myBBmax = pos
+                                else
+                                    myBBmin = Vector3.new(math.min(myBBmin.X,pos.X), math.min(myBBmin.Y,pos.Y), math.min(myBBmin.Z,pos.Z))
+                                    myBBmax = Vector3.new(math.max(myBBmax.X,pos.X), math.max(myBBmax.Y,pos.Y), math.max(myBBmax.Z,pos.Z))
+                                end
+                            end
+                        end
+                    end
+                end
+                local mySubfarmCount = 0; for _ in pairs(mySubfarms) do mySubfarmCount = mySubfarmCount + 1 end
+                if mySubfarmCount == 0 then return end
+                local bbMargin = 60
+                if myBBmin then
+                    myBBmin = myBBmin - Vector3.new(bbMargin, 100, bbMargin)
+                    myBBmax = myBBmax + Vector3.new(bbMargin, 100, bbMargin)
+                end
+                local wsP5Allowlist = { WindBlastTemplate=true, SpottedEffect=true, Puddle=true }
+                for _, obj in ipairs(workspace:GetChildren()) do
+                    if wsP5Allowlist[obj.Name] then
+                        local cls = obj.ClassName
+                        if cls == "Model" or cls == "Part" or cls == "MeshPart"
+                           or cls == "UnionOperation" or cls == "SpecialMesh" then
+                            local inMyArea = false
+                            if myBBmin and myBBmax then
+                                pcall(function()
+                                    local pos = nil
+                                    if obj:IsA("BasePart") then pos = obj.Position
+                                    else
+                                        local pp = obj.PrimaryPart
+                                        if pp then pos = pp.Position
+                                        else for _, c in ipairs(obj:GetChildren()) do
+                                            if c:IsA("BasePart") then pos = c.Position; break end
+                                        end end
+                                    end
+                                    if pos and pos.X >= myBBmin.X and pos.X <= myBBmax.X
+                                       and pos.Z >= myBBmin.Z and pos.Z <= myBBmax.Z then
+                                        inMyArea = true
+                                    end
+                                end)
+                            end
+                            if not inMyArea then pcall(function() obj:Destroy() end) end
+                        end
+                    end
+                end
+            end)
+        end
     end)
 
     tradeRefresh=function()
