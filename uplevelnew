@@ -1,4 +1,5 @@
--- uplevelnew v8.592
+-- uplevelnew v8.593
+-- v8.593: debug panel kanan tengah mengambang + dbgLog() di runNewLoop forward ke panel
 -- v8.592: T-Rex slot5+6 fallback container — usedTrex tidak exclude slot1-4 (yang masih ter-equip)
 -- v8.591: swap ke nobaku — tidak nil _bahanUuids saat unequip, UUID tetap ter-track agar bisa re-equip saat balik main
 -- v8.590: swap ke main equip Bahan — fallback cari dari container kalau pool5["Bahan"] kosong
@@ -3463,6 +3464,102 @@ do
 end
 -- ============ end panel kanan atas v8.452 ============
 
+-- ============ v8.593: DEBUG PANEL kanan tengah mengambang ============
+do
+    local DBG_MAX = 80
+    local _dbgLines = {}
+    local _dbgSg = Instance.new("ScreenGui")
+    _dbgSg.Name = "ZenxUplDbg"; _dbgSg.ResetOnSpawn = false
+    _dbgSg.IgnoreGuiInset = true; _dbgSg.DisplayOrder = 999998
+    pcall(function() _dbgSg.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+    if not _dbgSg.Parent then _dbgSg.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
+
+    local owD = Instance.new("Frame"); owD.Size = UDim2.new(1,0,1,0); owD.BackgroundTransparency = 1; owD.BorderSizePixel = 0; owD.Parent = _dbgSg
+    local scD = Instance.new("UIScale"); scD.Scale = 1.56; scD.Parent = owD
+
+    local fD = Instance.new("Frame")
+    fD.Size = UDim2.new(0,310,0,200)
+    fD.AnchorPoint = Vector2.new(1,0.5)
+    fD.Position = UDim2.new(1/1.56,-14/1.56,0.5,0)
+    fD.BackgroundColor3 = Color3.fromRGB(0,0,0); fD.BackgroundTransparency = 0.1
+    fD.BorderSizePixel = 0; fD.Parent = owD
+    Instance.new("UICorner",fD).CornerRadius = UDim.new(0,12)
+    local stD = Instance.new("UIStroke"); stD.Color = Color3.fromRGB(50,50,100); stD.Thickness = 1.5; stD.Parent = fD
+
+    -- header
+    local hD = Instance.new("Frame"); hD.Size = UDim2.new(1,0,0,26); hD.BackgroundTransparency = 1; hD.BorderSizePixel = 0; hD.Parent = fD
+    local ttlD = Instance.new("TextLabel"); ttlD.BackgroundTransparency = 1; ttlD.Font = Enum.Font.GothamBold
+    ttlD.TextSize = 11; ttlD.TextColor3 = Color3.fromRGB(120,180,255); ttlD.Text = "⬡ NEWW DBG"
+    ttlD.Position = UDim2.new(0,10,0,4); ttlD.Size = UDim2.new(1,-90,1,0); ttlD.TextXAlignment = Enum.TextXAlignment.Left; ttlD.Parent = hD
+
+    local cpyBtn = Instance.new("TextButton"); cpyBtn.Size = UDim2.new(0,50,0,18)
+    cpyBtn.Position = UDim2.new(1,-64,0,4); cpyBtn.BackgroundColor3 = Color3.fromRGB(40,80,160)
+    cpyBtn.BorderSizePixel = 0; cpyBtn.Font = Enum.Font.GothamBold; cpyBtn.TextSize = 10
+    cpyBtn.TextColor3 = Color3.fromRGB(255,255,255); cpyBtn.Text = "COPY"; cpyBtn.Parent = hD
+    Instance.new("UICorner",cpyBtn).CornerRadius = UDim.new(0,5)
+
+    local clrBtn = Instance.new("TextButton"); clrBtn.Size = UDim2.new(0,30,0,18)
+    clrBtn.Position = UDim2.new(1,-30,0,4); clrBtn.BackgroundColor3 = Color3.fromRGB(100,40,40)
+    clrBtn.BorderSizePixel = 0; clrBtn.Font = Enum.Font.GothamBold; clrBtn.TextSize = 10
+    clrBtn.TextColor3 = Color3.fromRGB(255,255,255); clrBtn.Text = "CLR"; clrBtn.Parent = hD
+    Instance.new("UICorner",clrBtn).CornerRadius = UDim.new(0,5)
+
+    -- scroll area
+    local sfD = Instance.new("ScrollingFrame")
+    sfD.Size = UDim2.new(1,0,1,-28); sfD.Position = UDim2.new(0,0,0,28)
+    sfD.BackgroundTransparency = 1; sfD.BorderSizePixel = 0
+    sfD.ScrollBarThickness = 4; sfD.ScrollBarImageColor3 = Color3.fromRGB(80,80,140)
+    sfD.CanvasSize = UDim2.new(0,0,0,0); sfD.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    sfD.Parent = fD
+    Instance.new("UIListLayout",sfD).Padding = UDim.new(0,1)
+    local padD = Instance.new("UIPadding"); padD.PaddingLeft = UDim.new(0,8); padD.PaddingRight = UDim.new(0,6); padD.Parent = sfD
+
+    local _dbgRowIdx = 0
+    local function dbgAddLine(txt)
+        _dbgRowIdx = _dbgRowIdx + 1
+        table.insert(_dbgLines, txt)
+        if #_dbgLines > DBG_MAX then table.remove(_dbgLines, 1) end
+        local row = Instance.new("TextLabel")
+        row.Size = UDim2.new(1,0,0,13); row.BackgroundTransparency = 1
+        row.Font = Enum.Font.Code; row.TextSize = 10
+        row.TextColor3 = Color3.fromRGB(200,220,255); row.TextWrapped = true
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.Text = txt; row.LayoutOrder = _dbgRowIdx; row.Parent = sfD
+        local lbls = {}
+        for _, c in ipairs(sfD:GetChildren()) do
+            if c:IsA("TextLabel") then table.insert(lbls, c) end
+        end
+        table.sort(lbls, function(a,b) return a.LayoutOrder < b.LayoutOrder end)
+        while #lbls > DBG_MAX do lbls[1]:Destroy(); table.remove(lbls,1) end
+        task.defer(function()
+            sfD.CanvasPosition = Vector2.new(0, math.max(0, sfD.AbsoluteCanvasSize.Y - sfD.AbsoluteSize.Y))
+        end)
+    end
+
+    cpyBtn.MouseButton1Click:Connect(function()
+        pcall(function()
+            setclipboard(table.concat(_dbgLines,"\n"))
+            cpyBtn.Text = "OK!"; task.delay(1.5, function() cpyBtn.Text = "COPY" end)
+        end)
+    end)
+    clrBtn.MouseButton1Click:Connect(function()
+        for _, c in ipairs(sfD:GetChildren()) do if c:IsA("TextLabel") then c:Destroy() end end
+        _dbgLines = {}; _dbgRowIdx = 0
+    end)
+
+    task.spawn(function()
+        while _dbgSg.Parent do
+            task.wait(2)
+            local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
+            local s = math.clamp(vp.Y/1080*1.56, 0.7, 2.2)
+            scD.Scale = s; fD.Position = UDim2.new(1/s,-14/s,0.5,0)
+        end
+    end)
+
+    _G.__uplDbgAdd = dbgAddLine
+end
+-- ============ end debug panel kanan tengah v8.593 ============
+
 if not _G.__ZenxDenyut then
     _G.__ZenxDenyut = true
     task.spawn(function()
@@ -5327,7 +5424,13 @@ local function doShovelPlants()
 end
 
 local function runNewLoop()
+    -- v8.593: dbgLog forward ke panel debug kanan tengah + addLog biasa
+    local function dbgLog(msg)
+        addLog(msg)
+        if _G.__uplDbgAdd then pcall(_G.__uplDbgAdd, msg) end
+    end
     addLog("=== AUTOLVLNEWW START ===")
+    if _G.__uplDbgAdd then pcall(_G.__uplDbgAdd, "=== AUTOLVLNEWW START ===") end
     setStatus("AUTOLVLNEWW — equip", C.accent)
     _clusterPos = farmCenter()
     waitForContainer(10)
@@ -5343,7 +5446,7 @@ local function runNewLoop()
     else
         _newwTimAktif = "main"; _startDef = AUTOLVLNEWW_DEF
     end
-    addLog("[newloop] start NM="..tostring(_initNM).." → tim "..tostring(_newwTimAktif))
+    dbgLog("[newloop] start NM="..tostring(_initNM).." → tim "..tostring(_newwTimAktif))
     _activeSesiNum = 5; _activeSesiDef = _startDef
     _G._UPL_SESI_NUM = 5; _G._UPL_SESI_DEF = _startDef
     unequipAll()
@@ -5371,7 +5474,7 @@ local function runNewLoop()
                     local ustr = tostring(bakuSlot.uuid)
                     local _au = _G._ZenxActiveUuids
                     if _au and not _au[ustr] then
-                        addLog("[newloop-fast] Baku tidak di activeUuids — tambah supaya healer bisa re-equip")
+                        dbgLog("[newloop-fast] Baku tidak di activeUuids — tambah supaya healer bisa re-equip")
                         _au[ustr] = true
                     end
                 end
@@ -5379,7 +5482,7 @@ local function runNewLoop()
 
             if nmC < 1 and _newwTimAktif ~= "nm0" then
                 -- NM habis total → swap ke NM0
-                addLog("[newloop-fast] NM "..nmC.." < 1 — swap ke NM0")
+                dbgLog("[newloop-fast] NM "..nmC.." < 1 — swap ke NM0")
                 _bakuCooldownUntil = 0  -- reset cooldown
                 _newwTimAktif = "nm0"
                 _activeSesiDef = AUTOLVLNEWW_NM0_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NM0_DEF
@@ -5387,7 +5490,7 @@ local function runNewLoop()
 
             elseif nmC >= 150 and _newwTimAktif ~= "main" then
                 -- NM >= 150 → pasang Baku+Bahan (v8.583: threshold masuk main tetap 150)
-                addLog("[newloop-fast] NM "..nmC.." >= 150 — swap T-Rex(5+6)→Baku+Bahan (cooldown 20s)")
+                dbgLog("[newloop-fast] NM "..nmC.." >= 150 — swap T-Rex(5+6)→Baku+Bahan (cooldown 20s)")
                 _newwSwapping = true  -- v8.591: block enforceEquip selama swap
                 _newwTimAktif = "main"
                 _bakuCooldownUntil = tick() + 20
@@ -5406,10 +5509,10 @@ local function runNewLoop()
                             if _au then _au[ustr] = nil end
                             task.wait(0.5)
                             if not modelByUuid[ustr] then
-                                addLog("[newloop-fast] T-Rex slot"..si.." unequip OK (attempt "..attempt..")")
+                                dbgLog("[newloop-fast] T-Rex slot"..si.." unequip OK (attempt "..attempt..")")
                                 break
                             end
-                            addLog("[newloop-fast] T-Rex slot"..si.." masih ada di workspace, retry "..attempt)
+                            dbgLog("[newloop-fast] T-Rex slot"..si.." masih ada di workspace, retry "..attempt)
                         end
                     end
                 end
@@ -5429,10 +5532,10 @@ local function runNewLoop()
                         if modelByUuid[ustr] then masihAda = true; break end
                     end
                     if not masihAda then
-                        addLog("[newloop-fast] T-Rex slot5+6 sudah hilang — siap equip Baku+Bahan")
+                        dbgLog("[newloop-fast] T-Rex slot5+6 sudah hilang — siap equip Baku+Bahan")
                         break
                     end
-                    addLog("[newloop-fast] masih tunggu T-Rex slot5/6 hilang dari workspace...")
+                    dbgLog("[newloop-fast] masih tunggu T-Rex slot5/6 hilang dari workspace...")
                     task.wait(0.5)
                 end
                 -- equip Baku: ambil dari pool5, fallback cari dari container
@@ -5457,7 +5560,7 @@ local function runNewLoop()
                                 bakuSlot = {uuid=cuuid, tipe="Baku", age=lv, kg=bw*(lv+10)/10}
                                 if not sesiPool[5]["Baku"] then sesiPool[5]["Baku"] = {} end
                                 sesiPool[5]["Baku"][1] = bakuSlot
-                                addLog("[newloop-fast] Baku auto-pick dari container: "..cuuid:sub(1,12))
+                                dbgLog("[newloop-fast] Baku auto-pick dari container: "..cuuid:sub(1,12))
                                 break
                             end
                         end
@@ -5468,14 +5571,14 @@ local function runNewLoop()
                     local _au = _G._ZenxActiveUuids
                     if _au then _au[tostring(bakuSlot.uuid)] = true end
                 else
-                    addLog("[newloop-fast] WARN: Baku tidak ditemukan di pool maupun container!")
+                    dbgLog("[newloop-fast] WARN: Baku tidak ditemukan di pool maupun container!")
                 end
                 -- v8.575: equip Bahan langsung bareng Baku, tidak nunggu equipOneBahan loop
                 -- v8.590: fallback cari Bahan dari container kalau pool5["Bahan"] kosong
                 local bahanPool = pool5["Bahan"] or {}
                 local bahanSlot = bahanPool[1]
                 if not (bahanSlot and bahanSlot.uuid) then
-                    addLog("[newloop-fast] pool5 Bahan kosong — cari dari container")
+                    dbgLog("[newloop-fast] pool5 Bahan kosong — cari dari container")
                     local usedBahan = {}
                     for _, sPool in pairs(sesiPool) do
                         for _, slots in pairs(sPool) do
@@ -5494,7 +5597,7 @@ local function runNewLoop()
                                 bahanSlot = {uuid=cuuid, tipe=CFG.bahanType, age=lv, kg=bw*(lv+10)/10}
                                 if not sesiPool[5]["Bahan"] then sesiPool[5]["Bahan"] = {} end
                                 sesiPool[5]["Bahan"][1] = bahanSlot
-                                addLog("[newloop-fast] Bahan auto-pick dari container: "..cuuid:sub(1,12))
+                                dbgLog("[newloop-fast] Bahan auto-pick dari container: "..cuuid:sub(1,12))
                                 break
                             end
                         end
@@ -5508,7 +5611,7 @@ local function runNewLoop()
                     _bahanEquipTime[ustr] = _bahanEquipTime[ustr] or tick()
                     local _au = _G._ZenxActiveUuids
                     if _au then _au[ustr] = true end
-                    addLog("[newloop-fast] Bahan re-equip dari _bahanUuids saat swap ke main: "..ustr:sub(1,12))
+                    dbgLog("[newloop-fast] Bahan re-equip dari _bahanUuids saat swap ke main: "..ustr:sub(1,12))
                     bahanEquipped = true
                 end
                 -- kalau _bahanUuids kosong, fallback pool5 / container
@@ -5520,9 +5623,9 @@ local function runNewLoop()
                         _bahanEquipTime[ustr] = _bahanEquipTime[ustr] or tick()
                         local _au = _G._ZenxActiveUuids
                         if _au then _au[ustr] = true end
-                        addLog("[newloop-fast] Bahan equip (pool/container) saat swap ke main: "..ustr:sub(1,12))
+                        dbgLog("[newloop-fast] Bahan equip (pool/container) saat swap ke main: "..ustr:sub(1,12))
                     else
-                        addLog("[newloop-fast] WARN: Bahan tidak ditemukan di _bahanUuids, pool, maupun container!")
+                        dbgLog("[newloop-fast] WARN: Bahan tidak ditemukan di _bahanUuids, pool, maupun container!")
                     end
                 end
                 _newwSwapping = false  -- v8.591: swap ke main selesai
@@ -5531,9 +5634,9 @@ local function runNewLoop()
                 -- NM < 100 → cabut Baku, pasang T-Rex slot5+6 (v8.583: 150→100, hysteresis 100-149)
                 if tick() < _bakuCooldownUntil then
                     local sisa = math.ceil(_bakuCooldownUntil - tick())
-                    addLog("[newloop-fast] NM "..nmC.." < 100 tapi cooldown Baku "..sisa.."s lagi")
+                    dbgLog("[newloop-fast] NM "..nmC.." < 100 tapi cooldown Baku "..sisa.."s lagi")
                 else
-                    addLog("[newloop-fast] NM "..nmC.." < 100 — swap Baku+Bahan→T-Rex slot5+6")
+                    dbgLog("[newloop-fast] NM "..nmC.." < 100 — swap Baku+Bahan→T-Rex slot5+6")
                     _newwSwapping = true  -- v8.591: block enforceEquip selama swap
                     _newwTimAktif = "nobaku"
                     _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
@@ -5551,17 +5654,17 @@ local function runNewLoop()
                             unequipPet(bakuSlot.uuid)
                             task.wait(0.5)
                             if not modelByUuid[ustr] then
-                                addLog("[newloop-fast] Baku unequip OK (attempt "..attempt..")")
+                                dbgLog("[newloop-fast] Baku unequip OK (attempt "..attempt..")")
                                 break
                             end
-                            addLog("[newloop-fast] Baku masih ada di workspace, retry "..attempt)
+                            dbgLog("[newloop-fast] Baku masih ada di workspace, retry "..attempt)
                         end
                         uuidsToWait[ustr] = true
                     end
                     -- unequip Bahan + clear _bahanUuids
                     -- v8.584: debug log isi _bahanUuids sebelum unequip
                     local bahanCount = 0; for _ in pairs(_bahanUuids) do bahanCount = bahanCount + 1 end
-                    addLog("[newloop-fast] _bahanUuids count="..bahanCount.." sebelum unequip")
+                    dbgLog("[newloop-fast] _bahanUuids count="..bahanCount.." sebelum unequip")
                     -- v8.584: kalau _bahanUuids kosong, coba cari Bahan dari pool5 langsung
                     if bahanCount == 0 then
                         local pool5b = sesiPool[5] or {}
@@ -5569,7 +5672,7 @@ local function runNewLoop()
                         for _, e in pairs(bahanPool) do
                             if e and e.uuid then
                                 local ustr = tostring(e.uuid)
-                                addLog("[newloop-fast] Bahan tidak di _bahanUuids, ambil dari pool5: "..ustr:sub(1,12))
+                                dbgLog("[newloop-fast] Bahan tidak di _bahanUuids, ambil dari pool5: "..ustr:sub(1,12))
                                 _bahanUuids[ustr] = true
                             end
                         end
@@ -5585,7 +5688,7 @@ local function runNewLoop()
                                 or ""
                             )) or ""
                             if nm == CFG.bahanType then
-                                addLog("[newloop-fast] Bahan scan fallback: "..ustr:sub(1,12))
+                                dbgLog("[newloop-fast] Bahan scan fallback: "..ustr:sub(1,12))
                                 _bahanUuids[ustr] = true
                             end
                         end
@@ -5603,10 +5706,10 @@ local function runNewLoop()
                             unequipPet(ustr)
                             task.wait(0.5)
                             if not modelByUuid[ustr] then
-                                addLog("[newloop-fast] Bahan unequip OK (attempt "..attempt..")")
+                                dbgLog("[newloop-fast] Bahan unequip OK (attempt "..attempt..")")
                                 break
                             end
-                            addLog("[newloop-fast] Bahan masih ada di workspace, retry "..attempt)
+                            dbgLog("[newloop-fast] Bahan masih ada di workspace, retry "..attempt)
                         end
                         uuidsToWait[ustr] = true
                     end
@@ -5618,10 +5721,10 @@ local function runNewLoop()
                             if modelByUuid[ustr] then masihAda = true; break end
                         end
                         if not masihAda then
-                            addLog("[newloop-fast] Baku+Bahan sudah hilang — siap equip T-Rex slot5+6")
+                            dbgLog("[newloop-fast] Baku+Bahan sudah hilang — siap equip T-Rex slot5+6")
                             break
                         end
-                        addLog("[newloop-fast] masih tunggu Baku/Bahan hilang dari workspace...")
+                        dbgLog("[newloop-fast] masih tunggu Baku/Bahan hilang dari workspace...")
                         task.wait(0.5)
                     end
                     -- v8.586: kalau masih ada setelah timeout, terus retry sampai hilang (max 10x)
@@ -5629,7 +5732,7 @@ local function runNewLoop()
                         local retryCount = 0
                         while modelByUuid[ustr] and retryCount < 10 do
                             retryCount = retryCount + 1
-                            addLog("[newloop-fast] timeout — retry unequip #"..retryCount..": "..ustr:sub(1,12))
+                            dbgLog("[newloop-fast] timeout — retry unequip #"..retryCount..": "..ustr:sub(1,12))
                             unequipPet(ustr); task.wait(0.8)
                         end
                     end
@@ -5643,12 +5746,12 @@ local function runNewLoop()
                         local e = trexPool[si2]
                         if e and e.uuid then usedTrex[tostring(e.uuid)] = true end
                     end
-                    addLog("[newloop-fast] pool5 T-Rex slot5="..tostring(trexPool[5] and trexPool[5].uuid and tostring(trexPool[5].uuid):sub(1,8) or "nil").." slot6="..tostring(trexPool[6] and trexPool[6].uuid and tostring(trexPool[6].uuid):sub(1,8) or "nil"))
+                    dbgLog("[newloop-fast] pool5 T-Rex slot5="..tostring(trexPool[5] and trexPool[5].uuid and tostring(trexPool[5].uuid):sub(1,8) or "nil").." slot6="..tostring(trexPool[6] and trexPool[6].uuid and tostring(trexPool[6].uuid):sub(1,8) or "nil"))
                     for _, si in ipairs({5, 6}) do
                         local trexN = trexPool[si]
                         -- v8.589: fallback cari T-Rex dari container kalau slot kosong
                         if not (trexN and trexN.uuid) then
-                            addLog("[newloop-fast] T-Rex slot"..si.." kosong di pool5 — cari dari container")
+                            dbgLog("[newloop-fast] T-Rex slot"..si.." kosong di pool5 — cari dari container")
                             local c = _kgContainer or {}
                             for cuuid, ce in pairs(c) do
                                 if not usedTrex[cuuid] then
@@ -5660,7 +5763,7 @@ local function runNewLoop()
                                         if not sesiPool[5]["T-Rex"] then sesiPool[5]["T-Rex"] = {} end
                                         sesiPool[5]["T-Rex"][si] = trexN
                                         usedTrex[cuuid] = true
-                                        addLog("[newloop-fast] T-Rex slot"..si.." auto-pick: "..cuuid:sub(1,12))
+                                        dbgLog("[newloop-fast] T-Rex slot"..si.." auto-pick: "..cuuid:sub(1,12))
                                         break
                                     end
                                 end
@@ -5671,7 +5774,7 @@ local function runNewLoop()
                             local _au = _G._ZenxActiveUuids
                             if _au then _au[tostring(trexN.uuid)] = true end
                         else
-                            addLog("[newloop-fast] T-Rex slot"..si.." tidak ditemukan — skip")
+                            dbgLog("[newloop-fast] T-Rex slot"..si.." tidak ditemukan — skip")
                         end
                     end
                     _newwSwapping = false  -- v8.591: swap ke nobaku selesai
@@ -5690,14 +5793,14 @@ local function runNewLoop()
         -- v8.550: swap NM ditangani fast loop (task.spawn 2s), main loop hanya shovel+enforce
         if false then -- disabled: swap lama (lambat karena ketahan doShovelPlants)
         if nmCount < 1 and _newwTimAktif ~= "nm0" then
-            addLog("[newloop] NM "..nmCount.." < 1 — swap ke NM0 (Mimic×3+Baku×1)")
+            dbgLog("[newloop] NM "..nmCount.." < 1 — swap ke NM0 (Mimic×3+Baku×1)")
             _newwTimAktif = "nm0"
             _activeSesiDef = AUTOLVLNEWW_NM0_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_NM0_DEF
             unequipAll(); equipSesi(5, AUTOLVLNEWW_NM0_DEF)
         elseif nmCount >= 1 and nmCount < 150 and _newwTimAktif ~= "nobaku" then
             -- NM 1-149 → cabut Baku, pasang T-Rex ke-5 (pet lain tetap)
-            addLog("[newloop] NM "..nmCount.." 1-149 — swap Baku→T-Rex ke-5")
+            dbgLog("[newloop] NM "..nmCount.." 1-149 — swap Baku→T-Rex ke-5")
             _newwTimAktif = "nobaku"
             _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
@@ -5732,7 +5835,7 @@ local function runNewLoop()
                             trex5={uuid=cuuid, tipe="T-Rex", age=lv, kg=kg}
                             if not sesiPool[5]["T-Rex"] then sesiPool[5]["T-Rex"]={} end
                             sesiPool[5]["T-Rex"][5]=trex5
-                            addLog("[newloop] T-Rex5 auto-pick dari container: "..cuuid:sub(1,12))
+                            dbgLog("[newloop] T-Rex5 auto-pick dari container: "..cuuid:sub(1,12))
                             break
                         end
                     end
@@ -5743,15 +5846,15 @@ local function runNewLoop()
                 _activeUuids[tostring(trex5.uuid)] = true
                 -- verifikasi equip berhasil — retry sekali kalau model belum muncul
                 if not modelByUuid[tostring(trex5.uuid)] then
-                    addLog("[newloop] T-Rex5 equip retry (model belum muncul)")
+                    dbgLog("[newloop] T-Rex5 equip retry (model belum muncul)")
                     task.wait(0.5); equipPet(trex5.uuid); task.wait(0.5)
                 end
             else
-                addLog("[newloop] T-Rex5 tidak ditemukan sama sekali — skip swap")
+                dbgLog("[newloop] T-Rex5 tidak ditemukan sama sekali — skip swap")
             end
         elseif nmCount >= 150 and _newwTimAktif ~= "main" then
             -- NM >= 150 → cabut T-Rex ke-5, pasang kembali Baku
-            addLog("[newloop] NM "..nmCount.." >= 150 — swap T-Rex ke-5→Baku")
+            dbgLog("[newloop] NM "..nmCount.." >= 150 — swap T-Rex ke-5→Baku")
             _newwTimAktif = "main"
             _activeSesiDef = AUTOLVLNEWW_DEF
             _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
@@ -5770,7 +5873,7 @@ local function runNewLoop()
                 _activeUuids[tostring(bakuSlot.uuid)] = true
                 -- v8.527: verifikasi equip berhasil — retry sekali kalau model belum muncul
                 if not modelByUuid[tostring(bakuSlot.uuid)] then
-                    addLog("[newloop] Baku equip retry (model belum muncul)")
+                    dbgLog("[newloop] Baku equip retry (model belum muncul)")
                     task.wait(0.5); equipPet(bakuSlot.uuid); task.wait(0.5)
                 end
             else
@@ -5785,7 +5888,7 @@ local function runNewLoop()
                         foundBaku={uuid=cuuid, tipe="Baku", age=lv, kg=bw*(lv+10)/10}
                         if not sesiPool[5]["Baku"] then sesiPool[5]["Baku"]={} end
                         sesiPool[5]["Baku"][1]=foundBaku
-                        addLog("[newloop] Baku auto-pick dari container: "..cuuid:sub(1,12))
+                        dbgLog("[newloop] Baku auto-pick dari container: "..cuuid:sub(1,12))
                         break
                     end
                 end
@@ -5793,17 +5896,17 @@ local function runNewLoop()
                     equipPet(foundBaku.uuid); task.wait(0.5)
                     _activeUuids[tostring(foundBaku.uuid)] = true
                 else
-                    addLog("[newloop] Baku tidak ditemukan sama sekali — skip swap")
+                    dbgLog("[newloop] Baku tidak ditemukan sama sekali — skip swap")
                 end
             end
         elseif (_newwTimAktif == "nm0") and nmCount >= 1 then
             -- pulih dari NM0 → kembali ke main/nobaku sesuai count
             if nmCount >= 150 then
-                addLog("[newloop] NM "..nmCount.." pulih dari NM0 — ke main")
+                dbgLog("[newloop] NM "..nmCount.." pulih dari NM0 — ke main")
                 _newwTimAktif = "main"
                 _activeSesiDef = AUTOLVLNEWW_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
             else
-                addLog("[newloop] NM "..nmCount.." pulih dari NM0 — ke nobaku")
+                dbgLog("[newloop] NM "..nmCount.." pulih dari NM0 — ke nobaku")
                 _newwTimAktif = "nobaku"
                 _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
             end
@@ -5816,7 +5919,7 @@ local function runNewLoop()
         -- v8.591: skip enforceEquip + equipOneBahan saat fast loop sedang swap (cegah interrupt)
         if not _newwSwapping then
             local okEE, errEE = pcall(enforceEquip, curDef)
-            if not okEE then addLog("[newloop] enforceEquip ERR: "..tostring(errEE)) end
+            if not okEE then dbgLog("[newloop] enforceEquip ERR: "..tostring(errEE)) end
             pcall(function()
                 unequipBahanTua()
                 equipOneBahan()
