@@ -1,4 +1,5 @@
--- uplevelnew v8.568
+-- uplevelnew v8.569
+-- v8.569: label TIME tampil nama+age+kg+uuid singkat per bahan
 -- v8.568: equipOneBahan ambil pool dari sesi aktif, bukan hardcode pool2
 -- v8.567: GUI 500- skip pet tim (hanya kalau sesiPool sudah terisi)
 -- v8.566: equipOneBahan guard semua sesiPool — cegah pet tim sesi 1/2/NEWW jadi bahan
@@ -141,7 +142,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.568")
+print("[UPL] VERSION: v8.569")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -249,7 +250,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.568"
+local VERSION = "v8.569"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -1614,7 +1615,8 @@ do
     shovelL=statMini(statRow,"0","MUTASI",C.textDim)
     maxInvL=statMini(statRow,"—","PET/MAX",C.textDim)
     -- Row 2: age 500+ / age 500- / bahan age
-    local statRow2=mk("Frame",{Size=UDim2.new(1,0,0,52),BackgroundTransparency=1,LayoutOrder=4,Parent=cfgScroll})
+    -- v8.569: row2 tinggi 72 agar TIME card cukup tampil nama+uuid bahan
+    local statRow2=mk("Frame",{Size=UDim2.new(1,0,0,72),BackgroundTransparency=1,LayoutOrder=4,Parent=cfgScroll})
     mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,6),Parent=statRow2})
     local function statMini2(parent,val,sub,col,w)
         local c=mk("Frame",{Size=UDim2.new(w or 0.333,-5,1,0),BackgroundColor3=C.card,BorderSizePixel=0,Parent=parent})
@@ -1624,9 +1626,19 @@ do
         local s=lbl(c,sub,9,C.textMute); s.Position=UDim2.new(0,9,0,31); s.Size=UDim2.new(1,-9,0,14)
         return v
     end
+    local function statMiniTime(parent,w)
+        -- card khusus TIME: tinggi penuh, label multiline untuk nama+uuid bahan
+        local c=mk("Frame",{Size=UDim2.new(w or 0.333,-5,1,0),BackgroundColor3=C.card,BorderSizePixel=0,Parent=parent})
+        corner(c,10); stroke(c,C.border,1)
+        local s=lbl(c,"TIME",9,C.textMute); s.Position=UDim2.new(0,9,0,4); s.Size=UDim2.new(1,-9,0,12)
+        local v=mk("TextLabel",{BackgroundTransparency=1,Position=UDim2.new(0,9,0,18),Size=UDim2.new(1,-12,1,-22),
+            Font=FONT_B,TextSize=10,TextColor3=col or C.text,TextXAlignment=Enum.TextXAlignment.Left,
+            TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Text="—",Parent=c})
+        return v
+    end
     age500plusL  = statMini2(statRow2,"0","AGE 500+", C.text)
     age500minusL = statMini2(statRow2,"0","AGE 500-", C.text)
-    bahanAgeL    = statMini2(statRow2,"—","TIME", C.text)
+    bahanAgeL    = statMiniTime(statRow2)
     totalPetL    = statMini2(statRow2,"—","TOTAL PET", C.text)
     totalPetL.RichText = true  -- enable RichText agar bisa warnai "/220" abu-abu
     -- background loop: update stat age 500 + total pet tiap 5 detik (tidak tunggu sesi jalan)
@@ -1666,20 +1678,33 @@ do
                 age500plusL.Text  = tostring(plus)
                 age500minusL.Text = tostring(minus)
                 do
-                    local times = {}
+                    local lines = {}
                     -- v8.561: baca dari _G supaya dapat tabel yang diisi equipSesi
                     local buuids = _G._ZenxBahanUuids or {}
                     local betime = _G._ZenxBahanEquipTime or {}
+                    local cont = _kgContainer or {}
                     for uuid in pairs(buuids) do
                         local t0 = betime[uuid]
-                        if t0 then
-                            local elapsed = math.floor(tick() - t0)
-                            local m = math.floor(elapsed / 60)
-                            local s = elapsed % 60
-                            table.insert(times, m..":"..string.format("%02d", s))
+                        local elapsed = t0 and math.floor(tick() - t0) or 0
+                        local m = math.floor(elapsed / 60)
+                        local s = elapsed % 60
+                        local timeStr = m..":"..string.format("%02d", s)
+                        -- ambil info pet dari container
+                        local entry = cont[uuid] or cont[tostring(uuid)]
+                        local nama, age, kg = "?", 0, 0
+                        if entry and entry.PetData then
+                            nama = tostring(entry.PetType or entry.PetData.PetType or "?")
+                            nama = nama:match("^(.-)%s*%[") or nama  -- strip mutation suffix
+                            age  = tonumber(entry.PetData.Level) or 0
+                            local bw = tonumber(entry.PetData.BaseWeight) or 0
+                            kg = bw * (age + 10) / 10
                         end
+                        -- uuid singkat: 8 char pertama
+                        local uuidShort = tostring(uuid):sub(1,8)
+                        -- v8.569: format: "nama (age, kg)\nuuid..."  tiap bahan 1 blok
+                        table.insert(lines, string.format("%s (%d, %.0fkg)  %s  %s", nama, age, kg, timeStr, uuidShort))
                     end
-                    bahanAgeL.Text = #times > 0 and table.concat(times, "/") or "—"
+                    bahanAgeL.Text = #lines > 0 and table.concat(lines, "\n") or "—"
                 end
                 -- TOTAL PET / MAX INVENTORY:
                 -- Prioritas 1: baca dari _G.ZenxKgStat (up6kg sudah jalan -> akurat)
