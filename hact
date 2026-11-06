@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.24  ══════════════════════════
+-- ══════════════════════════  HACT  v35.25  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.24"
+local VERSION = "v35.25"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2944,38 +2944,40 @@ local function giftPetsByFilter(cfg)
     -- v34.62: method=trade selalu unfav dulu (gak perlu flag unfavFirst)
     if cfg.unfavFirst or cfg.method == "trade" then
         local _t0 = tick()   -- v27.144: timing diagnostik
-        -- v34.65: track UUID yang sudah di-fire unfav -> JANGAN fire 2x (toggle balik jadi fav!)
-        -- Race condition lama: server belum update d=false dalam 0.4s -> attempt berikut fire lagi -> fav lagi
-        local alreadyFired = {}
-        for attempt = 1, 10 do  -- v35.24: naikkan 4→10 attempt
+        -- v35.25: cek "d" langsung dari tool saat mau fire (bukan snapshot) -> tidak toggle balik
+        -- tiap attempt: scan semua matched, kalau tool.d=true → fire unfav, kalau d=false → skip
+        for attempt = 1, 10 do
             local _ta = tick()
             local stillFav = 0
-            -- v34.63: cek fav via attribute "d" langsung dari tool (d=true = fav, confirmed debug)
+            local nFired = 0
             for _, u in ipairs(matched) do
                 local ref = _G.__hactMatchedRef[u]
                 if ref and ref.tool then
-                    local isFav = ref.tool:GetAttribute("d") == true
-                    if isFav and not alreadyFired[u] then
-                        favoritePet(ref.tool,"keepFav")
-                        alreadyFired[u] = true  -- v34.65: tandai sudah di-fire, skip attempt berikut
+                    if ref.tool:GetAttribute("d") == true then
+                        favoritePet(ref.tool,"keepFav")  -- toggle: d=true → fire → jadi false
+                        nFired = nFired + 1
                         stillFav = stillFav + 1
-                        task.wait(0.05)
-                    elseif isFav and alreadyFired[u] then
-                        stillFav = stillFav + 1  -- masih fav tapi sudah di-fire, hitung aja jangan re-fire
+                        task.wait(0.04)
                     end
                 end
             end
-            -- v35.22: update debug panel per attempt
-            local nFired = 0; for _ in pairs(alreadyFired) do nFired = nFired + 1 end
-            _tradeDbg(("🔓 Unfav loop\nattempt: %d/10\nsudah fire: %d\nmasih fav: %d\n\n%s"):format(
-                attempt, nFired, stillFav,
-                stillFav == 0 and "✅ semua unfav!" or "⏳ nunggu server..."))
-            if stillFav == 0 then
-                print(("[HactTelur] TIMING unfav OK attempt %d, %.2fs"):format(attempt, tick()-_ta))
+            -- re-cek setelah fire (server sempat proses)
+            task.wait(0.5)
+            local stillFavAfterWait = 0
+            for _, u in ipairs(matched) do
+                local ref = _G.__hactMatchedRef[u]
+                if ref and ref.tool and ref.tool:GetAttribute("d") == true then
+                    stillFavAfterWait = stillFavAfterWait + 1
+                end
+            end
+            _tradeDbg(("🔓 Unfav loop\nattempt: %d/10\ndi-fire: %d\nmasih fav: %d\n\n%s"):format(
+                attempt, nFired, stillFavAfterWait,
+                stillFavAfterWait == 0 and "✅ semua unfav!" or "⏳ nunggu server..."))
+            if stillFavAfterWait == 0 then
+                print(("[HactTelur] v35.25 unfav OK attempt %d, %.2fs"):format(attempt, tick()-_ta))
                 break
             end
-            print(("[HactTelur] unfav list: masih %d pet ke-fav (sudah fire=%d), retry (%d/10), %.2fs"):format(stillFav, nFired, attempt, tick()-_ta))
-            task.wait(1)   -- v35.24: naikkan 0.5→1s, beri server waktu lebih
+            print(("[HactTelur] v35.25 unfav: masih %d fav (fired=%d), retry (%d/10), %.2fs"):format(stillFavAfterWait, nFired, attempt, tick()-_ta))
         end
         -- v35.24: cek setelah unfav loop, kalau masih fav → ABORT langsung tanpa masuk verify
         do
