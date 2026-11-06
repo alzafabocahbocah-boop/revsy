@@ -1,4 +1,5 @@
--- uplevelnew v8.587
+-- uplevelnew v8.588
+-- v8.588: swap ke nobaku — fallback scan modelByUuid unequip semua Bahan kalau _bahanUuids + pool5 kosong
 -- v8.587: hapus Bahan dari NOBAKU_DEF — NM 1-149 tidak pakai Bahan
 -- v8.586: retry unequip 1x lagi setelah timeout 5s kalau masih ada di workspace
 -- v8.585: hapus Baku+Bahan dari _activeUuids SEBELUM unequip — cegah healer re-equip saat proses swap
@@ -5520,6 +5521,22 @@ local function runNewLoop()
                             if e and e.uuid then
                                 local ustr = tostring(e.uuid)
                                 addLog("[newloop-fast] Bahan tidak di _bahanUuids, ambil dari pool5: "..ustr:sub(1,12))
+                                _bahanUuids[ustr] = true
+                            end
+                        end
+                    end
+                    -- v8.588: fallback scan modelByUuid — unequip semua Bahan di workspace
+                    -- kalau _bahanUuids + pool5 kosong, Bahan tetap ter-equip → scan langsung
+                    local bahanCount2 = 0; for _ in pairs(_bahanUuids) do bahanCount2 = bahanCount2 + 1 end
+                    if bahanCount2 == 0 and modelByUuid then
+                        for ustr, model in pairs(modelByUuid) do
+                            local nm = model and stripMutation(tostring(
+                                (model:FindFirstChild("PetType") and model.PetType.Value)
+                                or (model:FindFirstChild("PetData") and model.PetData:FindFirstChild("PetType") and model.PetData.PetType.Value)
+                                or ""
+                            )) or ""
+                            if nm == CFG.bahanType then
+                                addLog("[newloop-fast] Bahan scan fallback: "..ustr:sub(1,12))
                                 _bahanUuids[ustr] = true
                             end
                         end
