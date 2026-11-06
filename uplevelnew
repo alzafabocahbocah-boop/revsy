@@ -1,4 +1,5 @@
--- uplevelnew v8.574
+-- uplevelnew v8.575
+-- v8.575: swap ke main equip Bahan+Baku bareng, unequip T-Rex slot5+6 dulu tunggu server
 -- v8.574: NOBAKU_DEF tambah Bahan — TIME label tidak hilang saat swap ke nobaku
 -- v8.573: swap nobaku/main update _activeUuids slot5+6 T-Rex dan Baku (healer bisa re-equip)
 -- v8.572: SWAP_SKILL_CFG tambah Peacock/Mimic/Baku nocd
@@ -5353,29 +5354,44 @@ local function runNewLoop()
                 unequipAll(); equipSesi(5, AUTOLVLNEWW_NM0_DEF)
 
             elseif nmC >= 150 and _newwTimAktif ~= "main" then
-                -- NM nyentuh 150 → cabut T-Rex slot5+6, pasang Baku + set cooldown 20s
-                addLog("[newloop-fast] NM "..nmC.." >= 150 — swap T-Rex(5+6)→Baku (cooldown 20s)")
+                -- NM nyentuh 150 → cabut T-Rex slot5+6, pasang Baku+Bahan + set cooldown 20s
+                addLog("[newloop-fast] NM "..nmC.." >= 150 — swap T-Rex(5+6)→Baku+Bahan (cooldown 20s)")
                 _newwTimAktif = "main"
                 _bakuCooldownUntil = tick() + 20
                 _activeSesiDef = AUTOLVLNEWW_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_DEF
                 local pool5 = sesiPool[5] or {}
                 local trexPool = pool5["T-Rex"] or {}
-                -- v8.564: cabut slot 5 DAN slot 6 (nobaku pakai 6 T-Rex)
+                -- v8.575: unequip slot5+6 dulu, tunggu server proses, baru equip Baku+Bahan
                 for _, si in ipairs({5, 6}) do
                     local trexN = trexPool[si]
                     if trexN and trexN.uuid then
                         unequipPet(trexN.uuid)
                         local _au = _G._ZenxActiveUuids
                         if _au then _au[tostring(trexN.uuid)] = nil end
-                        task.wait(0.4)
+                        task.wait(0.5)
                     end
                 end
+                task.wait(0.3)  -- v8.575: tunggu server proses unequip sebelum equip baru
+                -- equip Baku
                 local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
                 if bakuSlot and bakuSlot.uuid then
                     equipPet(bakuSlot.uuid); task.wait(0.5)
-                    -- v8.573: tambah Baku ke _activeUuids (healer bisa re-equip)
                     local _au = _G._ZenxActiveUuids
                     if _au then _au[tostring(bakuSlot.uuid)] = true end
+                end
+                -- v8.575: equip Bahan langsung bareng Baku, tidak nunggu equipOneBahan loop
+                local bahanPool = pool5["Bahan"] or {}
+                local bahanSlot = bahanPool[1]
+                if bahanSlot and bahanSlot.uuid then
+                    local ustr = tostring(bahanSlot.uuid)
+                    if not _bahanUuids[ustr] then
+                        equipPet(bahanSlot.uuid); task.wait(0.5)
+                        _bahanUuids[ustr] = true
+                        _bahanEquipTime[ustr] = _bahanEquipTime[ustr] or tick()
+                        local _au = _G._ZenxActiveUuids
+                        if _au then _au[ustr] = true end
+                        addLog("[newloop-fast] Bahan equip saat swap ke main: "..ustr:sub(1,12))
+                    end
                 end
 
             elseif nmC >= 1 and nmC < 150 and _newwTimAktif ~= "nobaku" then
