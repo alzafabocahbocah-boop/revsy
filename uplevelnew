@@ -1,4 +1,5 @@
--- uplevelnew v8.560
+-- uplevelnew v8.561
+-- v8.561: fix TIME kosong — _bahanUuids/_bahanEquipTime jadikan _G supaya GUI loop bisa baca
 -- v8.560: stat loop mandiri — baca totalAll+maxInv dari RC tiap 2s, tulis ke ZenxKgStat
 -- v8.559: auto-accept trade port pola hact — listen semua TradeEvents RE, skip kalau inv penuh
 -- v8.558: threshold NM 300->150 — Baku masuk saat NM>=150, T-Rex saat NM 1-149
@@ -133,7 +134,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-print("[UPL] VERSION: v8.560")
+print("[UPL] VERSION: v8.561")
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 print("[UPL] start 2 - playerGui ok")
@@ -241,7 +242,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.560"
+local VERSION = "v8.561"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -1634,8 +1635,11 @@ do
                 age500minusL.Text = tostring(minus)
                 do
                     local times = {}
-                    for uuid in pairs(_bahanUuids) do
-                        local t0 = _bahanEquipTime[uuid]
+                    -- v8.561: baca dari _G supaya dapat tabel yang diisi equipSesi
+                    local buuids = _G._ZenxBahanUuids or {}
+                    local betime = _G._ZenxBahanEquipTime or {}
+                    for uuid in pairs(buuids) do
+                        local t0 = betime[uuid]
                         if t0 then
                             local elapsed = math.floor(tick() - t0)
                             local m = math.floor(elapsed / 60)
@@ -3825,8 +3829,11 @@ end
 -- Disimpan di _G supaya healer loop bisa akses meski script di-re-exec
 if type(_G._ZenxActiveUuids) ~= "table" then _G._ZenxActiveUuids = {} end
 local _activeUuids = _G._ZenxActiveUuids
-local _bahanUuids = {}      -- table UUID Bahan yang sedang equip (max 2, aging bersamaan)
-local _bahanEquipTime = {}  -- catat tick() waktu tiap UUID bahan di-equip
+-- v8.561: jadikan _G supaya GUI loop (deklarasi di atas) bisa akses tabel yang sama
+if type(_G._ZenxBahanUuids) ~= "table" then _G._ZenxBahanUuids = {} end
+if type(_G._ZenxBahanEquipTime) ~= "table" then _G._ZenxBahanEquipTime = {} end
+local _bahanUuids = _G._ZenxBahanUuids
+local _bahanEquipTime = _G._ZenxBahanEquipTime
 local _isCollecting = false  -- pause healer saat doCollect berjalan
 local _isTransisi   = false  -- pause healer+swapLoop saat ganti sesi / unequipAll
 local _geLogged = false      -- gameEvents log cukup sekali
