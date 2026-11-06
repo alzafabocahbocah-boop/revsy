@@ -1,4 +1,5 @@
--- uplevelnew v8.588
+-- uplevelnew v8.589
+-- v8.589: swap ke nobaku equip T-Rex slot5+6 — tambah log + fallback cari dari container kalau slot kosong
 -- v8.588: swap ke nobaku — fallback scan modelByUuid unequip semua Bahan kalau _bahanUuids + pool5 kosong
 -- v8.587: hapus Bahan dari NOBAKU_DEF — NM 1-149 tidak pakai Bahan
 -- v8.586: retry unequip 1x lagi setelah timeout 5s kalau masih ada di workspace
@@ -5584,13 +5585,42 @@ local function runNewLoop()
                         end
                     end
                     -- equip T-Rex slot5+6
+                    -- v8.589: log kalau slot kosong + fallback cari dari container
                     local trexPool = pool5["T-Rex"] or {}
+                    -- build set uuid T-Rex slot1-4 yang sudah dipakai
+                    local usedTrex = {}
+                    for i = 1, 4 do
+                        local e = trexPool[i]
+                        if e and e.uuid then usedTrex[tostring(e.uuid)] = true end
+                    end
                     for _, si in ipairs({5, 6}) do
                         local trexN = trexPool[si]
+                        -- v8.589: fallback cari T-Rex dari container kalau slot kosong
+                        if not (trexN and trexN.uuid) then
+                            addLog("[newloop-fast] T-Rex slot"..si.." kosong di pool5 — cari dari container")
+                            local c = _kgContainer or {}
+                            for cuuid, ce in pairs(c) do
+                                if not usedTrex[cuuid] then
+                                    local nm = stripMutation(tostring(ce.PetType or (ce.PetData and ce.PetData.PetType) or ""))
+                                    if nm == "T-Rex" then
+                                        local lv = tonumber((ce.PetData or {}).Level) or 0
+                                        local bw = tonumber((ce.PetData or {}).BaseWeight) or 0
+                                        trexN = {uuid=cuuid, tipe="T-Rex", age=lv, kg=bw*(lv+10)/10}
+                                        if not sesiPool[5]["T-Rex"] then sesiPool[5]["T-Rex"] = {} end
+                                        sesiPool[5]["T-Rex"][si] = trexN
+                                        usedTrex[cuuid] = true
+                                        addLog("[newloop-fast] T-Rex slot"..si.." auto-pick: "..cuuid:sub(1,12))
+                                        break
+                                    end
+                                end
+                            end
+                        end
                         if trexN and trexN.uuid then
                             equipPet(trexN.uuid); task.wait(0.5)
                             local _au = _G._ZenxActiveUuids
                             if _au then _au[tostring(trexN.uuid)] = true end
+                        else
+                            addLog("[newloop-fast] T-Rex slot"..si.." tidak ditemukan — skip")
                         end
                     end
                 end
