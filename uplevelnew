@@ -1,4 +1,5 @@
--- uplevelnew v8.589
+-- uplevelnew v8.590
+-- v8.590: swap ke main equip Bahan — fallback cari dari container kalau pool5["Bahan"] kosong
 -- v8.589: swap ke nobaku equip T-Rex slot5+6 — tambah log + fallback cari dari container kalau slot kosong
 -- v8.588: swap ke nobaku — fallback scan modelByUuid unequip semua Bahan kalau _bahanUuids + pool5 kosong
 -- v8.587: hapus Bahan dari NOBAKU_DEF — NM 1-149 tidak pakai Bahan
@@ -5466,8 +5467,35 @@ local function runNewLoop()
                     addLog("[newloop-fast] WARN: Baku tidak ditemukan di pool maupun container!")
                 end
                 -- v8.575: equip Bahan langsung bareng Baku, tidak nunggu equipOneBahan loop
+                -- v8.590: fallback cari Bahan dari container kalau pool5["Bahan"] kosong
                 local bahanPool = pool5["Bahan"] or {}
                 local bahanSlot = bahanPool[1]
+                if not (bahanSlot and bahanSlot.uuid) then
+                    addLog("[newloop-fast] pool5 Bahan kosong — cari dari container")
+                    local usedBahan = {}
+                    for _, sPool in pairs(sesiPool) do
+                        for _, slots in pairs(sPool) do
+                            for _, e in pairs(slots) do
+                                if e and e.uuid then usedBahan[tostring(e.uuid)] = true end
+                            end
+                        end
+                    end
+                    local c = _kgContainer or {}
+                    for cuuid, ce in pairs(c) do
+                        if not usedBahan[cuuid] then
+                            local nm = stripMutation(tostring(ce.PetType or (ce.PetData and ce.PetData.PetType) or ""))
+                            if nm == CFG.bahanType then
+                                local lv = tonumber((ce.PetData or {}).Level) or 0
+                                local bw = tonumber((ce.PetData or {}).BaseWeight) or 0
+                                bahanSlot = {uuid=cuuid, tipe=CFG.bahanType, age=lv, kg=bw*(lv+10)/10}
+                                if not sesiPool[5]["Bahan"] then sesiPool[5]["Bahan"] = {} end
+                                sesiPool[5]["Bahan"][1] = bahanSlot
+                                addLog("[newloop-fast] Bahan auto-pick dari container: "..cuuid:sub(1,12))
+                                break
+                            end
+                        end
+                    end
+                end
                 if bahanSlot and bahanSlot.uuid then
                     local ustr = tostring(bahanSlot.uuid)
                     if not _bahanUuids[ustr] then
@@ -5478,6 +5506,8 @@ local function runNewLoop()
                         if _au then _au[ustr] = true end
                         addLog("[newloop-fast] Bahan equip saat swap ke main: "..ustr:sub(1,12))
                     end
+                else
+                    addLog("[newloop-fast] WARN: Bahan tidak ditemukan di pool maupun container!")
                 end
 
             elseif nmC >= 1 and nmC < 100 and _newwTimAktif ~= "nobaku" then
