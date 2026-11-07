@@ -1,4 +1,5 @@
--- uplevelnew v8.668
+-- uplevelnew v8.669
+-- v8.669: fix bahan age>=500 tidak di-swap — scan via modelByUuid (workspace) bukan Backpack + wait 0.5s sebelum equip baru
 -- v8.668: hapus semua print debug lama (UPLVL-DBG, NEWLOOP, NMPoller, UPL, FarmCleaner, dll)
 -- v8.667: NMPoller task.wait 0.2s → 1s (kurangi lag scan farm)
 -- v8.666: log swap unequip/equip/respawn masuk panel kanan (ZenxAnimDbg) via _ZenxAnimDbgLog
@@ -201,7 +202,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.668"  -- v8.668: hapus print debug lama
+local VERSION = "v8.669"  -- v8.669: fix bahan age>=500 scan workspace
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -4410,14 +4411,29 @@ equipOneBahan = function()
     local pool2 = sesiPool[_poolSesiNum] or sesiPool[2] or {}
 
     -- bersihkan _bahanUuids: hapus uuid yang sudah age >= max, unequip juga
+    -- v8.669: scan Character juga (bukan cuma Backpack) — bahan yang ter-equip ada di char
+    local function getAgeFromWorkspace(uuid)
+        local ustr = tostring(uuid)
+        local mdl = modelByUuid and modelByUuid[ustr]
+        if mdl then
+            local pd = mdl:FindFirstChild("PetData")
+            local lv = pd and pd:FindFirstChild("Level") and tonumber(pd.Level.Value)
+            if lv then return lv end
+        end
+        return getAgeFallback(uuid)
+    end
+    local bahanTuaAdaYangDiunequip = false
     for uuid in pairs(_bahanUuids) do
-        local age = getAgeFallback(uuid)
+        local age = getAgeFromWorkspace(uuid)
         if age >= CFG.bahanMaxAge then
-            addLog("Bahan kunci age="..age.." >= "..CFG.bahanMaxAge.." — unequip + lepas slot")
+            addLog("Bahan tua age="..age.." >= "..CFG.bahanMaxAge.." — unequip + slot baru")
             pcall(function() unequipPet(uuid) end)
             _bahanUuids[uuid] = nil
+            bahanTuaAdaYangDiunequip = true
         end
     end
+    -- v8.669: tunggu sebentar biar pet masuk Backpack sebelum cari bahan baru
+    if bahanTuaAdaYangDiunequip then task.wait(0.5) end
 
     -- hitung berapa slot bahan yang masih aktif
     local function countBahan()
