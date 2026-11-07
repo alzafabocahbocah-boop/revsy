@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.36  ══════════════════════════
+-- ══════════════════════════  HACT  v35.37  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.36"
+local VERSION = "v35.37"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -10778,6 +10778,10 @@ _G.__hactWaitTeamInGarden = waitTeamInGarden
 _G.__hactDoAutoSell = doAutoSell
 _G.__hactClearGarden = clearGarden
 _G.__hactPetDetect = PetDetect
+-- v35.37: expose buat auto start task di luar __hactMain
+_G.__hactGlobalSetRunning = globalSetRunning
+_G.__hactAutomationLoop = automationLoop
+_G.__hactCheckKoiSealOk = checkKoiSealOk
 end __hactMain()  -- v34.63: tutup __hactMain lebih awal, save/load di scope terpisah
 
 -- ============ SAVE / LOAD CONFIG (biar gak pilih ulang pas rejoin) ============
@@ -11189,27 +11193,35 @@ local PetDetect=_G.__hactPetDetect
 end end _buildSellOnlySection()
 
 -- v19.1: AUTO START — kalau toggle aktif, mulai automation otomatis setelah load/rejoin
+-- v35.37: fix — task ini di luar __hactMain, pakai _G untuk akses globalSetRunning/automationLoop/checkKoiSealOk
 task.spawn(function()
     task.wait(3)  -- tunggu pet/tim ke-load dulu
+    local _cfg = _G.__hactConfig
+    local _gr  = _G.__hactGlobalRunning
+    local _Auto = _G.__hactAuto
+    local _PD   = _G.__hactPetDetect
+    local _setRun = _G.__hactGlobalSetRunning
+    local _loop   = _G.__hactAutomationLoop
+    local _cekKoi = _G.__hactCheckKoiSealOk
     if _G.__hactEggDbgLbl then
-        _G.__hactEggDbgLbl.Text = ("⏱ AUTO START check\nautoStart=%s\ngr=%s"):format(tostring(config.autoStart), tostring(globalRunning))
+        _G.__hactEggDbgLbl.Text = ("⏱ AUTO START check\nautoStart=%s\ngr=%s"):format(tostring(_cfg and _cfg.autoStart), tostring(_gr))
     end
-    if config.autoStart and not globalRunning then
-        PetDetect.rebuild(true)
+    if _cfg and _cfg.autoStart and not _gr then
+        if _PD then _PD.rebuild(true) end
         task.wait(1)
         -- hormati syarat Koi&Seal kalau aktif
-        if config.reqKoiSeal then
-            local ok, koi, seal = checkKoiSealOk()
+        if _cfg.reqKoiSeal and _cekKoi then
+            local ok, koi, seal = _cekKoi()
             if not ok then
                 print(string.format("[HactTelur] Auto Start batal: Koi %.1f%% Seal %.1f%% (<%d%%)",
-                    koi, seal, config.minKoiSeal or 50))
+                    koi, seal, _cfg.minKoiSeal or 50))
                 return
             end
         end
         print("[HactTelur] AUTO START (setelah rejoin)")
-        Auto.currentTeam = nil
-        globalSetRunning(true)
-        task.spawn(automationLoop)
+        if _Auto then _Auto.currentTeam = nil end
+        if _setRun then _setRun(true) end
+        if _loop then task.spawn(_loop) end
     end
 end)
 
