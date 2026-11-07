@@ -1,4 +1,5 @@
--- uplevelnew v8.646
+-- uplevelnew v8.647
+-- v8.647: hapus Spider dari POOL_DEF, render Spider card manual slot 1 GUI NEWW
 -- v8.646: POOL_DEF T-Rex 5, render slot T-Rex dynamic dari sup.jml
 -- v8.645: fix GUI swap row muncul walau nobaku DEF T-Rex jml<5
 -- v8.644: fix AUTOLVLNEWW_DEF — hapus Spider, main = 4 T-Rex + 2 Peacock + Baku + Bahan
@@ -180,7 +181,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.646"  -- v8.646: POOL T-Rex 5, render slot T-Rex dynamic dari sup.jml
+local VERSION = "v8.647"  -- v8.647: hapus Spider dari POOL_DEF, render Spider card manual slot 1
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -325,8 +326,7 @@ local AUTOLVLNEWW_DEF = {
 -- pool NEWW: simpan 6 T-Rex + 1 Baku agar slot tersedia waktu swap main<->nobaku
 -- v8.552: 5→6 T-Rex di pool (nobaku sekarang 6 T-Rex)
 local AUTOLVLNEWW_POOL_DEF = {
-    {nama="Spider",  jml=1},  -- slot 1
-    {nama="T-Rex",   jml=5},  -- v8.646: 5 T-Rex (slot 2-4 = 3 aktif, slot 5+6 = swap row)
+    {nama="T-Rex",   jml=5},  -- slot 2-4 aktif + slot 5+6 swap row
     {nama="Baku",    jml=1},
     {nama="Peacock", jml=2},
     {nama="Bahan",   jml=1},
@@ -1466,7 +1466,42 @@ local function renderLineup(sesiNum, defs)
 -- v8.521: fix renderLineup sesi5 pakai POOL_DEF — swap row T-Rex/Baku sekarang muncul setelah auto isi
 -- v8.520: sesi5 (NEWW) — T-Rex slot ke-5 dan Baku tampil 1 baris side-by-side (swap slot)
     if sesiNum == 5 then
-        -- kumpulkan slot yang akan di-render: T-Rex 1-4 normal, lalu swap row (T-Rex5 | Baku), lalu sisanya
+        -- v8.647: render Spider card di slot 1 manual (tidak masuk POOL_DEF)
+        do
+            order=order+1
+            local entrySpider = (sesiPool[sesiNum] or {})["Spider"] and sesiPool[sesiNum]["Spider"][1]
+            local colSpider = petCol("Spider")
+            local card=mk("TextButton",{BackgroundColor3=C.card,Text="",AutoButtonColor=true,
+                Size=UDim2.new(1,0,0,62),LayoutOrder=order,Parent=holder}); corner(card,10)
+            stroke(card, entrySpider and colSpider or C.border, entrySpider and 1.5 or 1)
+            mk("Frame",{Size=UDim2.new(0,3,1,-14),Position=UDim2.new(0,0,0,7),BackgroundColor3=colSpider,BorderSizePixel=0,Parent=card})
+            local tyL=lbl(card,"Spider",9,colSpider); tyL.Font=FONT_B
+            tyL.Position=UDim2.new(0,10,0,7); tyL.Size=UDim2.new(1,-14,0,12)
+            if entrySpider then
+                local pnL=lbl(card,tostring(entrySpider.fullName or "Spider"):gsub("Rainbow ",""):gsub("Choc ",""),11,C.text)
+                pnL.Font=FONT_B; pnL.Position=UDim2.new(0,10,0,21); pnL.Size=UDim2.new(1,-12,0,18)
+                pnL.TextTruncate=Enum.TextTruncate.AtEnd
+                local liveData=_kgContainer and _kgContainer[entrySpider.uuid]
+                local livePD=type(liveData)=="table" and liveData.PetData or nil
+                local liveAge=livePD and tonumber(livePD.Level) or entrySpider.age or 0
+                local liveBW=livePD and tonumber(livePD.BaseWeight) or 0
+                local liveKg=liveBW>0 and liveBW*(liveAge+10)/10 or (entrySpider.kg or 0)
+                local kgStr=liveKg>0 and string.format("%.1f",liveKg) or "?"
+                local ageL=lbl(card,"AGE: "..(liveAge>0 and tostring(liveAge) or "?").."  KG: "..kgStr,10,colSpider)
+                ageL.Position=UDim2.new(0,10,0,39); ageL.Size=UDim2.new(1,-14,0,14)
+            else
+                local plusL=lbl(card,"+ pilih",12,C.textDim)
+                plusL.Position=UDim2.new(0,10,0,24); plusL.Size=UDim2.new(1,-14,0,20)
+            end
+            card.MouseButton1Click:Connect(function()
+                openPetPicker(sesiNum,"Spider",1,function(p)
+                    if not sesiPool[sesiNum]["Spider"] then sesiPool[sesiNum]["Spider"]={} end
+                    sesiPool[sesiNum]["Spider"][1]=p
+                    renderLineup(sesiNum,defs); savePoolFile()
+                end)
+            end)
+        end
+        -- kumpulkan slot yang akan di-render: T-Rex 1-N normal, lalu swap row (T-Rex5|T-Rex6|Baku), lalu sisanya
         local swapRow = nil  -- akan diisi kalau ketemu T-Rex dan ada Baku di defs
         -- v8.644: hasTRex5 = ada T-Rex di DEF (jml berapapun), swap row selalu muncul kalau ada T-Rex+Baku di pool
         local hasTRex5 = false
