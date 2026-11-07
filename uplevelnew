@@ -1,4 +1,5 @@
--- uplevelnew v8.679
+-- uplevelnew v8.680
+-- v8.680: monitor ge2.ChildAdded — kalau server buat DataStream baru (tanpa destroy lama), langsung connect listener baru
 -- v8.679: auto-reconnect DS kalau DataStream di-replace server (AncestryChanged → WaitForChild lagi, connect listener baru)
 -- v8.678: debug log swap DS skip (guard notRunning) + log kapan _newRunning jadi false — cari root cause swap mati 2 menit
 -- v8.677: MTS_SAVE_FILE + MTS_AUTOSTART_FILE per-akun (tambah plr.Name) — cegah nabrak antar 2 klien beda akun di RedFinger
@@ -212,7 +213,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.679"  -- v8.679: auto-reconnect DS
+local VERSION = "v8.680"  -- v8.680: ge2.ChildAdded reconnect DS baru
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3898,6 +3899,20 @@ do
             tsLog("DS listener ON")
         end
         connectDS(ds2)
+
+        -- v8.680: monitor ge2.ChildAdded — kalau server buat DataStream baru tanpa destroy lama
+        -- (AncestryChanged tidak trigger kalau instance lama masih ada tapi sudah silent)
+        local _lastDsId = ds2 -- track instance aktif
+        ge2.ChildAdded:Connect(function(child)
+            if child.Name ~= "DataStream" then return end
+            if child == _lastDsId then return end  -- instance yang sama, skip
+            tsLog("DS baru terdeteksi via ChildAdded — reconnect")
+            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "DS-NEW", "reconn") end
+            _lastDsId = child
+            _G._ZenxDSSwapConnected = true
+            connectDS(child)
+        end)
+
         tsLog("Peacock fan swap listener ON — CENTER("..PEACOCK_CENTER.X..","..PEACOCK_CENTER.Y..","..PEACOCK_CENTER.Z..")")
     end)
     end -- v8.672: end if _G._ZenxDSSwapConnected guard
