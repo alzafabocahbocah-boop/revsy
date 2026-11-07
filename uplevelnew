@@ -1,4 +1,5 @@
--- uplevelnew v8.689
+-- uplevelnew v8.690
+-- v8.690: CD watchdog ON — scan 2s, no event >3s langsung re-equip
 -- v8.689: fan global queue — jeda 0.5s antar fan swap (bukan per UUID)
 -- v8.688: hapus debounce fan dan weave — semua anim swap tanpa lock
 -- v8.687: hapus debounce roar — roar selalu swap tanpa lock
@@ -220,7 +221,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.689"  -- v8.689: fan global queue 0.5s
+local VERSION = "v8.690"  -- v8.690: CD watchdog ON scan 2s threshold 3s
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3646,30 +3647,29 @@ do
         addLog(txt)
     end
 
-    -- v8.448: flag disable sementara CD watchdog pickup + GUI notif
-    local CD_WATCH_ENABLED = false  -- set true untuk aktifkan kembali
+    -- v8.690: CD watchdog ON — scan 2s, no event >3s langsung re-equip
+    local CD_WATCH_ENABLED = true
     task.spawn(function()
         task.wait(5)  -- tunggu sistem stable
         while true do
-            task.wait(3)
+            task.wait(2)
             if _isTransisi or _isCollecting then continue end
             if not running then continue end
             local now = tick()
             local mbu = modelByUuid
             if type(mbu) ~= "table" then continue end
-            -- update status tiap pet di GUI
             local n, noEvt = 0, 0
             for uuid in pairs(mbu) do
                 n = n + 1
                 local key = tostring(uuid):gsub("[{}]","")
                 if not _cdFirstSeen[key] then _cdFirstSeen[key] = now end
                 local lastReeq = _cdReequipCooldown[key] or 0
-                -- cek: cache nil ATAU cache stale >8s (event berhenti fire)
+                -- cek: cache nil ATAU cache stale >3s (event berhenti fire)
                 local ce = _cdCache[key]
-                local cacheStale = ce and (now - ce.at) > 8
+                local cacheStale = ce and (now - ce.at) > 3
                 local hasEvent = ce ~= nil and not cacheStale
                 if not hasEvent then noEvt = noEvt + 1 end
-                -- no event / stale → langsung pickup (no age threshold)
+                -- no event / stale → langsung re-equip (cooldown 20s biar tidak loop)
                 if CD_WATCH_ENABLED and not hasEvent and (now - lastReeq) > 20 then
                     local reason = ce and "stale" or "nil"
                     cdLog(string.format("[CD-WATCH] %s %s → pickup", key:sub(1,8), reason), Color3.fromRGB(255,80,80))
