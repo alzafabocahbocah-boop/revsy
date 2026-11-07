@@ -1,4 +1,5 @@
--- uplevelnew v8.657
+-- uplevelnew v8.658
+-- v8.658: cleanFruit DescendantAdded hapus children visual buah, skip Nightmare/data
 -- v8.657: destroyDiggingGrid 5s→30s, unfav loop 2s→5s
 -- v8.656: cleanFruit ganti ke DescendantAdded — 0 scan 0 loop
 -- v8.655: FARM CLEANER interval 5s → 30s
@@ -191,7 +192,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.657"  -- v8.657: destroyDiggingGrid 30s, unfav 5s
+local VERSION = "v8.658"  -- v8.658: cleanFruit DescendantAdded visual only
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -7905,8 +7906,9 @@ do
         end
     end)
 
-    -- v8.656: cleanFruit — DescendantAdded event, 0 scan 0 loop
+    -- v8.658: cleanFruit — DescendantAdded hapus children visual buah (skip Nightmare/data)
     task.spawn(function()
+        local _CS_cf = game:GetService("CollectionService")
         local _plr_cf = game:GetService("Players").LocalPlayer
         local _farmRoot = workspace:WaitForChild("Farm", 30)
         local _myFarm = nil
@@ -7923,17 +7925,32 @@ do
             return
         end
         print("[UPLVL-DBG][cleanFruit] farm OK, DescendantAdded ON")
-        -- destroy Fruits folder yang sudah ada sekarang
+        local FRUIT_VISUAL = {
+            Part=true, BasePart=true, MeshPart=true, UnionOperation=true,
+            SpecialMesh=true, CylinderMesh=true, ParticleEmitter=true,
+            Highlight=true, Sound=true, Decal=true, Texture=true,
+            PointLight=true, SpotLight=true, SurfaceGui=true, BillboardGui=true,
+            Script=true, LocalScript=true, ProximityPrompt=true, Attachment=true,
+        }
+        -- init: hapus visual yang sudah ada
         local n = 0
-        for _, obj in ipairs(_myFarm:GetDescendants()) do
-            if obj.Name == "Fruits" and obj:IsA("Folder") then
-                pcall(function() obj:Destroy() end); n = n + 1
+        pcall(function()
+            for _, fruit in ipairs(_CS_cf:GetTagged("Harvestable")) do
+                if fruit:IsDescendantOf(_myFarm) then
+                    for _, c in ipairs(fruit:GetChildren()) do
+                        if FRUIT_VISUAL[c.ClassName] then
+                            pcall(function() c:Destroy() end); n = n + 1
+                        end
+                    end
+                end
             end
-        end
+        end)
         print("[cleanFruit] init destroyed="..n)
-        -- event-driven: destroy tiap Fruits folder baru masuk
+        -- event-driven: destroy visual tiap object baru masuk ke buah
         _myFarm.DescendantAdded:Connect(function(obj)
-            if obj.Name == "Fruits" and obj:IsA("Folder") then
+            if not FRUIT_VISUAL[obj.ClassName] then return end
+            local parent = obj.Parent
+            if parent and _CS_cf:HasTag(parent, "Harvestable") then
                 pcall(function() obj:Destroy() end)
             end
         end)
