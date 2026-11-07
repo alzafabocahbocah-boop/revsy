@@ -1,4 +1,5 @@
--- uplevelnew v8.671
+-- uplevelnew v8.672
+-- v8.672: guard _G._ZenxDSSwapConnected — cegah double DataStream listener kalau script di-reload
 -- v8.671: fix compile error line 1044 — sisa potongan print debug (end)(), ", ") terhapus setengah
 -- v8.670: clear pool bahan lama (age>=500) supaya tidak dipakai ulang + pakai getAgeFromWorkspace di semua age check bahan
 -- v8.669: fix bahan age>=500 tidak di-swap — scan via modelByUuid (workspace) bukan Backpack + wait 0.5s sebelum equip baru
@@ -204,7 +205,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.671"  -- v8.671: fix compile error sisa print debug terhapus setengah
+local VERSION = "v8.672"  -- v8.672: guard double DataStream listener saat reload
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3680,11 +3681,16 @@ do
         end
     end)
     -- DataStream swap: Peacock "fan" + T-Rex "Eat" (T-Rex disabled flag, Peacock aktif)
+    -- v8.672: guard _G supaya tidak double-connect kalau script di-reload tanpa rejoin
+    if _G._ZenxDSSwapConnected then
+        addLog("[swap] ds2 sudah connect — skip (reload guard)")
+    else
+    _G._ZenxDSSwapConnected = true
     task.spawn(function()
         local function tsLog(msg) addLog("[swap] "..tostring(msg)) end
-        if not ge2 then tsLog("ERR: ge2 nil"); return end
+        if not ge2 then tsLog("ERR: ge2 nil"); _G._ZenxDSSwapConnected = false; return end
         local ds2 = ge2:WaitForChild("DataStream", 15)
-        if not ds2 then tsLog("ERR: DataStream nil"); return end
+        if not ds2 then tsLog("ERR: DataStream nil"); _G._ZenxDSSwapConnected = false; return end
         tsLog("ds2 ON")
 
         -- animStr trigger: T-Rex=roar, Peacock=fan, Spider=weave
@@ -3840,6 +3846,7 @@ do
         end)
         tsLog("Peacock fan swap listener ON — CENTER("..PEACOCK_CENTER.X..","..PEACOCK_CENTER.Y..","..PEACOCK_CENTER.Z..")")
     end)
+    end -- v8.672: end if _G._ZenxDSSwapConnected guard
 
     -- v8.660: debug panel kanan — multi-jalur detect animStr
     task.spawn(function()
