@@ -1,4 +1,5 @@
--- uplevelnew v8.677
+-- uplevelnew v8.678
+-- v8.678: debug log swap DS skip (guard notRunning) + log kapan _newRunning jadi false — cari root cause swap mati 2 menit
 -- v8.677: MTS_SAVE_FILE + MTS_AUTOSTART_FILE per-akun (tambah plr.Name) — cegah nabrak antar 2 klien beda akun di RedFinger
 -- v8.676: swap langsung berdasarkan anim (roar/fan/weave) tanpa filter _kgContainer — semua roar=T-Rex, fan=Peacock, weave=Spider
 -- v8.675: monitor ds2 AncestryChanged — log "DS DEAD" kalau DataStream di-destroy server, clear guard
@@ -210,7 +211,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.677"  -- v8.677: MTS file per-akun
+local VERSION = "v8.678"  -- v8.678: debug swap DS skip + _newRunning false
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3743,7 +3744,11 @@ do
                         if _G._ZenxAnimDbgDS then pcall(_G._ZenxAnimDbgDS, anim, r8) end
                         -- Peacock: animStr fan
                         if anim == "fan" then
-                            if not (_newRunning or running) then continue end
+                            if not (_newRunning or running) then
+                                tsLog("DS skip fan "..r8..": notRunning")
+                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "SKIP-NR", r8) end
+                                continue
+                            end
                             _debounce[r8] = true  -- v8.674: lock selama swap berlangsung
                             tsLog("Peacock fan → swap "..r8)
                             if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
@@ -3788,7 +3793,11 @@ do
                             end)
                         -- Spider weave → swap
                         elseif anim == "weave" then
-                            if not (_newRunning or running) then continue end
+                            if not (_newRunning or running) then
+                                tsLog("DS skip weave "..r8..": notRunning")
+                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "SKIP-NR", r8) end
+                                continue
+                            end
                             _debounce[r8] = now
                             tsLog("Spider weave → swap "..r8)
                             if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
@@ -3832,7 +3841,11 @@ do
                             end)
                         -- T-Rex animStr roar → re-swap
                         elseif anim == "roar" then
-                            if not (_newRunning or running) then continue end
+                            if not (_newRunning or running) then
+                                tsLog("DS skip roar "..r8..": notRunning")
+                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "SKIP-NR", r8) end
+                                continue
+                            end
                             _debounce[r8] = now
                             tsLog("T-Rex roar → swap "..r8)
                             if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
@@ -6247,6 +6260,9 @@ local function runNewLoop()
         if shoveled > 0 then addLog("NewLoop shovel: "..shoveled.." pohon") end
         task.wait(0.5)
     end
+    -- v8.678: log kenapa outer loop keluar
+    tsLog("runNewLoop exit — newStopReq="..tostring(_newStopRequested))
+    if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "LOOP-EXIT", tostring(_newStopRequested)) end
     unequipAll()
 end
 
@@ -6302,6 +6318,8 @@ swNewEv:Connect(function(nowOn)
             local ok, err = pcall(runNewLoop)
             if not ok then addLog("AUTOLVLNEWW ERR: "..tostring(err)) end
             _newRunning = false
+            tsLog("_newRunning=false (swNewEv off)")
+            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "NR=false", "swOff") end
             setSwNew(false)
             if swNewLbl then swNewLbl.Text="AUTOLVLNEWW — START" end
             setStatus("AUTOLVLNEWW stopped")
@@ -6338,6 +6356,8 @@ task.defer(function()
                 end
             end
             _newRunning = false
+            tsLog("_newRunning=false (autostart path)")
+            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "NR=false", "auto") end
             setSwNew(false)
             if swNewLbl then swNewLbl.Text="AUTOLVLNEWW — START" end
             setStatus("AUTOLVLNEWW stopped")
