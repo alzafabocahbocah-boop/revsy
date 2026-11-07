@@ -1,4 +1,5 @@
--- uplevelnew v8.659
+-- uplevelnew v8.660
+-- v8.660: debug panel animStr detect — bandingkan DataStream vs PropChanged vs AttrChanged
 -- v8.659: cleanFruit hapus semua children kecuali Grow (kayak v8.648) via DescendantAdded
 -- v8.658: cleanFruit DescendantAdded hapus children visual buah, skip Nightmare/data
 -- v8.657: destroyDiggingGrid 5s→30s, unfav loop 2s→5s
@@ -193,7 +194,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.659"  -- v8.659: cleanFruit semua children kecuali Grow via DescendantAdded
+local VERSION = "v8.660"  -- v8.660: debug panel animStr detect multi-jalur
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -3789,6 +3790,8 @@ do
                                 tl = tostring(e.PetType or (e.PetData and e.PetData.PetType) or ""):lower()
                             end
                         end
+                        -- v8.660: report ke debug panel
+                        if _G._ZenxAnimDbgDS then pcall(_G._ZenxAnimDbgDS, anim, r8) end
                         -- Peacock: animStr fan
                         if anim == "fan" and tl:find("peacock",1,true) then
                             if not (_newRunning or running) then continue end
@@ -3887,6 +3890,191 @@ do
             if data then deepFind(data, 0) end
         end)
         tsLog("Peacock fan swap listener ON — CENTER("..PEACOCK_CENTER.X..","..PEACOCK_CENTER.Y..","..PEACOCK_CENTER.Z..")")
+    end)
+
+    -- v8.660: debug panel kanan — multi-jalur detect animStr
+    task.spawn(function()
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "ZenxAnimDbg"; gui.ResetOnSpawn = false; gui.DisplayOrder = 999
+        gui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(0, 310, 0, 420)
+        frame.Position = UDim2.new(1, -320, 0.5, -210)
+        frame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+        frame.BackgroundTransparency = 0.1
+        frame.BorderSizePixel = 0
+        frame.Parent = gui
+        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+        -- header
+        local hdr = Instance.new("TextLabel")
+        hdr.Size = UDim2.new(1, 0, 0, 24)
+        hdr.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+        hdr.BorderSizePixel = 0
+        hdr.Text = "⚡ AnimStr Detect Debug"
+        hdr.Font = Enum.Font.GothamBold; hdr.TextSize = 12
+        hdr.TextColor3 = Color3.fromRGB(180, 180, 255)
+        hdr.Parent = frame
+        Instance.new("UICorner", hdr).CornerRadius = UDim.new(0, 8)
+
+        -- counter row
+        local ctrFrame = Instance.new("Frame")
+        ctrFrame.Size = UDim2.new(1, -8, 0, 56)
+        ctrFrame.Position = UDim2.new(0, 4, 0, 26)
+        ctrFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+        ctrFrame.BorderSizePixel = 0
+        ctrFrame.Parent = frame
+        Instance.new("UICorner", ctrFrame).CornerRadius = UDim.new(0, 6)
+
+        local ctrLbl = Instance.new("TextLabel")
+        ctrLbl.Size = UDim2.new(1, -8, 1, 0)
+        ctrLbl.Position = UDim2.new(0, 4, 0, 0)
+        ctrLbl.BackgroundTransparency = 1
+        ctrLbl.Text = "DataStream: fan=0 roar=0 weave=0\nPropChanged: fan=0 roar=0 weave=0\nAttrChanged: fan=0 roar=0 weave=0"
+        ctrLbl.Font = Enum.Font.Code; ctrLbl.TextSize = 11
+        ctrLbl.TextColor3 = Color3.fromRGB(160, 220, 160)
+        ctrLbl.TextXAlignment = Enum.TextXAlignment.Left
+        ctrLbl.Parent = ctrFrame
+
+        -- log scroll
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Size = UDim2.new(1, -8, 1, -92)
+        scroll.Position = UDim2.new(0, 4, 0, 88)
+        scroll.BackgroundTransparency = 1
+        scroll.BorderSizePixel = 0
+        scroll.ScrollBarThickness = 3
+        scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+        scroll.Parent = frame
+        local layout = Instance.new("UIListLayout")
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Padding = UDim.new(0, 1)
+        layout.Parent = scroll
+
+        -- draggable
+        local dragging, dragStart, startPos = false, nil, nil
+        hdr.InputBegan:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = true; dragStart = inp.Position; startPos = frame.Position
+            end
+        end)
+        game:GetService("UserInputService").InputChanged:Connect(function(inp)
+            if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+                local d = inp.Position - dragStart
+                frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
+            end
+        end)
+        game:GetService("UserInputService").InputEnded:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+        end)
+
+        -- counter state
+        local ctr = {
+            DS  = {fan=0, roar=0, weave=0},
+            PC  = {fan=0, roar=0, weave=0},
+            AC  = {fan=0, roar=0, weave=0},
+        }
+        local logCount = 0
+        local MAX_LOG = 40
+
+        local function updateCtr()
+            ctrLbl.Text = string.format(
+                "DataStream: fan=%d roar=%d weave=%d\nPropChanged: fan=%d roar=%d weave=%d\nAttrChanged: fan=%d roar=%d weave=%d",
+                ctr.DS.fan, ctr.DS.roar, ctr.DS.weave,
+                ctr.PC.fan, ctr.PC.roar, ctr.PC.weave,
+                ctr.AC.fan, ctr.AC.roar, ctr.AC.weave
+            )
+        end
+
+        local function addDbgLog(jalur, anim, r8, petType)
+            local t = os.date("%H:%M:%S")
+            local row = Instance.new("TextLabel")
+            row.Size = UDim2.new(1, 0, 0, 14)
+            row.BackgroundTransparency = 1
+            row.Font = Enum.Font.Code; row.TextSize = 10
+            row.TextXAlignment = Enum.TextXAlignment.Left
+            local color = Color3.fromRGB(255,200,100)
+            if jalur == "PC" then color = Color3.fromRGB(100,200,255)
+            elseif jalur == "AC" then color = Color3.fromRGB(200,255,100) end
+            row.TextColor3 = color
+            row.Text = string.format("[%s] %s | %s %s | %s", t, anim, petType, r8, jalur)
+            logCount = logCount + 1
+            row.LayoutOrder = logCount
+            row.Parent = scroll
+            -- trim log lama
+            local children = scroll:GetChildren()
+            local labels = {}
+            for _, c in ipairs(children) do if c:IsA("TextLabel") then table.insert(labels, c) end end
+            if #labels > MAX_LOG then
+                table.sort(labels, function(a,b) return a.LayoutOrder < b.LayoutOrder end)
+                for i = 1, #labels - MAX_LOG do pcall(function() labels[i]:Destroy() end) end
+            end
+            scroll.CanvasSize = UDim2.new(0, 0, 0, logCount * 15)
+            scroll.CanvasPosition = Vector2.new(0, math.max(0, logCount * 15 - scroll.AbsoluteSize.Y))
+        end
+
+        -- helper extract petType dari uuid
+        local function getPetType(raw)
+            if not _kgContainer then return "?" end
+            local e = _kgContainer["{"..raw.."}"] or _kgContainer[raw]
+            if type(e) == "table" then
+                return tostring(e.PetType or (e.PetData and e.PetData.PetType) or "?")
+            end
+            return "?"
+        end
+
+        -- JALUR 1: DataStream (sudah ada di swap block, kita expose via _G)
+        _G._ZenxAnimDbgDS = function(anim, r8)
+            local a = anim:lower()
+            if ctr.DS[a] ~= nil then ctr.DS[a] = ctr.DS[a] + 1 end
+            addDbgLog("DS", anim, r8, getPetType(r8))
+            updateCtr()
+        end
+
+        -- JALUR 2: GetPropertyChangedSignal di model pet workspace
+        local function hookPropChanged(model)
+            local uuid = model.Name:gsub("[{}]","")
+            local r8 = uuid:sub(1,8)
+            pcall(function()
+                model:GetPropertyChangedSignal("CustomAnimationState"):Connect(function()
+                    local anim = tostring(model.CustomAnimationState or ""):lower()
+                    if anim == "fan" or anim == "roar" or anim == "weave" then
+                        if ctr.PC[anim] ~= nil then ctr.PC[anim] = ctr.PC[anim] + 1 end
+                        addDbgLog("PC", anim, r8, getPetType(r8))
+                        updateCtr()
+                    end
+                end)
+            end)
+            -- JALUR 3: AttributeChanged
+            pcall(function()
+                model.AttributeChanged:Connect(function(attr)
+                    if attr ~= "CustomAnimationState" then return end
+                    local anim = tostring(model:GetAttribute("CustomAnimationState") or ""):lower()
+                    if anim == "fan" or anim == "roar" or anim == "weave" then
+                        if ctr.AC[anim] ~= nil then ctr.AC[anim] = ctr.AC[anim] + 1 end
+                        addDbgLog("AC", anim, r8, getPetType(r8))
+                        updateCtr()
+                    end
+                end)
+            end)
+        end
+
+        -- hook model pet yang sudah ada
+        pcall(function()
+            for _, m in ipairs(workspace:GetDescendants()) do
+                if m:IsA("Model") and tostring(m.Name):sub(1,1) == "{" then
+                    hookPropChanged(m)
+                end
+            end
+        end)
+        -- hook model pet baru
+        workspace.DescendantAdded:Connect(function(d)
+            if d:IsA("Model") and tostring(d.Name):sub(1,1) == "{" then
+                task.defer(function() hookPropChanged(d) end)
+            end
+        end)
+
+        addDbgLog("SYS", "init", "------", "panel ON")
     end)
 end
 local function petReadyUpl(uuid)
