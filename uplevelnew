@@ -1,4 +1,5 @@
--- uplevelnew v8.663
+-- uplevelnew v8.664
+-- v8.664: fix slot5+6 T-Rex tidak ke-equip saat init langsung nobaku (NM<200 dari awal)
 -- v8.663: hapus Spider dari AUTOLVLNEWW_NOBAKU_DEF + card GUI sesi5, +1 T-Rex ganti Spider
 -- v8.662: (reverted) swap logic dikembalikan ke fan+roar+weave
 -- v8.661: debug panel unlimited log + tombol Copy All (setclipboard)
@@ -197,7 +198,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.663"  -- v8.663: hapus Spider dari NOBAKU_DEF + card GUI sesi5
+local VERSION = "v8.664"  -- v8.664: fix T-Rex slot5+6 tidak equip saat init nobaku
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -6033,6 +6034,59 @@ local function runNewLoop()
                     -- v8.608: refresh lineup NEWW agar history bahan muncul
                     pcall(renderLineup, 5, AUTOLVLNEWW_POOL_DEF)
                     end)  -- v8.624: tutup task.spawn delay 5s
+                end
+            elseif nmC >= 1 and nmC < 200 and _newwTimAktif == "nobaku" and not _newwSwapping then
+                -- v8.664: sudah nobaku (init langsung NM<200) tapi slot5+6 T-Rex belum ke-equip
+                -- cek apakah slot5+6 ada di workspace
+                local pool5 = sesiPool[5] or {}
+                local trexPool = pool5["T-Rex"] or {}
+                local slot5uuid = trexPool[5] and trexPool[5].uuid and tostring(trexPool[5].uuid)
+                local slot6uuid = trexPool[6] and trexPool[6].uuid and tostring(trexPool[6].uuid)
+                local slot5ok = slot5uuid and modelByUuid[slot5uuid]
+                local slot6ok = slot6uuid and modelByUuid[slot6uuid]
+                if not slot5ok or not slot6ok then
+                    dbgLog("[newloop-fast] nobaku init: slot5+6 T-Rex belum equip (slot5="..tostring(slot5ok and "ok" or "miss").."/slot6="..tostring(slot6ok and "ok" or "miss")..") — equip sekarang")
+                    _newwSwapping = true
+                    task.spawn(function()
+                        local usedTrex = {}
+                        if slot5uuid then usedTrex[slot5uuid] = true end
+                        if slot6uuid then usedTrex[slot6uuid] = true end
+                        for _, si in ipairs({5, 6}) do
+                            local siUuid = (si==5) and slot5uuid or slot6uuid
+                            local siOk = (si==5) and slot5ok or slot6ok
+                            if not siOk then
+                                local trexN = trexPool[si]
+                                -- fallback: cari T-Rex dari container kalau slot kosong
+                                if not (trexN and trexN.uuid) then
+                                    local c = _kgContainer or {}
+                                    for cuuid, ce in pairs(c) do
+                                        if not usedTrex[cuuid] then
+                                            local nm = stripMutation(tostring(ce.PetType or (ce.PetData and ce.PetData.PetType) or ""))
+                                            if nm == "T-Rex" then
+                                                local lv = tonumber((ce.PetData or {}).Level) or 0
+                                                local bw = tonumber((ce.PetData or {}).BaseWeight) or 0
+                                                trexN = {uuid=cuuid, tipe="T-Rex", age=lv, kg=bw*(lv+10)/10}
+                                                if not sesiPool[5]["T-Rex"] then sesiPool[5]["T-Rex"] = {} end
+                                                sesiPool[5]["T-Rex"][si] = trexN
+                                                usedTrex[cuuid] = true
+                                                dbgLog("[newloop-fast] nobaku init slot"..si.." auto-pick: "..cuuid:sub(1,12))
+                                                break
+                                            end
+                                        end
+                                    end
+                                end
+                                if trexN and trexN.uuid then
+                                    equipPet(trexN.uuid); task.wait(0.5)
+                                    local _au = _G._ZenxActiveUuids
+                                    if _au then _au[tostring(trexN.uuid)] = true end
+                                    dbgLog("[newloop-fast] nobaku init slot"..si.." T-Rex equip OK: "..tostring(trexN.uuid):sub(1,8))
+                                else
+                                    dbgLog("[newloop-fast] nobaku init slot"..si.." T-Rex tidak ditemukan — skip")
+                                end
+                            end
+                        end
+                        _newwSwapping = false
+                    end)
                 end
             else
                 -- v8.594: NM di hysteresis zone (100-149) atau kondisi tidak memerlukan swap
