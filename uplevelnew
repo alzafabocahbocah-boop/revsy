@@ -1,4 +1,5 @@
--- uplevelnew v8.697
+-- uplevelnew v8.698
+-- v8.698: CD watchdog hapus gate "running" — jalan independent dari farming engine + grace 5s per UUID baru
 -- v8.697: threshold swap ke main balik ke 1000
 -- v8.695: swap ke main unequip slot4+5+6 — slot4 T-Rex ganti jadi Bahan ke-2
 -- v8.694: AUTOLVLNEWW_DEF — T-Rex 4→3
@@ -227,7 +228,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.697"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.698"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3659,8 +3660,8 @@ do
         task.wait(5)  -- tunggu sistem stable
         while true do
             task.wait(2)
+            -- v8.698: hapus gate running — watchdog jalan independent dari farming engine
             if _isTransisi or _isCollecting then continue end
-            if not running then continue end
             local now = tick()
             local mbu = modelByUuid
             if type(mbu) ~= "table" then continue end
@@ -3668,7 +3669,9 @@ do
             for uuid in pairs(mbu) do
                 n = n + 1
                 local key = tostring(uuid):gsub("[{}]","")
+                -- v8.698: grace 5s per UUID baru — tunggu CD event pertama dulu
                 if not _cdFirstSeen[key] then _cdFirstSeen[key] = now end
+                if (now - _cdFirstSeen[key]) < 5 then continue end  -- grace period
                 local lastReeq = _cdReequipCooldown[key] or 0
                 -- cek: cache nil ATAU cache stale >3s (event berhenti fire)
                 local ce = _cdCache[key]
@@ -3682,7 +3685,8 @@ do
                     _cdReequipCooldown[key] = now
                     _cdFirstSeen[key] = now
                     task.spawn(function()
-                        if not running or _isTransisi or _isCollecting then return end
+                        -- v8.698: hapus gate running — re-equip tetap jalan walau farming pause
+                        if _isTransisi or _isCollecting then return end
                         pcall(function() unequipPet(uuid) end)
                         task.wait(1.2)
                         pcall(function() equipPet(uuid) end)
