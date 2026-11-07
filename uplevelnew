@@ -1,4 +1,5 @@
--- uplevelnew v8.655
+-- uplevelnew v8.656
+-- v8.656: cleanFruit ganti ke DescendantAdded — 0 scan 0 loop
 -- v8.655: FARM CLEANER interval 5s → 30s
 -- v8.654: FARM CLEANER default on — hapus Part visual pohon nyala lagi
 -- v8.653: cleanFruit ganti approach — destroy Fruits folder langsung tiap 1s
@@ -189,7 +190,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.655"  -- v8.655: FARM CLEANER interval 30s
+local VERSION = "v8.656"  -- v8.656: cleanFruit DescendantAdded
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -7903,7 +7904,7 @@ do
         end
     end)
 
-    -- v8.653: cleanFruit — destroy Fruits folder langsung (lebih simpel, tanpa scan per buah)
+    -- v8.656: cleanFruit — DescendantAdded event, 0 scan 0 loop
     task.spawn(function()
         local _plr_cf = game:GetService("Players").LocalPlayer
         local _farmRoot = workspace:WaitForChild("Farm", 30)
@@ -7917,27 +7918,24 @@ do
             end
         end
         if not _myFarm then
-            print("[UPLVL-DBG][cleanFruit] farm tidak ketemu, loop skip")
+            print("[UPLVL-DBG][cleanFruit] farm tidak ketemu, skip")
             return
         end
-        print("[UPLVL-DBG][cleanFruit] farm OK, mulai loop tiap 1s")
-        local _iter = 0
-        while true do
-            task.wait(1)
-            _iter = _iter + 1
-            local n = 0
-            pcall(function()
-                for _, obj in ipairs(_myFarm:GetDescendants()) do
-                    if obj.Name == "Fruits" and obj:IsA("Folder") then
-                        pcall(function() obj:Destroy() end)
-                        n = n + 1
-                    end
-                end
-            end)
-            if _iter <= 5 or _iter % 30 == 0 then
-                print(string.format("[cleanFruit] iter=%d destroyed=%d", _iter, n))
+        print("[UPLVL-DBG][cleanFruit] farm OK, DescendantAdded ON")
+        -- destroy Fruits folder yang sudah ada sekarang
+        local n = 0
+        for _, obj in ipairs(_myFarm:GetDescendants()) do
+            if obj.Name == "Fruits" and obj:IsA("Folder") then
+                pcall(function() obj:Destroy() end); n = n + 1
             end
         end
+        print("[cleanFruit] init destroyed="..n)
+        -- event-driven: destroy tiap Fruits folder baru masuk
+        _myFarm.DescendantAdded:Connect(function(obj)
+            if obj.Name == "Fruits" and obj:IsA("Folder") then
+                pcall(function() obj:Destroy() end)
+            end
+        end)
     end)
 
     -- v8.509: autoCollect loop independent — scan+collect mutasi tiap 0.7s, jalan terus walau AUTOLVLNEWW off
