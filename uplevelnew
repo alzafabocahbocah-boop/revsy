@@ -1,4 +1,5 @@
--- uplevelnew v8.683
+-- uplevelnew v8.684
+-- v8.684: filter roar/fan/weave — hanya swap UUID milik sendiri (cek sesiPool) — skip T-Rex/Peacock/Spider orang lain
 -- v8.683: conn:Disconnect() saat DS mati/reconnect + DescendantAdded name filter UUID — port up3.8kg
 -- v8.682: deepFind pisah dari action (kumpul hits dulu baru swap) — cegah duplikat task.spawn per event, port pola up3.8kg
 -- v8.680: monitor ge2.ChildAdded — kalau server buat DataStream baru (tanpa destroy lama), langsung connect listener baru
@@ -215,7 +216,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.683"  -- v8.683: conn:Disconnect + DescendantAdded UUID filter
+local VERSION = "v8.684"  -- v8.684: filter swap hanya UUID milik sendiri (sesiPool)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3712,6 +3713,19 @@ do
 
         local _debounce = {}  -- [raw8] = tick()
 
+        -- v8.684: cek apakah UUID milik sendiri (ada di sesiPool)
+        local function isMyPet(raw)
+            local fmtU = "{"..raw.."}"
+            for s = 1, 5 do
+                local pool = sesiPool[s] or {}
+                for _, slots in pairs(pool) do
+                    for _, p in pairs(slots) do
+                        if p and p.uuid == fmtU then return true end
+                    end
+                end
+            end
+            return false
+        end
 
         -- v8.682: deepFind hanya kumpul hits (pisah dari action) — port pola up3.8kg
         -- cegah duplikat task.spawn kalau uuid muncul di 2 path berbeda dalam 1 event
@@ -3751,6 +3765,8 @@ do
                 local r8 = raw:sub(1,8)
                 if seen[r8] then continue end  -- duplikat dalam 1 event → skip
                 seen[r8] = true
+                -- v8.684: skip kalau UUID bukan milik sendiri (T-Rex/Peacock/Spider orang lain)
+                if not isMyPet(raw) then continue end
                 -- v8.674: skip kalau uuid sedang dalam proses swap
                 if _debounce[r8] then continue end
                 -- v8.660: report ke debug panel
