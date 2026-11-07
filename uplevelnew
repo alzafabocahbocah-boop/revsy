@@ -1,4 +1,5 @@
--- uplevelnew v8.703
+-- uplevelnew v8.704
+-- v8.704: swap ke nobaku — setelah equip slot4-6, equip semua slot pool5 yang masih missing (T-Rex slot1-3 + Peacock)
 -- v8.703: POOL_DEF T-Rex 5→6 — pool5 simpan 6 T-Rex agar slot6 ada saat nobaku
 -- v8.702: nobaku incomplete — equip langsung per slot dari pool (bukan equipSesi), cover T-Rex slot1-6 + Peacock
 -- v8.701: hapus ZenxAnimDbg debug panel kanan + semua _ZenxAnimDbgLog/_ZenxAnimDbgDS calls
@@ -233,7 +234,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.703"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.704"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -5859,6 +5860,22 @@ local function runNewLoop()
                             if _au then _au[tostring(trexN.uuid)] = true end
                         else
                             dbgLog("[newloop-fast] T-Rex slot"..si.." tidak ditemukan — skip")
+                        end
+                    end
+                    -- v8.704: equip semua slot pool5 yang masih missing (T-Rex slot1-3 + Peacock)
+                    -- handle case: sesi baru/reload dimana slot1-3 dan Peacock belum ter-equip
+                    local checkTypes = {"T-Rex", "Peacock"}
+                    for _, tipe in ipairs(checkTypes) do
+                        local slots = pool5[tipe] or {}
+                        for si, e in pairs(slots) do
+                            local ustr = e and e.uuid and tostring(e.uuid)
+                            if ustr and not modelByUuid[ustr] then
+                                pcall(function() equipPet(e.uuid) end)
+                                task.wait(0.4)
+                                local _au = _G._ZenxActiveUuids
+                                if _au then _au[ustr] = true end
+                                dbgLog("[newloop-fast] nobaku fill "..tipe.." slot"..si..": "..ustr:sub(1,8))
+                            end
                         end
                     end
                     _newwSwapping = false  -- v8.591: swap ke nobaku selesai
