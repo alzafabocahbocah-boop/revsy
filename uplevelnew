@@ -1,4 +1,5 @@
--- uplevelnew v8.698
+-- uplevelnew v8.699
+-- v8.699: swap ke nobaku equip T-Rex slot4+5+6 — slot4 yang di-unequip saat swap ke main sekarang di-equip ulang
 -- v8.698: CD watchdog hapus gate "running" — jalan independent dari farming engine + grace 5s per UUID baru
 -- v8.697: threshold swap ke main balik ke 1000
 -- v8.695: swap ke main unequip slot4+5+6 — slot4 T-Rex ganti jadi Bahan ke-2
@@ -228,7 +229,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.698"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.699"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -6045,18 +6046,17 @@ local function runNewLoop()
                             unequipPet(ustr); task.wait(0.8)
                         end
                     end
-                    -- equip T-Rex slot5+6
+                    -- v8.699: equip T-Rex slot4+5+6 — slot4 dilepas waktu swap ke main, harus balik saat nobaku
                     -- v8.589: log kalau slot kosong + fallback cari dari container
                     local trexPool = pool5["T-Rex"] or {}
-                    -- v8.592: usedTrex hanya exclude slot5+6 yang sudah ada uuid (bukan slot1-4)
-                    -- slot1-4 masih ter-equip tapi berbeda pet, tidak perlu di-exclude dari pencarian
+                    -- v8.699: exclude slot4+5+6 yang sudah ada uuid dari pencarian fallback
                     local usedTrex = {}
-                    for _, si2 in ipairs({5, 6}) do
+                    for _, si2 in ipairs({4, 5, 6}) do
                         local e = trexPool[si2]
                         if e and e.uuid then usedTrex[tostring(e.uuid)] = true end
                     end
-                    dbgLog("[newloop-fast] pool5 T-Rex slot5="..tostring(trexPool[5] and trexPool[5].uuid and tostring(trexPool[5].uuid):sub(1,8) or "nil").." slot6="..tostring(trexPool[6] and trexPool[6].uuid and tostring(trexPool[6].uuid):sub(1,8) or "nil"))
-                    for _, si in ipairs({5, 6}) do
+                    dbgLog("[newloop-fast] pool5 T-Rex slot4="..tostring(trexPool[4] and trexPool[4].uuid and tostring(trexPool[4].uuid):sub(1,8) or "nil").." slot5="..tostring(trexPool[5] and trexPool[5].uuid and tostring(trexPool[5].uuid):sub(1,8) or "nil").." slot6="..tostring(trexPool[6] and trexPool[6].uuid and tostring(trexPool[6].uuid):sub(1,8) or "nil"))
+                    for _, si in ipairs({4, 5, 6}) do
                         local trexN = trexPool[si]
                         -- v8.589: fallback cari T-Rex dari container kalau slot kosong
                         if not (trexN and trexN.uuid) then
@@ -6092,24 +6092,26 @@ local function runNewLoop()
                     end)  -- v8.624: tutup task.spawn delay 5s
                 end
             elseif nmC >= 1 and nmC < 200 and _newwTimAktif == "nobaku" and not _newwSwapping then
-                -- v8.664: sudah nobaku (init langsung NM<200) tapi slot5+6 T-Rex belum ke-equip
-                -- cek apakah slot5+6 ada di workspace
+                -- v8.699: sudah nobaku tapi slot4+5+6 T-Rex belum ke-equip (slot4 bisa hilang setelah swap ke main)
+                -- cek apakah slot4+5+6 ada di workspace
                 local pool5 = sesiPool[5] or {}
                 local trexPool = pool5["T-Rex"] or {}
+                local slot4uuid = trexPool[4] and trexPool[4].uuid and tostring(trexPool[4].uuid)
                 local slot5uuid = trexPool[5] and trexPool[5].uuid and tostring(trexPool[5].uuid)
                 local slot6uuid = trexPool[6] and trexPool[6].uuid and tostring(trexPool[6].uuid)
+                local slot4ok = slot4uuid and modelByUuid[slot4uuid]
                 local slot5ok = slot5uuid and modelByUuid[slot5uuid]
                 local slot6ok = slot6uuid and modelByUuid[slot6uuid]
-                if not slot5ok or not slot6ok then
-                    dbgLog("[newloop-fast] nobaku init: slot5+6 T-Rex belum equip (slot5="..tostring(slot5ok and "ok" or "miss").."/slot6="..tostring(slot6ok and "ok" or "miss")..") — equip sekarang")
+                if not slot4ok or not slot5ok or not slot6ok then
+                    dbgLog("[newloop-fast] nobaku init: slot4+5+6 T-Rex cek (slot4="..tostring(slot4ok and "ok" or "miss").."/slot5="..tostring(slot5ok and "ok" or "miss").."/slot6="..tostring(slot6ok and "ok" or "miss")..") — equip yg missing")
                     _newwSwapping = true
                     task.spawn(function()
                         local usedTrex = {}
+                        if slot4uuid then usedTrex[slot4uuid] = true end
                         if slot5uuid then usedTrex[slot5uuid] = true end
                         if slot6uuid then usedTrex[slot6uuid] = true end
-                        for _, si in ipairs({5, 6}) do
-                            local siUuid = (si==5) and slot5uuid or slot6uuid
-                            local siOk = (si==5) and slot5ok or slot6ok
+                        for _, si in ipairs({4, 5, 6}) do
+                            local siOk = (si==4) and slot4ok or (si==5) and slot5ok or slot6ok
                             if not siOk then
                                 local trexN = trexPool[si]
                                 -- fallback: cari T-Rex dari container kalau slot kosong
