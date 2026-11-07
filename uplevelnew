@@ -1,4 +1,5 @@
--- uplevelnew v8.699
+-- uplevelnew v8.700
+-- v8.700: nobaku incomplete check — cek semua slot NOBAKU_DEF (T-Rex 1-6 + Peacock), equip yang missing via equipSesi
 -- v8.699: swap ke nobaku equip T-Rex slot4+5+6 — slot4 yang di-unequip saat swap ke main sekarang di-equip ulang
 -- v8.698: CD watchdog hapus gate "running" — jalan independent dari farming engine + grace 5s per UUID baru
 -- v8.697: threshold swap ke main balik ke 1000
@@ -229,7 +230,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.699"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.700"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -6092,57 +6093,26 @@ local function runNewLoop()
                     end)  -- v8.624: tutup task.spawn delay 5s
                 end
             elseif nmC >= 1 and nmC < 200 and _newwTimAktif == "nobaku" and not _newwSwapping then
-                -- v8.699: sudah nobaku tapi slot4+5+6 T-Rex belum ke-equip (slot4 bisa hilang setelah swap ke main)
-                -- cek apakah slot4+5+6 ada di workspace
+                -- v8.700: cek semua UUID di sesiPool[5] yang sesuai NOBAKU_DEF (T-Rex+Peacock) ada di workspace
+                -- kalau ada yang missing → equipSesi ulang (handle T-Rex 1-6 + Peacock sekaligus)
                 local pool5 = sesiPool[5] or {}
-                local trexPool = pool5["T-Rex"] or {}
-                local slot4uuid = trexPool[4] and trexPool[4].uuid and tostring(trexPool[4].uuid)
-                local slot5uuid = trexPool[5] and trexPool[5].uuid and tostring(trexPool[5].uuid)
-                local slot6uuid = trexPool[6] and trexPool[6].uuid and tostring(trexPool[6].uuid)
-                local slot4ok = slot4uuid and modelByUuid[slot4uuid]
-                local slot5ok = slot5uuid and modelByUuid[slot5uuid]
-                local slot6ok = slot6uuid and modelByUuid[slot6uuid]
-                if not slot4ok or not slot5ok or not slot6ok then
-                    dbgLog("[newloop-fast] nobaku init: slot4+5+6 T-Rex cek (slot4="..tostring(slot4ok and "ok" or "miss").."/slot5="..tostring(slot5ok and "ok" or "miss").."/slot6="..tostring(slot6ok and "ok" or "miss")..") — equip yg missing")
+                local missingCount = 0
+                -- cek semua tipe di NOBAKU_DEF
+                for _, defEntry in ipairs(AUTOLVLNEWW_NOBAKU_DEF) do
+                    local slots = pool5[defEntry.nama] or {}
+                    for si = 1, defEntry.jml do
+                        local e = slots[si]
+                        local ustr = e and e.uuid and tostring(e.uuid)
+                        if not ustr or not modelByUuid[ustr] then
+                            missingCount = missingCount + 1
+                        end
+                    end
+                end
+                if missingCount > 0 then
+                    dbgLog("[newloop-fast] nobaku incomplete: "..missingCount.." pet missing — equipSesi ulang")
                     _newwSwapping = true
                     task.spawn(function()
-                        local usedTrex = {}
-                        if slot4uuid then usedTrex[slot4uuid] = true end
-                        if slot5uuid then usedTrex[slot5uuid] = true end
-                        if slot6uuid then usedTrex[slot6uuid] = true end
-                        for _, si in ipairs({4, 5, 6}) do
-                            local siOk = (si==4) and slot4ok or (si==5) and slot5ok or slot6ok
-                            if not siOk then
-                                local trexN = trexPool[si]
-                                -- fallback: cari T-Rex dari container kalau slot kosong
-                                if not (trexN and trexN.uuid) then
-                                    local c = _kgContainer or {}
-                                    for cuuid, ce in pairs(c) do
-                                        if not usedTrex[cuuid] then
-                                            local nm = stripMutation(tostring(ce.PetType or (ce.PetData and ce.PetData.PetType) or ""))
-                                            if nm == "T-Rex" then
-                                                local lv = tonumber((ce.PetData or {}).Level) or 0
-                                                local bw = tonumber((ce.PetData or {}).BaseWeight) or 0
-                                                trexN = {uuid=cuuid, tipe="T-Rex", age=lv, kg=bw*(lv+10)/10}
-                                                if not sesiPool[5]["T-Rex"] then sesiPool[5]["T-Rex"] = {} end
-                                                sesiPool[5]["T-Rex"][si] = trexN
-                                                usedTrex[cuuid] = true
-                                                dbgLog("[newloop-fast] nobaku init slot"..si.." auto-pick: "..cuuid:sub(1,12))
-                                                break
-                                            end
-                                        end
-                                    end
-                                end
-                                if trexN and trexN.uuid then
-                                    equipPet(trexN.uuid); task.wait(0.5)
-                                    local _au = _G._ZenxActiveUuids
-                                    if _au then _au[tostring(trexN.uuid)] = true end
-                                    dbgLog("[newloop-fast] nobaku init slot"..si.." T-Rex equip OK: "..tostring(trexN.uuid):sub(1,8))
-                                else
-                                    dbgLog("[newloop-fast] nobaku init slot"..si.." T-Rex tidak ditemukan — skip")
-                                end
-                            end
-                        end
+                        pcall(function() equipSesi(5, AUTOLVLNEWW_NOBAKU_DEF) end)
                         _newwSwapping = false
                     end)
                 end
