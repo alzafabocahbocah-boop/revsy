@@ -1,4 +1,5 @@
--- uplevelnew v8.674
+-- uplevelnew v8.675
+-- v8.675: monitor ds2 AncestryChanged — log "DS DEAD" kalau DataStream di-destroy server, clear guard
 -- v8.674: debug DS 2x — log path deepFind kalau UUID muncul 2x dalam 1 detik (cari root cause)
 -- v8.673: fix double DS event dari 2 Roblox instance di server sama — skip uuid yang tidak ada di _kgContainer (bukan pet kita)
 -- v8.672: guard _G._ZenxDSSwapConnected — cegah double DataStream listener kalau script di-reload
@@ -207,7 +208,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.674"  -- v8.674: debug DS 2x path log
+local VERSION = "v8.675"  -- v8.675: monitor DS destroyed
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3860,6 +3861,14 @@ do
             if not svc:find("ActivePets",1,true) then return end
             local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
             if data then deepFind(data, 0) end
+        end)
+        -- v8.675: monitor ds2 — log kalau DataStream di-destroy server
+        ds2.AncestryChanged:Connect(function()
+            if ds2.Parent == nil then
+                tsLog("ERR: DataStream destroyed — swap mati")
+                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "DS DEAD", "------") end
+                _G._ZenxDSSwapConnected = false
+            end
         end)
         tsLog("Peacock fan swap listener ON — CENTER("..PEACOCK_CENTER.X..","..PEACOCK_CENTER.Y..","..PEACOCK_CENTER.Z..")")
     end)
