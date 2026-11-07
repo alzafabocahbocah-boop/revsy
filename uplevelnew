@@ -1,4 +1,5 @@
--- uplevelnew v8.678
+-- uplevelnew v8.679
+-- v8.679: auto-reconnect DS kalau DataStream di-replace server (AncestryChanged → WaitForChild lagi, connect listener baru)
 -- v8.678: debug log swap DS skip (guard notRunning) + log kapan _newRunning jadi false — cari root cause swap mati 2 menit
 -- v8.677: MTS_SAVE_FILE + MTS_AUTOSTART_FILE per-akun (tambah plr.Name) — cegah nabrak antar 2 klien beda akun di RedFinger
 -- v8.676: swap langsung berdasarkan anim (roar/fan/weave) tanpa filter _kgContainer — semua roar=T-Rex, fan=Peacock, weave=Spider
@@ -211,7 +212,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.678"  -- v8.678: debug swap DS skip + _newRunning false
+local VERSION = "v8.679"  -- v8.679: auto-reconnect DS
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3863,21 +3864,40 @@ do
             end
         end
 
-        ds2.OnClientEvent:Connect(function(...)
-            local args = {...}
-            local svc = tostring(args[2] or "")
-            if not svc:find("ActivePets",1,true) then return end
-            local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
-            if data then deepFind(data, 0) end
-        end)
-        -- v8.675: monitor ds2 — log kalau DataStream di-destroy server
-        ds2.AncestryChanged:Connect(function()
-            if ds2.Parent == nil then
-                tsLog("ERR: DataStream destroyed — swap mati")
-                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "DS DEAD", "------") end
-                _G._ZenxDSSwapConnected = false
-            end
-        end)
+        -- v8.679: connectDS — bisa dipanggil ulang saat reconnect
+        local function connectDS(ds)
+            ds.OnClientEvent:Connect(function(...)
+                local args = {...}
+                local svc = tostring(args[2] or "")
+                if not svc:find("ActivePets",1,true) then return end
+                local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
+                if data then deepFind(data, 0) end
+            end)
+            -- v8.675+679: monitor DS dead → auto-reconnect
+            ds.AncestryChanged:Connect(function()
+                if ds.Parent == nil then
+                    tsLog("DS DEAD — reconnect...")
+                    if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "DS DEAD", "reconn") end
+                    _G._ZenxDSSwapConnected = false
+                    -- v8.679: tunggu DS baru lalu connect ulang
+                    task.spawn(function()
+                        task.wait(1)
+                        local dsNew = ge2 and ge2:WaitForChild("DataStream", 30)
+                        if dsNew then
+                            _G._ZenxDSSwapConnected = true
+                            connectDS(dsNew)
+                            tsLog("DS reconnect OK")
+                            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "DS-RECONN", "OK") end
+                        else
+                            tsLog("ERR: DS reconnect FAIL — DataStream tidak muncul 30s")
+                            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "DS-RECONN", "FAIL") end
+                        end
+                    end)
+                end
+            end)
+            tsLog("DS listener ON")
+        end
+        connectDS(ds2)
         tsLog("Peacock fan swap listener ON — CENTER("..PEACOCK_CENTER.X..","..PEACOCK_CENTER.Y..","..PEACOCK_CENTER.Z..")")
     end)
     end -- v8.672: end if _G._ZenxDSSwapConnected guard
