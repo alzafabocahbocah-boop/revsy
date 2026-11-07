@@ -1,4 +1,5 @@
--- uplevelnew v8.691
+-- uplevelnew v8.692
+-- v8.692: bahan loop terpisah tiap 1s — replace bahan tua saat mode main
 -- v8.691: NM nm0→nobaku — setelah NM >=1 dari nm0 swap ke NOBAKU_DEF
 -- v8.690: CD watchdog ON — scan 2s, no event >3s langsung re-equip
 -- v8.689: fan global queue — jeda 0.5s antar fan swap (bukan per UUID)
@@ -222,7 +223,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.691"  -- v8.691: nm0→nobaku saat NM naik >=1
+local VERSION = "v8.692"  -- v8.692: bahan loop 1s + nm0→nobaku fix
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -5664,6 +5665,19 @@ local function runNewLoop()
     -- logika: NM>=150 → swap Baku → tunggu 20s → baru cek lagi (anti bolak-balik)
     -- v8.565: kalau init dalam mode "main", set cooldown langsung supaya tidak langsung dicabut
     local _bakuCooldownUntil = (_newwTimAktif == "main") and (tick() + 20) or 0
+
+    -- v8.692: bahan loop terpisah — cek + replace bahan tua tiap 1s
+    task.spawn(function()
+        task.wait(3)  -- tunggu equip awal selesai
+        while not _newStopRequested do
+            task.wait(1)
+            if _newStopRequested then break end
+            if _newwTimAktif == "main" and not _newwSwapping then
+                pcall(function() unequipBahanTua(); equipOneBahan() end)
+            end
+        end
+    end)
+
     task.spawn(function()
         while not _newStopRequested do
             task.wait(2)
