@@ -1,4 +1,5 @@
--- uplevelnew v8.652
+-- uplevelnew v8.653
+-- v8.653: cleanFruit ganti approach — destroy Fruits folder langsung tiap 1s
 -- v8.652: cleanFruit hapus semua children tanpa skip Grow
 -- v8.651: fix auto plant default OFF — _psRunning=false saat init
 -- v8.650: destroyPohon dinyalain lagi (init+DescendantAdded+loop 30s)
@@ -186,7 +187,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.652"  -- v8.652: cleanFruit hapus semua children tanpa skip Grow
+local VERSION = "v8.653"  -- v8.653: cleanFruit destroy Fruits folder langsung
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -7900,19 +7901,15 @@ do
         end
     end)
 
-    -- v8.544: cleanFruit loop — cari farm sekali di awal (WaitForChild), lalu loop tiap 1s
+    -- v8.653: cleanFruit — destroy Fruits folder langsung (lebih simpel, tanpa scan per buah)
     task.spawn(function()
-        local _CS_cf = game:GetService("CollectionService")
         local _plr_cf = game:GetService("Players").LocalPlayer
-        -- cari farm player (sama kayak script standalone yang jalan)
         local _farmRoot = workspace:WaitForChild("Farm", 30)
         local _myFarm = nil
         if _farmRoot then
             for _, f in ipairs(_farmRoot:GetChildren()) do
-                local owner = f:FindFirstChild("Important")
-                    and f.Important:FindFirstChild("Data")
-                    and f.Important.Data:FindFirstChild("Owner")
-                if owner and owner.Value == _plr_cf.Name then
+                local sign = f:FindFirstChild("Sign") or f:FindFirstChild("Sign", true)
+                if sign and sign:GetAttribute("_owner") == _plr_cf.Name then
                     _myFarm = f; break
                 end
             end
@@ -7922,48 +7919,21 @@ do
             return
         end
         print("[UPLVL-DBG][cleanFruit] farm OK, mulai loop tiap 1s")
-        local function cleanFruit(fruit)
-            -- v8.652: hapus semua children tanpa skip
-            for _, c in ipairs(fruit:GetChildren()) do
-                pcall(function() c:Destroy() end)
-            end
-        end
-        -- v8.613: debug — log children + attributes fruit pertama sekali
-        local _dbgFruitDone = false
         local _iter = 0
         while true do
             task.wait(1)
             _iter = _iter + 1
-            local destroyed = 0
-            local total = 0
+            local n = 0
             pcall(function()
-                for _, fruit in ipairs(_CS_cf:GetTagged("Harvestable")) do
-                    if fruit:IsDescendantOf(_myFarm) then
-                        total = total + 1
-                        -- v8.613: log sekali untuk lihat struktur fruit
-                        if not _dbgFruitDone then
-                            _dbgFruitDone = true
-                            -- log children
-                            local childNames = {}
-                            for _, c in ipairs(fruit:GetChildren()) do
-                                table.insert(childNames, c.Name.."("..c.ClassName..")")
-                            end
-                            print("[cleanFruit-DBG] children: "..table.concat(childNames, ", "))
-                            -- log attributes
-                            local attrList = {}
-                            for k, v in pairs(fruit:GetAttributes()) do
-                                table.insert(attrList, k.."="..tostring(v))
-                            end
-                            print("[cleanFruit-DBG] attributes: "..table.concat(attrList, ", "))
-                        end
-                        local before = #fruit:GetChildren()
-                        cleanFruit(fruit)
-                        destroyed = destroyed + (before - #fruit:GetChildren())
+                for _, obj in ipairs(_myFarm:GetDescendants()) do
+                    if obj.Name == "Fruits" and obj:IsA("Folder") then
+                        pcall(function() obj:Destroy() end)
+                        n = n + 1
                     end
                 end
             end)
             if _iter <= 5 or _iter % 30 == 0 then
-                print(string.format("[cleanFruit] iter=%d cleaned=%d | total=%d", _iter, destroyed, total))
+                print(string.format("[cleanFruit] iter=%d destroyed=%d", _iter, n))
             end
         end
     end)
