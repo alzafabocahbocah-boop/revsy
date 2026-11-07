@@ -1,4 +1,5 @@
--- uplevelnew v8.688
+-- uplevelnew v8.689
+-- v8.689: fan global queue — jeda 0.5s antar fan swap (bukan per UUID)
 -- v8.688: hapus debounce fan dan weave — semua anim swap tanpa lock
 -- v8.687: hapus debounce roar — roar selalu swap tanpa lock
 -- v8.685: hapus check _newRunning/running di swap DS — swap independen dari engine farming
@@ -219,7 +220,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.688"  -- v8.688: hapus semua debounce anim swap
+local VERSION = "v8.689"  -- v8.689: fan global queue 0.5s
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3715,6 +3716,8 @@ do
         local SPIDER_THRESH = 2.0
 
         local _debounce = {}  -- [raw8] = tick()
+        -- v8.689: global fan queue — jeda 0.5s antar fan swap (bukan per UUID)
+        local _fanLastSwap = 0
 
         -- v8.684: cek apakah UUID milik sendiri (ada di sesiPool)
         local function isMyPet(raw)
@@ -3774,7 +3777,11 @@ do
                 if _G._ZenxAnimDbgDS then pcall(_G._ZenxAnimDbgDS, anim, r8) end
                 -- Peacock: animStr fan
                 if anim == "fan" then
-                    -- v8.688: no debounce untuk fan
+                    -- v8.689: global fan queue — tunggu giliran (jeda 0.5s antar swap)
+                    local myTurn = _fanLastSwap + 0.5
+                    local waitNeeded = myTurn - tick()
+                    if waitNeeded > 0 then task.wait(waitNeeded) end
+                    _fanLastSwap = tick()
                     tsLog("Peacock fan → swap "..r8)
                     if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
                     task.spawn(function()
