@@ -1,4 +1,5 @@
--- uplevelnew v8.675
+-- uplevelnew v8.676
+-- v8.676: swap langsung berdasarkan anim (roar/fan/weave) tanpa filter _kgContainer — semua roar=T-Rex, fan=Peacock, weave=Spider
 -- v8.675: monitor ds2 AncestryChanged — log "DS DEAD" kalau DataStream di-destroy server, clear guard
 -- v8.674: debug DS 2x — log path deepFind kalau UUID muncul 2x dalam 1 detik (cari root cause)
 -- v8.673: fix double DS event dari 2 Roblox instance di server sama — skip uuid yang tidak ada di _kgContainer (bukan pet kita)
@@ -208,7 +209,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.675"  -- v8.675: monitor DS destroyed
+local VERSION = "v8.676"  -- v8.676: swap by anim only, no _kgContainer filter
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3734,20 +3735,13 @@ do
                         local now = tick()
                         -- v8.674: skip kalau uuid ini sedang dalam proses swap (bukan debounce waktu)
                         if _debounce[r8] then continue end
-                        -- cek tipe pet dari _kgContainer
-                        -- v8.673: kalau uuid tidak ada di _kgContainer → bukan pet kita → skip
-                        local tl = ""
-                        if _kgContainer then
-                            local e = _kgContainer["{"..raw.."}"] or _kgContainer[raw]
-                            if type(e) == "table" then
-                                tl = tostring(e.PetType or (e.PetData and e.PetData.PetType) or ""):lower()
-                            end
-                        end
-                        if tl == "" then continue end
+                        -- v8.676: langsung swap berdasarkan anim saja (roar=T-Rex, fan=Peacock, weave=Spider)
+                        -- tidak perlu cek _kgContainer — UUID yang roar/fan/weave pasti tipe yang sesuai
+                        local tl = anim == "roar" and "t-rex" or anim == "fan" and "peacock" or anim == "weave" and "spider" or ""
                         -- v8.660: report ke debug panel
                         if _G._ZenxAnimDbgDS then pcall(_G._ZenxAnimDbgDS, anim, r8) end
                         -- Peacock: animStr fan
-                        if anim == "fan" and tl:find("peacock",1,true) then
+                        if anim == "fan" then
                             if not (_newRunning or running) then continue end
                             _debounce[r8] = true  -- v8.674: lock selama swap berlangsung
                             tsLog("Peacock fan → swap "..r8)
@@ -3792,7 +3786,7 @@ do
                                 _debounce[r8] = nil  -- v8.674: unlock setelah swap selesai
                             end)
                         -- Spider weave → swap
-                        elseif anim == "weave" and tl:find("spider",1,true) then
+                        elseif anim == "weave" then
                             if not (_newRunning or running) then continue end
                             _debounce[r8] = now
                             tsLog("Spider weave → swap "..r8)
@@ -3836,7 +3830,7 @@ do
                                 end
                             end)
                         -- T-Rex animStr roar → re-swap
-                        elseif anim == "roar" and tl:find("t-rex",1,true) then
+                        elseif anim == "roar" then
                             if not (_newRunning or running) then continue end
                             _debounce[r8] = now
                             tsLog("T-Rex roar → swap "..r8)
