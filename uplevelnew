@@ -1,4 +1,5 @@
--- uplevelnew v8.660
+-- uplevelnew v8.661
+-- v8.661: debug panel unlimited log + tombol Copy All (setclipboard)
 -- v8.660: debug panel animStr detect — bandingkan DataStream vs PropChanged vs AttrChanged
 -- v8.659: cleanFruit hapus semua children kecuali Grow (kayak v8.648) via DescendantAdded
 -- v8.658: cleanFruit DescendantAdded hapus children visual buah, skip Nightmare/data
@@ -194,7 +195,7 @@ local function _main()
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
 print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.660"  -- v8.660: debug panel animStr detect multi-jalur
+local VERSION = "v8.661"  -- v8.661: debug panel unlimited log + Copy All button
 print("[UPL] VERSION: "..VERSION)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
@@ -3937,10 +3938,22 @@ do
         ctrLbl.TextXAlignment = Enum.TextXAlignment.Left
         ctrLbl.Parent = ctrFrame
 
-        -- log scroll
+        -- tombol Copy All
+        local copyBtn = Instance.new("TextButton")
+        copyBtn.Size = UDim2.new(1, -8, 0, 22)
+        copyBtn.Position = UDim2.new(0, 4, 0, 84)
+        copyBtn.BackgroundColor3 = Color3.fromRGB(30, 50, 80)
+        copyBtn.BorderSizePixel = 0
+        copyBtn.Text = "📋 Copy All Log"
+        copyBtn.Font = Enum.Font.GothamBold; copyBtn.TextSize = 11
+        copyBtn.TextColor3 = Color3.fromRGB(150, 200, 255)
+        copyBtn.Parent = frame
+        Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 5)
+
+        -- log scroll (lebih kecil karena ada copyBtn)
         local scroll = Instance.new("ScrollingFrame")
-        scroll.Size = UDim2.new(1, -8, 1, -92)
-        scroll.Position = UDim2.new(0, 4, 0, 88)
+        scroll.Size = UDim2.new(1, -8, 1, -114)
+        scroll.Position = UDim2.new(0, 4, 0, 110)
         scroll.BackgroundTransparency = 1
         scroll.BorderSizePixel = 0
         scroll.ScrollBarThickness = 3
@@ -3975,7 +3988,7 @@ do
             AC  = {fan=0, roar=0, weave=0},
         }
         local logCount = 0
-        local MAX_LOG = 40
+        local _logLines = {}  -- v8.661: simpan semua log unlimited
 
         local function updateCtr()
             ctrLbl.Text = string.format(
@@ -3997,18 +4010,12 @@ do
             if jalur == "PC" then color = Color3.fromRGB(100,200,255)
             elseif jalur == "AC" then color = Color3.fromRGB(200,255,100) end
             row.TextColor3 = color
-            row.Text = string.format("[%s] %s | %s %s | %s", t, anim, petType, r8, jalur)
+            local line = string.format("[%s] %s | %s %s | %s", t, anim, petType, r8, jalur)
+            row.Text = line
             logCount = logCount + 1
             row.LayoutOrder = logCount
             row.Parent = scroll
-            -- trim log lama
-            local children = scroll:GetChildren()
-            local labels = {}
-            for _, c in ipairs(children) do if c:IsA("TextLabel") then table.insert(labels, c) end end
-            if #labels > MAX_LOG then
-                table.sort(labels, function(a,b) return a.LayoutOrder < b.LayoutOrder end)
-                for i = 1, #labels - MAX_LOG do pcall(function() labels[i]:Destroy() end) end
-            end
+            table.insert(_logLines, line)  -- v8.661: unlimited, simpan ke table
             scroll.CanvasSize = UDim2.new(0, 0, 0, logCount * 15)
             scroll.CanvasPosition = Vector2.new(0, math.max(0, logCount * 15 - scroll.AbsoluteSize.Y))
         end
@@ -4030,6 +4037,20 @@ do
             addDbgLog("DS", anim, r8, getPetType(r8))
             updateCtr()
         end
+
+        -- v8.661: Copy All Log button handler
+        copyBtn.MouseButton1Click:Connect(function()
+            if #_logLines == 0 then return end
+            local sc_ = setclipboard or toclipboard
+            if sc_ then
+                pcall(sc_, table.concat(_logLines, "\n"))
+                copyBtn.Text = "✅ Copied! ("..#_logLines.." lines)"
+                task.delay(2, function() copyBtn.Text = "📋 Copy All Log" end)
+            else
+                copyBtn.Text = "❌ No clipboard API"
+                task.delay(2, function() copyBtn.Text = "📋 Copy All Log" end)
+            end
+        end)
 
         -- JALUR 2: GetPropertyChangedSignal di model pet workspace
         local function hookPropChanged(model)
