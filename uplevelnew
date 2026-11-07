@@ -1,4 +1,5 @@
--- uplevelnew v8.680
+-- uplevelnew v8.682
+-- v8.682: deepFind pisah dari action (kumpul hits dulu baru swap) — cegah duplikat task.spawn per event, port pola up3.8kg
 -- v8.680: monitor ge2.ChildAdded — kalau server buat DataStream baru (tanpa destroy lama), langsung connect listener baru
 -- v8.679: auto-reconnect DS kalau DataStream di-replace server (AncestryChanged → WaitForChild lagi, connect listener baru)
 -- v8.678: debug log swap DS skip (guard notRunning) + log kapan _newRunning jadi false — cari root cause swap mati 2 menit
@@ -213,7 +214,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.680"  -- v8.680: ge2.ChildAdded reconnect DS baru
+local VERSION = "v8.682"  -- v8.682: deepFind pisah dari action — cegah duplikat spawn
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3710,157 +3711,162 @@ do
 
         local _debounce = {}  -- [raw8] = tick()
 
-        local _dsPathLog = {}  -- [r8] = path terakhir
 
-        local function deepFind(t, depth, path)
-            depth = depth or 0
-            path = path or "root"
-            if depth > 12 or type(t) ~= "table" then return end
-            for k, v in pairs(t) do
+        -- v8.682: deepFind hanya kumpul hits (pisah dari action) — port pola up3.8kg
+        -- cegah duplikat task.spawn kalau uuid muncul di 2 path berbeda dalam 1 event
+        local function deepFind(t, depth, out)
+            depth = depth or 0; out = out or {}
+            if depth > 12 or type(t) ~= "table" then return out end
+            for _, v in pairs(t) do
                 if type(v) == "table" then
                     local v1 = tostring(v[1] or "")
                     if v1:find("CustomAnimationState",1,true) then
-                        local animStr = tostring(v[2] or "")
-                        local anim = animStr:lower()
-                        if not SWAP_ANIM[anim] then continue end
-                        -- ekstrak uuid
-                        local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
-                        local raw = uuid:gsub("[{}]","")
-                        -- v8.674dbg: log path deepFind
-                        local curPath = path.."["..tostring(k).."]"
-                        local r8tmp = raw:sub(1,8)
-                        if _dsPathLog[r8tmp] then
-                            tsLog("DS2x "..r8tmp.." path1="..(_dsPathLog[r8tmp]).." path2="..curPath)
+                        -- v8.682: skip kalau v[2] nil (state clear/idle) — port up3.8kg
+                        if v[2] == nil then
+                            deepFind(v, depth+1, out)
                         else
-                            _dsPathLog[r8tmp] = curPath
-                            task.delay(1, function() _dsPathLog[r8tmp] = nil end)
-                        end
-                        local r8 = raw:sub(1,8)
-                        local now = tick()
-                        -- v8.674: skip kalau uuid ini sedang dalam proses swap (bukan debounce waktu)
-                        if _debounce[r8] then continue end
-                        -- v8.676: langsung swap berdasarkan anim saja (roar=T-Rex, fan=Peacock, weave=Spider)
-                        -- tidak perlu cek _kgContainer — UUID yang roar/fan/weave pasti tipe yang sesuai
-                        local tl = anim == "roar" and "t-rex" or anim == "fan" and "peacock" or anim == "weave" and "spider" or ""
-                        -- v8.660: report ke debug panel
-                        if _G._ZenxAnimDbgDS then pcall(_G._ZenxAnimDbgDS, anim, r8) end
-                        -- Peacock: animStr fan
-                        if anim == "fan" then
-                            if not (_newRunning or running) then
-                                tsLog("DS skip fan "..r8..": notRunning")
-                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "SKIP-NR", r8) end
-                                continue
-                            end
-                            _debounce[r8] = true  -- v8.674: lock selama swap berlangsung
-                            tsLog("Peacock fan → swap "..r8)
-                            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
-                            task.spawn(function()
-                                pcall(function() unequipPet(raw) end); task.wait(0.03)
-                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip>", r8) end
-                                pcall(function() equipPet(raw) end)
-                                local done, spawnPos = false, nil
-                                local conn2 = workspace.DescendantAdded:Connect(function(d)
-                                    if done then return end
-                                    if not d:IsA("Model") then return end
-                                    local dn = d.Name
-                                    local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
-                                    if d8 ~= r8 then return end
-                                    task.defer(function()
-                                        if done then return end
-                                        pcall(function()
-                                            local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
-                                            if p then spawnPos = p.Position end
-                                        end)
-                                        done = true
-                                    end)
-                                end)
-                                local t0 = tick()
-                                while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
-                                conn2:Disconnect()
-                                if spawnPos then
-                                    local dist = (spawnPos - PEACOCK_CENTER).Magnitude
-                                    if dist > PEACOCK_THRESH then
-                                        tsLog("Peacock respawn "..string.format("%.1f",dist).."stud → re-swap")
-                                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "re-swap"..string.format("%.1f",dist).."st", r8) end
-                                        pcall(function() unequipPet(raw) end); task.wait(0.03)
-                                        pcall(function() equipPet(raw) end)
-                                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "re-equip>", r8) end
-                                    else
-                                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "OK"..string.format("%.1f",dist).."st", r8) end
-                                    end
-                                else
-                                    if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip(nopos)", r8) end
-                                end
-                                _debounce[r8] = nil  -- v8.674: unlock setelah swap selesai
-                            end)
-                        -- Spider weave → swap
-                        elseif anim == "weave" then
-                            if not (_newRunning or running) then
-                                tsLog("DS skip weave "..r8..": notRunning")
-                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "SKIP-NR", r8) end
-                                continue
-                            end
-                            _debounce[r8] = now
-                            tsLog("Spider weave → swap "..r8)
-                            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
-                            task.spawn(function()
-                                pcall(function() unequipPet(raw) end); task.wait(0.03)
-                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip>", r8) end
-                                pcall(function() equipPet(raw) end)
-                                local done, spawnPos = false, nil
-                                local conn2 = workspace.DescendantAdded:Connect(function(d)
-                                    if done then return end
-                                    if not d:IsA("Model") then return end
-                                    local dn = d.Name
-                                    local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
-                                    if d8 ~= r8 then return end
-                                    task.defer(function()
-                                        if done then return end
-                                        pcall(function()
-                                            local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
-                                            if p then spawnPos = p.Position end
-                                        end)
-                                        done = true
-                                    end)
-                                end)
-                                local t0 = tick()
-                                while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
-                                conn2:Disconnect()
-                                if spawnPos then
-                                    local dist = (spawnPos - SPIDER_CENTER).Magnitude
-                                    if dist > SPIDER_THRESH then
-                                        tsLog("Spider respawn "..string.format("%.1f",dist).."stud → re-swap")
-                                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "re-swap"..string.format("%.1f",dist).."st", r8) end
-                                        pcall(function() unequipPet(raw) end); task.wait(0.03)
-                                        pcall(function() equipPet(raw) end)
-                                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "re-equip>", r8) end
-                                    else
-                                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "OK"..string.format("%.1f",dist).."st", r8) end
-                                    end
-                                else
-                                    if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip(nopos)", r8) end
-                                end
-                            end)
-                        -- T-Rex animStr roar → re-swap
-                        elseif anim == "roar" then
-                            if not (_newRunning or running) then
-                                tsLog("DS skip roar "..r8..": notRunning")
-                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "SKIP-NR", r8) end
-                                continue
-                            end
-                            _debounce[r8] = now
-                            tsLog("T-Rex roar → swap "..r8)
-                            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
-                            task.spawn(function()
-                                pcall(function() unequipPet(raw) end); task.wait(0.03)
-                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip>", r8) end
-                                pcall(function() equipPet(raw) end)
-                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "done", r8) end
-                            end)
+                            local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                            local raw = uuid:gsub("[{}]","")
+                            local animStr = tostring(v[2])
+                            out[#out+1] = {raw, animStr}
                         end
                     else
-                        deepFind(v, depth+1, path.."["..tostring(k).."]")
+                        deepFind(v, depth+1, out)
                     end
+                end
+            end
+            return out
+        end
+
+        -- v8.682: proses hits di luar deepFind — 1 event = 1x kumpul, baru loop swap
+        local function processHits(hits)
+            local now = tick()
+            -- dedup per r8 dalam 1 event (kalau uuid muncul 2x di tree)
+            local seen = {}
+            for _, hit in ipairs(hits) do
+                local raw, animStr = hit[1], hit[2]
+                local anim = animStr:lower()
+                if not SWAP_ANIM[anim] then continue end
+                local r8 = raw:sub(1,8)
+                if seen[r8] then continue end  -- duplikat dalam 1 event → skip
+                seen[r8] = true
+                -- v8.674: skip kalau uuid sedang dalam proses swap
+                if _debounce[r8] then continue end
+                -- v8.660: report ke debug panel
+                if _G._ZenxAnimDbgDS then pcall(_G._ZenxAnimDbgDS, anim, r8) end
+                -- Peacock: animStr fan
+                if anim == "fan" then
+                    if not (_newRunning or running) then
+                        tsLog("DS skip fan "..r8..": notRunning")
+                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "SKIP-NR", r8) end
+                        continue
+                    end
+                    _debounce[r8] = true
+                    tsLog("Peacock fan → swap "..r8)
+                    if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
+                    task.spawn(function()
+                        pcall(function() unequipPet(raw) end); task.wait(0.03)
+                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip>", r8) end
+                        pcall(function() equipPet(raw) end)
+                        local done, spawnPos = false, nil
+                        local conn2 = workspace.DescendantAdded:Connect(function(d)
+                            if done then return end
+                            if not d:IsA("Model") then return end
+                            local dn = d.Name
+                            local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
+                            if d8 ~= r8 then return end
+                            task.defer(function()
+                                if done then return end
+                                pcall(function()
+                                    local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
+                                    if p then spawnPos = p.Position end
+                                end)
+                                done = true
+                            end)
+                        end)
+                        local t0 = tick()
+                        while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
+                        conn2:Disconnect()
+                        if spawnPos then
+                            local dist = (spawnPos - PEACOCK_CENTER).Magnitude
+                            if dist > PEACOCK_THRESH then
+                                tsLog("Peacock respawn "..string.format("%.1f",dist).."stud → re-swap")
+                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "re-swap"..string.format("%.1f",dist).."st", r8) end
+                                pcall(function() unequipPet(raw) end); task.wait(0.03)
+                                pcall(function() equipPet(raw) end)
+                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "re-equip>", r8) end
+                            else
+                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "OK"..string.format("%.1f",dist).."st", r8) end
+                            end
+                        else
+                            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip(nopos)", r8) end
+                        end
+                        _debounce[r8] = nil
+                    end)
+                -- Spider weave → swap
+                elseif anim == "weave" then
+                    if not (_newRunning or running) then
+                        tsLog("DS skip weave "..r8..": notRunning")
+                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "SKIP-NR", r8) end
+                        continue
+                    end
+                    _debounce[r8] = now
+                    tsLog("Spider weave → swap "..r8)
+                    if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
+                    task.spawn(function()
+                        pcall(function() unequipPet(raw) end); task.wait(0.03)
+                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip>", r8) end
+                        pcall(function() equipPet(raw) end)
+                        local done, spawnPos = false, nil
+                        local conn2 = workspace.DescendantAdded:Connect(function(d)
+                            if done then return end
+                            if not d:IsA("Model") then return end
+                            local dn = d.Name
+                            local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
+                            if d8 ~= r8 then return end
+                            task.defer(function()
+                                if done then return end
+                                pcall(function()
+                                    local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
+                                    if p then spawnPos = p.Position end
+                                end)
+                                done = true
+                            end)
+                        end)
+                        local t0 = tick()
+                        while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
+                        conn2:Disconnect()
+                        if spawnPos then
+                            local dist = (spawnPos - SPIDER_CENTER).Magnitude
+                            if dist > SPIDER_THRESH then
+                                tsLog("Spider respawn "..string.format("%.1f",dist).."stud → re-swap")
+                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "re-swap"..string.format("%.1f",dist).."st", r8) end
+                                pcall(function() unequipPet(raw) end); task.wait(0.03)
+                                pcall(function() equipPet(raw) end)
+                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "re-equip>", r8) end
+                            else
+                                if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "OK"..string.format("%.1f",dist).."st", r8) end
+                            end
+                        else
+                            if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip(nopos)", r8) end
+                        end
+                    end)
+                -- T-Rex animStr roar → swap
+                elseif anim == "roar" then
+                    if not (_newRunning or running) then
+                        tsLog("DS skip roar "..r8..": notRunning")
+                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "SKIP-NR", r8) end
+                        continue
+                    end
+                    _debounce[r8] = now
+                    tsLog("T-Rex roar → swap "..r8)
+                    if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
+                    task.spawn(function()
+                        pcall(function() unequipPet(raw) end); task.wait(0.03)
+                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip>", r8) end
+                        pcall(function() equipPet(raw) end)
+                        if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "done", r8) end
+                    end)
                 end
             end
         end
@@ -3872,7 +3878,8 @@ do
                 local svc = tostring(args[2] or "")
                 if not svc:find("ActivePets",1,true) then return end
                 local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
-                if data then deepFind(data, 0) end
+                -- v8.682: deepFind kumpul dulu, baru processHits — cegah duplikat spawn
+                if data then processHits(deepFind(data, 0)) end
             end)
             -- v8.675+679: monitor DS dead → auto-reconnect
             ds.AncestryChanged:Connect(function()
