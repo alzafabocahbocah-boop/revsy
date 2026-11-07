@@ -1,4 +1,5 @@
--- uplevelnew v8.667
+-- uplevelnew v8.668
+-- v8.668: hapus semua print debug lama (UPLVL-DBG, NEWLOOP, NMPoller, UPL, FarmCleaner, dll)
 -- v8.667: NMPoller task.wait 0.2s → 1s (kurangi lag scan farm)
 -- v8.666: log swap unequip/equip/respawn masuk panel kanan (ZenxAnimDbg) via _ZenxAnimDbgLog
 -- v8.665: tambahin dbgLog di swap fan/roar/weave — unequip+equip+respawn tercatat di debug panel
@@ -200,14 +201,10 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-print("[UPL] start 1 - RS/plr ok")
-local VERSION = "v8.667"  -- v8.667: NMPoller 0.2s→1s
-print("[UPL] VERSION: "..VERSION)
+local VERSION = "v8.668"  -- v8.668: hapus print debug lama
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
-print("[UPL] start 2 - playerGui ok")
 local gameEvents = RS:WaitForChild("GameEvents", 10)
-print("[UPL] start 3 - gameEvents="..(gameEvents and "ok" or "NIL"))
 
 -- ===================== REMOTES =====================
 -- equipRE: scan SELURUH RS descendants cari "PetsService" RemoteEvent (mirip uplevel asli)
@@ -228,7 +225,7 @@ if not equipRE then
         for _ = 1, 10 do
             task.wait(3)
             equipRE = findEquipRE()
-            if equipRE then print("[UPL] equipRE found (retry): "..equipRE:GetFullName()); break end
+            if equipRE then break end
         end
     end)
 end
@@ -509,7 +506,6 @@ pcall(function()
     local old2 = playerGui:FindFirstChild("ZenxUpLevel"); if old2 then old2:Destroy() end
 end)
 
-print("[UPL] start 4 - sebelum GUI")
 -- ===================== SCREEN GUI =====================
 local gui = mk("ScreenGui",{
     Name="ZenxUpLevel", ResetOnSpawn=false, IgnoreGuiInset=true,
@@ -1019,22 +1015,16 @@ local function findMemoryContainer()
         local inst = RC.new("ActivePetsService_Replicator")
         if not inst then warn("[UPLVL-DBG] RC inst nil"); return end
         local data = inst:GetData(plr.Name)
-        print("[UPLVL-DBG] RC:GetData type=", type(data))
         if type(data) ~= "table" then warn("[UPLVL-DBG] data bukan table:", type(data)); return end
         local tbl = rawget(data, "Table")
-        print("[UPLVL-DBG] data.Table type=", type(tbl))
         if type(tbl) ~= "table" then warn("[UPLVL-DBG] Table bukan table"); return end
         local ppd = rawget(tbl, "PlayerPetData")
-        print("[UPLVL-DBG] PlayerPetData type=", type(ppd))
         if type(ppd) ~= "table" then warn("[UPLVL-DBG] PlayerPetData bukan table"); return end
         local pd = rawget(ppd, plr.Name)
-        print("[UPLVL-DBG] pd[plr.Name] type=", type(pd), "| plr.Name=", plr.Name)
         if type(pd) ~= "table" then warn("[UPLVL-DBG] pd bukan table"); return end
         local pi = rawget(pd, "PetInventory")
-        print("[UPLVL-DBG] PetInventory type=", type(pi))
         if type(pi) ~= "table" then warn("[UPLVL-DBG] PetInventory bukan table"); return end
         local dat = rawget(pi, "Data")
-        print("[UPLVL-DBG] PetInventory.Data type=", type(dat))
         if type(dat) ~= "table" then warn("[UPLVL-DBG] Data bukan table"); return end
         -- bangun tabel format sama seperti _kgContainer lama
         local out = {}
@@ -1045,25 +1035,18 @@ local function findMemoryContainer()
                 count = count + 1
             end
         end
-        print("[UPLVL-DBG] RC pet count=", count)
         if count > 0 then
             -- print sample 1 pet buat cek struktur
             local sampleUUID, sampleEntry = next(out)
-            print("[UPLVL-DBG] sample uuid=", sampleUUID)
-            print("[UPLVL-DBG] sample entry keys:", sampleEntry and table.concat((function()
                 local k={}; for kk in pairs(sampleEntry) do k[#k+1]=kk end; return k
             end)(), ", ") or "nil")
             if sampleEntry and sampleEntry.PetData then
-                print("[UPLVL-DBG] sample PetType=", sampleEntry.PetType)
-                print("[UPLVL-DBG] sample PetData.BaseWeight=", sampleEntry.PetData.BaseWeight)
-                print("[UPLVL-DBG] sample PetData.Level=", sampleEntry.PetData.Level)
             end
         end
         if next(out) then result = out end
     end)
     if not ok then warn("[UPLVL-DBG] findMemoryContainer ERROR:", err) end
     if result then
-        print("[UPLVL-DBG] findMemoryContainer SUCCESS, pets=", (function() local n=0; for _ in pairs(result) do n=n+1 end; return n end)())
     else
         warn("[UPLVL-DBG] findMemoryContainer RETURN NIL")
     end
@@ -1111,7 +1094,6 @@ local function listPetsEngine()
             end
         end
     end
-    print("[UPLVL-DBG] listPetsEngine: Backpack Tools=", toolCount, "dengan UUID=", toolWithUUID)
     for _,t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
             local rawUUID=t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
@@ -1146,15 +1128,11 @@ end
 -- Container punya PetType field — ini yg dipakai uplevel asli utk picker
 local function listPetsAll()
     local c=_kgContainer
-    print("[UPLVL-DBG] listPetsAll: _kgContainer=", c and "ADA" or "NIL")
     if not c then
-        print("[UPLVL-DBG] listPetsAll: fallback ke listPetsEngine")
         local eng=listPetsEngine()
-        print("[UPLVL-DBG] listPetsEngine return", #eng, "pets")
         return eng
     end
     local cCount=0; for _ in pairs(c) do cCount=cCount+1 end
-    print("[UPLVL-DBG] listPetsAll: container punya", cCount, "entries")
     local out={}
     local skipCount=0
     for uuid,e in pairs(c) do
@@ -1175,11 +1153,8 @@ local function listPetsAll()
             end
         end
     end
-    print("[UPLVL-DBG] listPetsAll: out=", #out, "skip=", skipCount)
     if #out==0 then
-        print("[UPLVL-DBG] listPetsAll: out kosong, fallback ke Engine")
         local eng=listPetsEngine()
-        print("[UPLVL-DBG] listPetsEngine return", #eng, "pets")
         return eng
     end
     return out
@@ -1359,9 +1334,7 @@ local function openPetPicker(sesiNum, nama, idx, onPicked)
         -- update status container
         ctainerLbl.Text=_kgContainer and "● data OK" or "● loading data RC..."
         ctainerLbl.TextColor3=_kgContainer and C.accent or Color3.fromRGB(220,160,60)
-        print("[UPLVL-DBG] picker refresh: nama=", nama, "filter=", filter, "_kgContainer=", _kgContainer and "ADA" or "NIL")
         local pets=listPetsBackpack(nama)
-        print("[UPLVL-DBG] picker listPetsBackpack(", nama, ") return", #pets, "pets")
         filter=(filter or ""):lower()
         local shown=0
         for _,p in ipairs(pets) do
@@ -2776,15 +2749,10 @@ end
 -- HARUS setelah addLog karena pakai addLog di dalamnya
 local function waitForContainer(maxSec)
     maxSec=maxSec or 10
-    print("[UPLVL-DBG] waitForContainer: START, _kgContainer=", _kgContainer and "ADA" or "NIL")
     if _kgContainer then
         local n=0; pcall(function() for _ in pairs(_kgContainer) do n=n+1 end end)
-        print("[UPLVL-DBG] waitForContainer: sudah ada ("..n.." pets), skip")
-        print("[UPLVL-DBG] waitForContainer: skip (sudah ada,", n, "pets)")
         return true
     end
-    print("[UPLVL-DBG] waitForContainer: container NIL, coba sync...")
-    print("[UPLVL-DBG] waitForContainer: container NIL, coba sync...")
     -- coba sync (blocking) dulu di coroutine ini
     pcall(function() _kgContainer=findMemoryContainer() end)
     if _kgContainer then
@@ -3569,10 +3537,8 @@ workspace.DescendantAdded:Connect(function(d) task.defer(function()
     if d:IsA("Model") then
         local nm = tostring(d.Name)
         if nm:sub(1,1) == "{" then
-            print("[UPLVL-DBG] model added (registered):", nm)
         elseif nm:find("Pet") or nm:find("pet") or nm:find("Equip") then
             -- mungkin nama model beda format, log buat cek
-            print("[UPLVL-DBG] model added (NOT registered, name='"..nm.."')")
         end
     end
 end) end)
@@ -3590,7 +3556,6 @@ task.spawn(function()
             end
         end
     end)
-    print("[UPLVL-DBG] model scan 3s after start:")
     for nm, cnt in pairs(petNames) do
         print("  name='"..nm.."' count="..cnt)
     end
@@ -3600,7 +3565,6 @@ task.spawn(function()
     while true do
         task.wait(5)
         local c = 0; for _ in pairs(modelByUuid) do c=c+1 end
-        print("[UPLVL-DBG] modelByUuid count=", c)
     end
 end)
 workspace.DescendantRemoving:Connect(function(d)
@@ -3613,9 +3577,7 @@ workspace.DescendantRemoving:Connect(function(d)
             if modelByUuid[uuid] == d then
                 -- masih instance lama, berarti memang benar-benar hilang
                 modelByUuid[uuid] = nil
-                print("[UPLVL-DBG] model removed:", uuid)
             else
-                print("[UPLVL-DBG] model remove IGNORED (replaced):", uuid)
             end
         end)
     end
@@ -4187,19 +4149,13 @@ farmCenter = function()
 end
 
 equipPet = function(uuid)
-    if not equipRE then print("[UPLVL-DBG] equipPet: equipRE NIL! skip"); return end
+    if not equipRE then return end
     local pos = _clusterPos or farmCenter()
     local fmtted = fmtUUID(uuid)
     if pos then
-        print("[UPLVL-DBG] equipPet "..tostring(fmtted):sub(1,12).." pos=ok")
-        print("[UPLVL-DBG] equipPet FIRE:", tostring(fmtted):sub(1,20), "pos=", tostring(pos))
         local ok,err = pcall(function() equipRE:FireServer("EquipPet", fmtted, CFrame.new(pos)) end)
-        print("[UPLVL-DBG] equipPet FireServer ok=", ok, err)
     else
-        print("[UPLVL-DBG] equipPet "..tostring(fmtted):sub(1,12).." pos=NIL")
-        print("[UPLVL-DBG] equipPet FIRE (no pos):", tostring(fmtted):sub(1,20))
         local ok,err = pcall(function() equipRE:FireServer("EquipPet", fmtted, nil) end)
-        print("[UPLVL-DBG] equipPet FireServer ok=", ok, err)
     end
 end
 _G.ZenxEquipPet = equipPet  -- expose ke MTS scope (di luar _startEngine)
@@ -4230,13 +4186,11 @@ local _geLogged = false      -- gameEvents log cukup sekali
 -- JANGAN loop seluruh container — bisa ratusan pet, bikin rate-limit + equip setelahnya drop
 -- Mirip pickupAll uplevel asli: scan modelByUuid + workspace fresh, retry 3x
 unequipAll = function()
-    print("[UPLVL-DBG] unequipAll A")
     _isTransisi = true
     for k in pairs(_activeUuids) do _activeUuids[k]=nil end
     -- v8.554: clear _bahanUuids karena semua pet di-unequip (termasuk Bahan)
     -- agar equipOneBahan / equipSesi tidak skip uuid lama yang sudah tidak equip
     for k in pairs(_bahanUuids) do _bahanUuids[k]=nil end
-    print("[UPLVL-DBG] unequipAll B")
     for tri = 1, 3 do
         local uuids = {}
         for uuid in pairs(modelByUuid) do uuids[uuid] = true end
@@ -4245,7 +4199,6 @@ unequipAll = function()
                 if d:IsA("Model") and tostring(d.Name):sub(1,1) == "{" then uuids[d.Name] = true end
             end
         end)
-        print("[UPLVL-DBG] unequipAll tri=", tri)
         local any = false
         for uuid in pairs(uuids) do
             unequipPet(uuid); any = true; task.wait(0.05)
@@ -4254,7 +4207,6 @@ unequipAll = function()
         if not any then break end
     end
     task.wait(0.8)
-    print("[UPLVL-DBG] unequipAll Z")
     -- _isTransisi di-clear oleh equipSesi setelah semua pet ter-equip
 end
 
@@ -4286,7 +4238,6 @@ end
 -- equipSesi: equip pet sesuai defs
 -- Prioritas: slot manual dari sesiPool → auto dari container by tipe → fallback backpack
 equipSesi = function(sesiNum, defs)
-    print("[UPLVL-DBG] equipSesi ENTER: sesiNum=", sesiNum, "defs=", defs and #defs or "NIL")
     -- clear active uuid tracker + mimic slot tracker
     for k in pairs(_activeUuids) do _activeUuids[k]=nil end
     for k in pairs(_mimicSlotByUuid) do _mimicSlotByUuid[k]=nil end
@@ -4349,7 +4300,6 @@ equipSesi = function(sesiNum, defs)
         local needStr=""
         for nm,n in pairs(need) do needStr=needStr..nm.."×"..n.." " end
         addLog("Need: "..needStr)
-        print("[UPLVL-DBG] equipSesi need:", needStr)
         -- sort by kg terbesar (ambil pet terbaik dulu)
         local allPets=listPetsAll()
         -- debug: count per tipe di container
@@ -4358,7 +4308,6 @@ equipSesi = function(sesiNum, defs)
         local cStr=""
         for nm,n in pairs(countPerTipe) do cStr=cStr..nm.."×"..n.." " end
         addLog("Found pool: "..cStr.."(total "..#allPets..")")
-        print("[UPLVL-DBG] equipSesi pool:", cStr, "total:", #allPets)
         table.sort(allPets,function(a,b) return (a.kg or 0)>(b.kg or 0) end)
         local got={}
         for _,p in ipairs(allPets) do
@@ -4746,7 +4695,7 @@ task.spawn(function()
         task.wait(1)  -- v8.667: dari 0.2s → 1s
         pcall(function()
             local farm = getPlayerFarm()
-            if not farm then print("[NMPoller] farm nil"); return end
+            if not farm then return end
             local count = 0
             local totalFruit = 0
             local firstAttrs = nil
@@ -4798,16 +4747,12 @@ task.spawn(function()
             -- debug sekali: log attribute buah + hasil count
             if not _nmPollerDebugDone and totalFruit > 0 then
                 _nmPollerDebugDone = true
-                print("[UPLVL-DBG][NMPoller] total="..totalFruit.." nm="..count)
                 if firstAttrs then
-                    print("[UPLVL-DBG][NMPoller] attrs: "..table.concat(firstAttrs, ", "))
                 end
             end
             -- v8.479: log kalau tiba-tiba drop ke 0 (debug flicker)
             if count == 0 and _nmCached > 0 then
-                print("[UPLVL-DBG][NMPoller] DROP 0! prev="..tostring(_nmCached).." totalFruit="..tostring(totalFruit))
             elseif count > 0 and _nmCached == 0 then
-                print("[UPLVL-DBG][NMPoller] BACK "..tostring(count).." totalFruit="..tostring(totalFruit))
             end
             _nmCached = count
             _nmCachedAt = tick()
@@ -4856,11 +4801,8 @@ local function scanFruits()
             end
         end
         addLog("scanFruits OK: total="..totalScanned.." shovel="..#res.shovel.." nm="..res.nightmareCount.." collect="..#res.nightmare)
-        print("[UPLVL-DBG] scanFruits OK: total="..totalScanned.." shovel="..#res.shovel.." nm="..res.nightmareCount)
     end)
     if not ok then
-        print("[UPLVL-DBG] scanFruits ERR:", tostring(err))
-        print("[UPLVL-DBG] scanFruits ERR: "..tostring(err))
     end
     return res
 end
@@ -4929,7 +4871,6 @@ local function doCollect(fruits)
     if not re then
         local msg = "ERR: Crops.Collect RE nil!"
         dbgLog(msg)
-        print("[UPLVL-DBG][doCollect] "..msg)  -- v8.538: print ke console biar keliatan
         addLog(msg)  -- v8.538: addLog biar tampil di log panel
         if _nmDbgCollectLbl then _nmDbgCollectLbl.Text = "[COLLECT] "..msg end
         _isCollecting = false
@@ -5037,8 +4978,6 @@ local function enforceEquip(allowedDef)
     -- skip kalau AUTO MTS sedang running — MTS punya lineup sendiri, jangan diusik
     if _G.ZenxMutRunning then return end
     if type(allowedDef) ~= "table" then
-        print("[UPLVL-DBG] enforceEquip SKIP: allowedDef bukan table =", tostring(allowedDef))
-        print("[UPLVL-DBG][enforceEquip] SKIP: allowedDef bukan table = "..tostring(allowedDef))
         return
     end
     local allowed = {}
@@ -5049,17 +4988,13 @@ local function enforceEquip(allowedDef)
             if bahanCheck[uuid] then continue end
             local tipe = getPetTipeFromUUID(uuid)
             if tipe and not allowed[tipe] then
-                print("[UPLVL-DBG] enforceEquip unequip '"..tipe.."' uuid="..tostring(uuid))
                 addLog("Enforce: unequip '"..tipe.."' (bukan bagian sesi ini)")
                 pcall(function() unequipPet(uuid) end)
             end
         end
     end)
     if not ok2 then
-        print("[UPLVL-DBG] enforceEquip ERR:", tostring(err2))
-        print("[UPLVL-DBG][enforceEquip] ERR: "..tostring(err2))
     end
-    print("[UPLVL-DBG] enforceEquip DONE")
 end
 
 local function processFruits()
@@ -5185,64 +5120,41 @@ end
 
 -- ===================== SESI =====================
 local function runSesiUtama(sesiNum, def, label, col)
-    print("[UPLVL-DBG] runSesiUtama: sesiNum=", sesiNum, "label=", label)
     local aOk, aErr = pcall(function() addLog("=== "..label.." ===") end)
-    print("[UPLVL-DBG] addLog ok=", aOk, aErr)
     pcall(function() setStatus(label.." — equip pet", col) end)
     pcall(function() updateUI(totalNightmareCollected,0,sesiNum) end)
-    print("[UPLVL-DBG] addLog+setStatus+updateUI done")
     local fcOk, fcErr = pcall(function() _clusterPos = farmCenter() end)
-    print("[UPLVL-DBG] farmCenter ok=", fcOk, "result=", _clusterPos and tostring(_clusterPos) or "NIL", "err=", fcErr)
     addLog("Cluster: "..((_clusterPos) and string.format("%.0f,%.0f",_clusterPos.X,_clusterPos.Z) or "NIL — cek workspace.Farm"))
-    local reOk = pcall(function() print("[UPLVL-DBG] equipRE=", equipRE and equipRE:GetFullName() or "NIL!", "| class=", equipRE and equipRE.ClassName or "?") end)
-    print("[UPLVL-DBG] equipRE="..(equipRE and equipRE:GetFullName() or "NIL!").." | container="..((_kgContainer) and "ADA" or "NIL"))
+    local reOk = true
     -- debug: cek equipRE class + count RemoteEvent (tidak print semua nama, terlalu panjang)
     pcall(function()
         local ge = RS:FindFirstChild("GameEvents")
         local ps = ge and ge:FindFirstChild("PetsService")
-        print("[UPLVL-DBG] PetsService=", ps and ps:GetFullName() or "NIL", "| class=", ps and ps.ClassName or "?")
         local ges = ge and ge:GetDescendants() or {}
         local reCount = 0
         for _,v in pairs(ges) do
             if v:IsA("RemoteEvent") then reCount = reCount + 1 end
         end
-        print("[UPLVL-DBG] total RemoteEvents di GameEvents:", reCount)
     end)
-    print("[UPLVL-DBG] debug scan selesai — masuk waitForContainer")
     waitForContainer(10)
-    print("[UPLVL-DBG] waitForContainer DONE, container=", _kgContainer and "ADA" or "NIL")
-    print("[UPLVL-DBG] setelah waitForContainer: container="..((_kgContainer) and "ADA" or "MASIH NIL!"))
     _activeSesiNum = sesiNum; _G._UPL_SESI_NUM = sesiNum
     _activeSesiDef = def; _G._UPL_SESI_DEF = def
-    print("[UPLVL-DBG] sebelum unequipAll")
-    print("[UPLVL-DBG] sebelum unequipAll")
     task.wait(0)  -- flush console sebelum unequipAll
     unequipAll()
-    print("[UPLVL-DBG] unequipAll DONE — sebelum equipSesi")
-    print("[UPLVL-DBG] sebelum equipSesi")
     equipSesi(sesiNum, def)
-    print("[UPLVL-DBG] equipSesi DONE")
-    print("[UPLVL-DBG] equipSesi DONE")
     setStatus(label.." — running", col)
     local _targetReached = false
     local _collectBusy = false
     -- scan loop: jalan terus, update GUI + cek target
-    print("[UPLVL-DBG] masuk loop sesi"..sesiNum)
     while not stopRequested and not _targetReached do
-        print("[UPLVL-DBG] loop sesi"..sesiNum.." iter: stopReq="..(tostring(stopRequested)).." targetReached="..(tostring(_targetReached)))
         local okEE, errEE = pcall(enforceEquip, def)
         if not okEE then
-            print("[UPLVL-DBG] enforceEquip ERR:", tostring(errEE))
-            print("[UPLVL-DBG][loop] enforceEquip ERR: "..tostring(errEE))
         end
-        print("[UPLVL-DBG] sebelum scanFruits sesi"..sesiNum)
         local data = scanFruits()
-        print("[UPLVL-DBG] scanFruits done: shovel="..#data.shovel.." nm="..data.nightmareCount)
         local nm = _nmCached  -- baca dari fast poller (0.5s), lebih responsif
         _lastMutasiCount = #data.shovel
         totalNightmareCollected = nm
         updateUI(nm, nm, sesiNum)
-        print("[UPLVL-DBG] loop sesi"..sesiNum..": nmCached="..nm.." shovel="..#data.shovel.." busy="..(tostring(_collectBusy)).." target="..CFG.nightmareTarget)
         -- cek target
         if nm >= CFG.nightmareTarget then
             addLog("Target! nm="..nm.." >= "..CFG.nightmareTarget.." — Pindah sesi 2.")
@@ -5299,13 +5211,10 @@ local function runSesiUtama(sesiNum, def, label, col)
     unequipAll()
 end
 local function runSesi1()
-    print("[UPLVL-DBG] runSesi1 START")
-    print("[UPLVL-DBG] runSesi1 START")
     SESI1_DEF = { {nama="T-Rex", jml=8} }
     addLog("Sesi 1 def: 8 T-Rex (fixed)")
     _activeSesiDef = SESI1_DEF; _G._UPL_SESI_DEF = false
     runSesiUtama(1, SESI1_DEF, "SESI 1", C.accent)
-    print("[UPLVL-DBG] runSesi1 DONE")
 end
 local function runSesi2()
     addLog("=== SESI 2 ==="); setStatus("Sesi 2 — equip pet",Color3.fromRGB(220,160,60)); updateUI(totalNightmareCollected,0,2)
@@ -5414,9 +5323,7 @@ local _healerGen = (_G._ZenxHealerGen or 0) + 1
 _G._ZenxHealerGen = _healerGen
 -- v8.600: debounce per-UUID — jangan re-equip kalau baru di-equip dalam 10s (cegah loop akibat server respawn model)
 local _healerLastEquip = {}  -- uuid → tick() terakhir HEALER equip uuid ini
-print("[UPLVL-DBG] HEALER LOOP: spawn gen="..tostring(_healerGen))
 task.spawn(function()
-    print("[UPLVL-DBG] HEALER LOOP: thread started gen="..tostring(_healerGen))
     while _G._ZenxHealerGen == _healerGen do  -- stop kalau generasi baru muncul
         local ok, err = pcall(function()
             task.wait(2)
@@ -5427,22 +5334,18 @@ task.spawn(function()
                 -- _activeUuids = _G._ZenxActiveUuids, selalu valid (persistent di _G)
                 local au = _G._ZenxActiveUuids
                 if type(au) ~= "table" then
-                    print("[UPLVL-DBG] HEALER: _G._ZenxActiveUuids bukan table, skip")
                     return
                 end
                 for _ in pairs(modelByUuid) do mbuCount=mbuCount+1 end
                 for uuid in pairs(au) do
                     activeCount = activeCount + 1
                 end
-                print("[UPLVL-DBG] HEALER: activeUuids="..activeCount.." modelByUuid="..mbuCount)
                 for uuid in pairs(au) do
                     if not modelByUuid[uuid] then
                         -- v8.600: debounce — skip re-equip kalau baru di-equip dalam 10s terakhir
                         local lastT = _healerLastEquip[uuid] or 0
                         if tick() - lastT < 10 then
-                            print("[UPLVL-DBG] HEAL: skip re-equip "..tostring(uuid).." (debounce "..(math.ceil(10-(tick()-lastT))).."s)")
                         else
-                            print("[UPLVL-DBG] HEAL: re-equip uuid="..tostring(uuid))
                             -- model belum muncul/hilang -> re-equip
                             unequipPet(uuid); task.wait(0.15)
                             equipPet(uuid); task.wait(0.12)
@@ -5453,11 +5356,9 @@ task.spawn(function()
                 end
                 if healed > 0 then addLog("HEAL: "..healed.." pet model hilang -> re-equip") end
             else
-                print("[UPLVL-DBG] HEALER SKIP: running="..tostring(running).." collecting="..(tostring(_isCollecting)).." transisi="..(tostring(_isTransisi)))
             end
         end)
         if not ok then
-            print("[UPLVL-DBG] HEALER ERR:", tostring(err))
         end
     end
 end)
@@ -5646,22 +5547,16 @@ local function runNewLoop()
     dbgLog("[newloop] start NM="..tostring(_initNM).." → tim "..tostring(_newwTimAktif))
     _activeSesiNum = 5; _activeSesiDef = _startDef
     _G._UPL_SESI_NUM = 5; _G._UPL_SESI_DEF = _startDef
-    print("[NEWLOOP] sebelum unequipAll")
     unequipAll()
-    print("[NEWLOOP] sebelum equipSesi")
     local okES, errES = pcall(equipSesi, 5, _startDef)
-    print("[NEWLOOP] equipSesi ok=", okES, "err=", tostring(errES))
     if not okES then dbgLog("[newloop] equipSesi ERR: "..tostring(errES)) end
-    print("[NEWLOOP] sebelum setStatus running")
     setStatus("AUTOLVLNEWW — running", C.accent)
 
     -- v8.551: NM swap loop independent — cek tiap 2s, ada cooldown 20s setelah swap ke Baku
     -- logika: NM>=150 → swap Baku → tunggu 20s → baru cek lagi (anti bolak-balik)
     -- v8.565: kalau init dalam mode "main", set cooldown langsung supaya tidak langsung dicabut
     local _bakuCooldownUntil = (_newwTimAktif == "main") and (tick() + 20) or 0
-    print("[NEWLOOP] fast loop spawn")
     task.spawn(function()
-        print("[NEWLOOP] fast loop STARTED")
         while not _newStopRequested do
             task.wait(2)
             if _newStopRequested then break end
@@ -5675,11 +5570,10 @@ local function runNewLoop()
             local _bahanEquipTime = _G._ZenxBahanEquipTime
             local ok_nm, _d = pcall(scanFruits)
             if not ok_nm then
-                print("[NEWLOOP-FAST] scanFruits ERR:", tostring(_d))
+                addLog("NEWLOOP-FAST scanFruits ERR: "..tostring(_d))
                 return  -- continue equivalent inside pcall
             end
             local nmC = _d.nightmareCount
-            print("[NEWLOOP-FAST] tick nmC=", nmC, "tim=", tostring(_newwTimAktif))
             updateUI(totalNightmareCollected, nmC, 1)
 
             -- v8.581: kalau mode main, pastikan Baku ada di _activeUuids (guard unequip manual)
@@ -6132,7 +6026,7 @@ local function runNewLoop()
             end
             end) -- end pcall body
             if not okBody then
-                print("[NEWLOOP-FAST] BODY ERR (loop lanjut):", tostring(errBody))
+                addLog("NEWLOOP-FAST ERR: "..tostring(errBody))
             end
         end
     end)
@@ -6337,11 +6231,11 @@ swEv:Connect(function(nowOn)
             while not stopRequested do
                 if sesiAktif==1 then
                     local ok,err = pcall(runSesi1)
-                    if not ok then print("[UPLVL-DBG] runSesi1 ERROR (swEv):", tostring(err)) end
+                    if not ok then addLog("runSesi1 ERR: "..tostring(err)) end
                     if not stopRequested then sesiAktif=2 end
                 else
                     local ok,err = pcall(runSesi2)
-                    if not ok then print("[UPLVL-DBG] runSesi2 ERROR (swEv):", tostring(err)) end
+                    if not ok then addLog("runSesi2 ERR: "..tostring(err)) end
                     if not stopRequested then sesiAktif=1 end
                 end
             end
@@ -6383,9 +6277,7 @@ swNewEv:Connect(function(nowOn)
 end)
 
 -- auto-start: autolvlneww default ON saat script pertama jalan
-print("[UPLVL-DBG] task.defer: running=", running, "_newRunning=", _newRunning)
 task.defer(function()
-    print("[UPLVL-DBG] task.defer FIRED: running=", running, "_newRunning=", _newRunning)
     if not _newRunning and not running then
         setSwNew(true)
         if swNewLbl then swNewLbl.Text="AUTOLVLNEWW — RUNNING" end
@@ -6395,16 +6287,14 @@ task.defer(function()
             local ok, err = pcall(runNewLoop)
             if not ok then
                 addLog("AUTOLVLNEWW ERR: "..tostring(err))
-                print("[NEWLOOP] ERR:", tostring(err))
                 -- v8.542: auto-restart setelah error (delay 3s)
-                print("[NEWLOOP] auto-restart dalam 3s...")
                 task.wait(3)
                 if not _newStopRequested then
                     addLog("AUTOLVLNEWW auto-restart...")
                     local ok2, err2 = pcall(runNewLoop)
                     if not ok2 then
                         addLog("AUTOLVLNEWW ERR (restart): "..tostring(err2))
-                        print("[NEWLOOP] ERR (restart):", tostring(err2))
+                        addLog("AUTOLVLNEWW ERR (restart2): "..tostring(err2))
                     end
                 end
             end
@@ -6415,7 +6305,6 @@ task.defer(function()
             addLog("AUTOLVLNEWW stop.")
         end)
     elseif running then
-        print("[UPLVL-DBG] task.defer: skip karena running=true sudah")
     end
 end)
 
@@ -8178,10 +8067,8 @@ do
             end
         end
         if not _myFarm then
-            print("[UPLVL-DBG][cleanFruit] farm tidak ketemu, skip")
             return
         end
-        print("[UPLVL-DBG][cleanFruit] farm OK, DescendantAdded ON")
         -- init: hapus semua children kecuali Grow
         local n = 0
         pcall(function()
@@ -8207,9 +8094,7 @@ do
 
     -- v8.509: autoCollect loop independent — scan+collect mutasi tiap 0.7s, jalan terus walau AUTOLVLNEWW off
     -- v8.538: tambah print confirm loop started + debug kalau shovel=0 padahal ada buah
-    print("[UPLVL-DBG] autoCollect loop SPAWN")
     task.spawn(function()
-        print("[UPLVL-DBG] autoCollect loop STARTED (inside task.spawn)")
         local _acIter = 0
         while true do
             task.wait(0.7)
@@ -8217,20 +8102,18 @@ do
                 -- v8.541: pakai _G expose karena scanFruits/doCollect local, nil di do..end block ini
                 local _sf = _G._UPL_scanFruits
                 local _dc = _G._UPL_doCollect
-                if not _sf then print("[UPLVL-DBG][autoCollect] _G._UPL_scanFruits nil!") return end
-                if not _dc then print("[UPLVL-DBG][autoCollect] _G._UPL_doCollect nil!") return end
+                if not _sf then return end
+                if not _dc then return end
                 local data = _sf()
                 _acIter = _acIter + 1
                 -- v8.539: log tiap 10 iterasi (7s) untuk lihat shovel count
                 if _acIter % 10 == 0 then
-                    print("[UPLVL-DBG][autoCollect] iter="..tostring(_acIter).." shovel="..#data.shovel)
                 end
                 if #data.shovel > 0 then
                     _dc(data.shovel)
                 end
             end)
             if not ok then
-                print("[UPLVL-DBG][autoCollect] pcall ERR: "..tostring(err))
             end
         end
     end)
@@ -8300,10 +8183,8 @@ do
             for _, obj in ipairs(workspace:GetChildren()) do
                 if obj.Name:find("_DiggingGrid") then
                     pcall(function() obj:Destroy() end)
-                    print("[FarmCleaner] DiggingGrid destroyed: "..obj.Name)
                 end
             end
-            print("[FarmCleaner] world clean selesai")
         end)
 
         -- loop: hapus visual di kebun sendiri tiap CLEAN_INTERVAL detik
@@ -8332,7 +8213,6 @@ do
                         or tree:GetAttribute("Seed") ~= nil
                         or tree:GetAttribute("SeedType") ~= nil
                     if not isTree then
-                        print("[FarmCleaner] skip non-tree: "..tostring(tree.Name))
                         continue
                     end
                     -- hapus Part visual pohon (bukan Fruits/Fruit_Spawn/Grow/data)
