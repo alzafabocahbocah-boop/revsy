@@ -1,4 +1,5 @@
--- uplevelnew v8.682
+-- uplevelnew v8.683
+-- v8.683: conn:Disconnect() saat DS mati/reconnect + DescendantAdded name filter UUID — port up3.8kg
 -- v8.682: deepFind pisah dari action (kumpul hits dulu baru swap) — cegah duplikat task.spawn per event, port pola up3.8kg
 -- v8.680: monitor ge2.ChildAdded — kalau server buat DataStream baru (tanpa destroy lama), langsung connect listener baru
 -- v8.679: auto-reconnect DS kalau DataStream di-replace server (AncestryChanged → WaitForChild lagi, connect listener baru)
@@ -214,7 +215,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.682"  -- v8.682: deepFind pisah dari action — cegah duplikat spawn
+local VERSION = "v8.683"  -- v8.683: conn:Disconnect + DescendantAdded UUID filter
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3772,6 +3773,8 @@ do
                         local conn2 = workspace.DescendantAdded:Connect(function(d)
                             if done then return end
                             if not d:IsA("Model") then return end
+                            -- v8.683: filter UUID format — skip model bukan pet (port up3.8kg)
+                            if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
                             local dn = d.Name
                             local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
                             if d8 ~= r8 then return end
@@ -3821,6 +3824,8 @@ do
                         local conn2 = workspace.DescendantAdded:Connect(function(d)
                             if done then return end
                             if not d:IsA("Model") then return end
+                            -- v8.683: filter UUID format — skip model bukan pet (port up3.8kg)
+                            if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
                             local dn = d.Name
                             local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
                             if d8 ~= r8 then return end
@@ -3873,21 +3878,21 @@ do
 
         -- v8.679: connectDS — bisa dipanggil ulang saat reconnect
         local function connectDS(ds)
-            ds.OnClientEvent:Connect(function(...)
+            -- v8.683: simpan conn supaya bisa Disconnect saat DS mati — cegah listener ganda saat reconnect
+            local conn = ds.OnClientEvent:Connect(function(...)
                 local args = {...}
                 local svc = tostring(args[2] or "")
                 if not svc:find("ActivePets",1,true) then return end
                 local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
-                -- v8.682: deepFind kumpul dulu, baru processHits — cegah duplikat spawn
                 if data then processHits(deepFind(data, 0)) end
             end)
-            -- v8.675+679: monitor DS dead → auto-reconnect
             ds.AncestryChanged:Connect(function()
                 if ds.Parent == nil then
                     tsLog("DS DEAD — reconnect...")
                     if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "DS DEAD", "reconn") end
+                    -- v8.683: disconnect listener lama sebelum reconnect — cegah 2 listener aktif
+                    pcall(function() conn:Disconnect() end)
                     _G._ZenxDSSwapConnected = false
-                    -- v8.679: tunggu DS baru lalu connect ulang
                     task.spawn(function()
                         task.wait(1)
                         local dsNew = ge2 and ge2:WaitForChild("DataStream", 30)
