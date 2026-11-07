@@ -1,4 +1,5 @@
--- uplevelnew v8.701
+-- uplevelnew v8.702
+-- v8.702: nobaku incomplete — equip langsung per slot dari pool (bukan equipSesi), cover T-Rex slot1-6 + Peacock
 -- v8.701: hapus ZenxAnimDbg debug panel kanan + semua _ZenxAnimDbgLog/_ZenxAnimDbgDS calls
 -- v8.700: nobaku incomplete check — cek semua slot NOBAKU_DEF (T-Rex 1-6 + Peacock), equip yang missing via equipSesi
 -- v8.699: swap ke nobaku equip T-Rex slot4+5+6 — slot4 yang di-unequip saat swap ke main sekarang di-equip ulang
@@ -231,7 +232,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.701"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.702"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -5865,26 +5866,37 @@ local function runNewLoop()
                     end)  -- v8.624: tutup task.spawn delay 5s
                 end
             elseif nmC >= 1 and nmC < 200 and _newwTimAktif == "nobaku" and not _newwSwapping then
-                -- v8.700: cek semua UUID di sesiPool[5] yang sesuai NOBAKU_DEF (T-Rex+Peacock) ada di workspace
-                -- kalau ada yang missing → equipSesi ulang (handle T-Rex 1-6 + Peacock sekaligus)
+                -- v8.702: cek semua slot di pool5 (T-Rex slot1-6 + Peacock) yang belum ada di workspace
+                -- equip langsung per slot — tidak pakai equipSesi (equipSesi hanya equip sesuai DEF jml=4, slot4-6 kelewat)
                 local pool5 = sesiPool[5] or {}
-                local missingCount = 0
-                -- cek semua tipe di NOBAKU_DEF
-                for _, defEntry in ipairs(AUTOLVLNEWW_NOBAKU_DEF) do
-                    local slots = pool5[defEntry.nama] or {}
-                    for si = 1, defEntry.jml do
-                        local e = slots[si]
-                        local ustr = e and e.uuid and tostring(e.uuid)
-                        if not ustr or not modelByUuid[ustr] then
-                            missingCount = missingCount + 1
-                        end
+                local missingSlots = {}
+                -- cek T-Rex semua slot yang ada di pool (1-6)
+                local trexSlots = pool5["T-Rex"] or {}
+                for si, e in pairs(trexSlots) do
+                    local ustr = e and e.uuid and tostring(e.uuid)
+                    if ustr and not modelByUuid[ustr] then
+                        table.insert(missingSlots, {tipe="T-Rex", si=si, uuid=e.uuid})
                     end
                 end
-                if missingCount > 0 then
-                    dbgLog("[newloop-fast] nobaku incomplete: "..missingCount.." pet missing — equipSesi ulang")
+                -- cek Peacock
+                local peacockSlots = pool5["Peacock"] or {}
+                for si, e in pairs(peacockSlots) do
+                    local ustr = e and e.uuid and tostring(e.uuid)
+                    if ustr and not modelByUuid[ustr] then
+                        table.insert(missingSlots, {tipe="Peacock", si=si, uuid=e.uuid})
+                    end
+                end
+                if #missingSlots > 0 then
+                    dbgLog("[newloop-fast] nobaku incomplete: "..#missingSlots.." slot missing — equip langsung")
                     _newwSwapping = true
                     task.spawn(function()
-                        pcall(function() equipSesi(5, AUTOLVLNEWW_NOBAKU_DEF) end)
+                        for _, m in ipairs(missingSlots) do
+                            pcall(function() equipPet(m.uuid) end)
+                            task.wait(0.4)
+                            local _au = _G._ZenxActiveUuids
+                            if _au then _au[tostring(m.uuid)] = true end
+                            dbgLog("[newloop-fast] nobaku equip "..m.tipe.." slot"..m.si..": "..tostring(m.uuid):sub(1,8))
+                        end
                         _newwSwapping = false
                     end)
                 end
