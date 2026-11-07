@@ -1,4 +1,5 @@
--- uplevelnew v8.673
+-- uplevelnew v8.674
+-- v8.674: debug DS 2x — log path deepFind kalau UUID muncul 2x dalam 1 detik (cari root cause)
 -- v8.673: fix double DS event dari 2 Roblox instance di server sama — skip uuid yang tidak ada di _kgContainer (bukan pet kita)
 -- v8.672: guard _G._ZenxDSSwapConnected — cegah double DataStream listener kalau script di-reload
 -- v8.671: fix compile error line 1044 — sisa potongan print debug (end)(), ", ") terhapus setengah
@@ -206,7 +207,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.673"  -- v8.673: skip DS uuid bukan milik player ini
+local VERSION = "v8.674"  -- v8.674: debug DS 2x path log
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3703,10 +3704,13 @@ do
 
         local _debounce = {}  -- [raw8] = tick()
 
-        local function deepFind(t, depth)
+        local _dsPathLog = {}  -- [r8] = path terakhir
+
+        local function deepFind(t, depth, path)
             depth = depth or 0
+            path = path or "root"
             if depth > 12 or type(t) ~= "table" then return end
-            for _, v in pairs(t) do
+            for k, v in pairs(t) do
                 if type(v) == "table" then
                     local v1 = tostring(v[1] or "")
                     if v1:find("CustomAnimationState",1,true) then
@@ -3716,12 +3720,21 @@ do
                         -- ekstrak uuid
                         local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
                         local raw = uuid:gsub("[{}]","")
-                        -- debounce 0.5s per uuid
+                        -- v8.674dbg: log path deepFind
+                        local curPath = path.."["..tostring(k).."]"
+                        local r8tmp = raw:sub(1,8)
+                        if _dsPathLog[r8tmp] then
+                            tsLog("DS2x "..r8tmp.." path1="..(_dsPathLog[r8tmp]).." path2="..curPath)
+                        else
+                            _dsPathLog[r8tmp] = curPath
+                            task.delay(1, function() _dsPathLog[r8tmp] = nil end)
+                        end
                         local r8 = raw:sub(1,8)
                         local now = tick()
+                        -- v8.674: skip kalau uuid ini sedang dalam proses swap (bukan debounce waktu)
+                        if _debounce[r8] then continue end
                         -- cek tipe pet dari _kgContainer
                         -- v8.673: kalau uuid tidak ada di _kgContainer → bukan pet kita → skip
-                        -- (fix double DS event dari 2 Roblox instance di server yang sama)
                         local tl = ""
                         if _kgContainer then
                             local e = _kgContainer["{"..raw.."}"] or _kgContainer[raw]
@@ -3729,14 +3742,13 @@ do
                                 tl = tostring(e.PetType or (e.PetData and e.PetData.PetType) or ""):lower()
                             end
                         end
-                        -- v8.673: skip uuid yang tidak dikenal di _kgContainer (pet instance lain)
                         if tl == "" then continue end
                         -- v8.660: report ke debug panel
                         if _G._ZenxAnimDbgDS then pcall(_G._ZenxAnimDbgDS, anim, r8) end
                         -- Peacock: animStr fan
                         if anim == "fan" and tl:find("peacock",1,true) then
                             if not (_newRunning or running) then continue end
-                            _debounce[r8] = now
+                            _debounce[r8] = true  -- v8.674: lock selama swap berlangsung
                             tsLog("Peacock fan → swap "..r8)
                             if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "unequip>", r8) end
                             task.spawn(function()
@@ -3776,6 +3788,7 @@ do
                                 else
                                     if _G._ZenxAnimDbgLog then pcall(_G._ZenxAnimDbgLog, "equip(nopos)", r8) end
                                 end
+                                _debounce[r8] = nil  -- v8.674: unlock setelah swap selesai
                             end)
                         -- Spider weave → swap
                         elseif anim == "weave" and tl:find("spider",1,true) then
@@ -3835,7 +3848,7 @@ do
                             end)
                         end
                     else
-                        deepFind(v, depth+1)
+                        deepFind(v, depth+1, path.."["..tostring(k).."]")
                     end
                 end
             end
