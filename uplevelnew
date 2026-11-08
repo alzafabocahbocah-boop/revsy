@@ -1,4 +1,5 @@
--- uplevelnew v8.712
+-- uplevelnew v8.713
+-- v8.713: fix bahan masuk 3 — tambah _G._ZenxBahanLock mutex di equipOneBahan (cegah concurrent call equip bersamaan)
 -- v8.712: fix bahan age 500 — (1) re-equip "kunci" tambah filter age<max, (2) unequipBahanTua pakai getAgeFromWorkspace (bukan getAgeFallback yg stale), (3) sort auto bahan by age asc dulu (termuda dipilih)
 -- v8.711: fix 3 bug CD — (1) threshold stale watchdog 3s→4s (sama dg petReadyUpl), (2) jangan reset _cdFirstSeen saat re-equip (cegah loop infinite), (3) guard _cdWatchReeq supaya ready-loop tidak double-swap saat watchdog sedang re-equip
 -- v8.710: remove isMyPet check — roar/weave/fan langsung swap tanpa filter UUID
@@ -4094,6 +4095,8 @@ local _activeUuids = _G._ZenxActiveUuids
 -- v8.561: jadikan _G supaya GUI loop (deklarasi di atas) bisa akses tabel yang sama
 if type(_G._ZenxBahanUuids) ~= "table" then _G._ZenxBahanUuids = {} end
 if type(_G._ZenxBahanEquipTime) ~= "table" then _G._ZenxBahanEquipTime = {} end
+-- v8.713: mutex untuk equipOneBahan — cegah concurrent call equip bahan bersamaan → bahan masuk 3
+if _G._ZenxBahanLock == nil then _G._ZenxBahanLock = false end
 -- v8.608: history bahan selesai (nama + durasi) — max 5 entry terakhir
 if type(_G._ZenxBahanHistory) ~= "table" then _G._ZenxBahanHistory = {} end
 local _bahanUuids = _G._ZenxBahanUuids
@@ -4309,6 +4312,10 @@ end
 
 -- v8.455: equipOneBahan -> equipBahans, support 2 slot bahan aging bersamaan
 equipOneBahan = function()
+    -- v8.713: mutex — kalau ada call lain lagi jalan, skip biar tidak overlap → bahan masuk 3
+    if _G._ZenxBahanLock then return end
+    _G._ZenxBahanLock = true
+    local ok, err = pcall(function()
     -- baca jml Bahan dari sesi aktif
     -- v8.557: fallback 0 (bukan 2) agar tim tanpa Bahan (nobaku/nm0) tidak equip Bahan sama sekali
     local BAHAN_SLOT = 0
@@ -4442,6 +4449,9 @@ equipOneBahan = function()
     if countBahan() == 0 then
         addLog("Tidak ada bahan tersedia (umur < "..CFG.bahanMaxAge..")")
     end
+    end) -- end pcall
+    _G._ZenxBahanLock = false  -- v8.713: release lock selalu, walau error
+    if not ok then dbgLog("[equipOneBahan] ERR: "..tostring(err)) end
 end
 
 unequipBahanTua = function()
