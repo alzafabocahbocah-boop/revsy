@@ -1,4 +1,4 @@
--- uplevelnew v8.726
+-- uplevelnew v8.727
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.726"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.727"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -1099,8 +1099,19 @@ local function ambilContainer()
     -- RC dipanggil tiap refresh (ringan, bukan getgc) — _kgContainerDone tetap dipakai sebagai flag "pernah berhasil"
     local fresh = findMemoryContainer()
     if fresh then
+        local n = 0; for _ in pairs(fresh) do n = n + 1 end
+        if not _kgContainerDone then
+            print("[upkgstat-dbg] RC berhasil pertama kali — container "..n.." entry")
+        end
         _kgContainer = fresh
         _kgContainerDone = true
+    else
+        -- v8.727: log tiap gagal (max 1x per menit supaya tidak spam)
+        local now = os.time()
+        if not _kgLastFailLog or (now - _kgLastFailLog) >= 60 then
+            _kgLastFailLog = now
+            print("[upkgstat-dbg] RC GAGAL — _kgContainer="..((_kgContainer ~= nil) and "ada (stale)" or "nil"))
+        end
     end
     return _kgContainer
 end
@@ -1864,7 +1875,7 @@ do
                 end
                 local c = _kgContainer
                 if not c then
-                    dbgLog("[upkgstat-dbg] SKIP — _kgContainer nil (RC belum berhasil?)")
+                    print("[upkgstat-dbg] SKIP tulis file — _kgContainer nil")
                     return
                 end
                 local plus, minus, total = 0, 0, 0
@@ -7939,7 +7950,7 @@ task.spawn(function()
         end)
         task.wait(1)
     end
-    print("[uplevelnew] startup kelar v8.726 (10s tap kanan atas + keyboard)")
+    print("[uplevelnew] startup kelar v8.727 (10s tap kanan atas + keyboard)")
 end)
 
 -- ============================================================
