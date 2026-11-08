@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.749"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.750"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -4063,6 +4063,23 @@ do
         end
 
         -- v8.682: proses hits di luar deepFind — 1 event = 1x kumpul, baru loop swap
+        local function isMyPetUUID(raw)
+            -- v8.750: cek apakah UUID ada di backpack atau workspace (modelByUuid) kita
+            if modelByUuid and modelByUuid[raw] then return true end
+            if modelByUuid and modelByUuid["{"..raw.."}"] then return true end
+            local bp = plr:FindFirstChild("Backpack")
+            if bp then
+                for _, t in ipairs(bp:GetChildren()) do
+                    local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                    if u then
+                        local uclean = tostring(u):gsub("[{}]","")
+                        if uclean == raw then return true end
+                    end
+                end
+            end
+            return false
+        end
+
         local function processHits(hits)
             -- dedup per r8 dalam 1 event (kalau uuid muncul 2x di tree)
             local seen = {}
@@ -4073,9 +4090,12 @@ do
                 local r8 = raw:sub(1,8)
                 if seen[r8] then continue end  -- duplikat dalam 1 event → skip
                 seen[r8] = true
-                -- v8.710: remove isMyPet — langsung swap, server reject kalau bukan milik kita
-                -- v8.688: no debounce check
-                -- v8.660: report ke debug panel
+                -- v8.750: cek apakah UUID milik kita — kalau bukan skip (pet akun lain di server)
+                local mine = isMyPetUUID(raw)
+                if not mine then
+                    tsLog("SKIP "..anim.." uuid="..r8.." (bukan pet kita)")
+                    continue
+                end
                 -- Peacock: animStr fan
                 if anim == "fan" then
                     -- v8.689: global fan queue — tunggu giliran (jeda 0.5s antar swap)
