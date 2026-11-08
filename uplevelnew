@@ -1,4 +1,4 @@
--- uplevelnew v8.745
+-- uplevelnew v8.746
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.745"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.746"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3909,7 +3909,8 @@ end
 local unequipPet, equipPet
 local _swapLastSwap = {}
 do
-    local ge2 = RS:FindFirstChild("GameEvents")
+    -- v8.746: WaitForChild supaya tidak nil kalau GameEvents belum ready saat inject
+    local ge2 = RS:FindFirstChild("GameEvents") or RS:WaitForChild("GameEvents", 10)
     local pcu2 = ge2 and ge2:FindFirstChild("PetCooldownsUpdated")
     local req2 = ge2 and ge2:FindFirstChild("RequestPetCooldowns")
     if pcu2 and pcu2:IsA("RemoteEvent") then
@@ -3997,10 +3998,8 @@ do
         end
     end)
     -- DataStream swap: Peacock "fan" + T-Rex "Eat" (T-Rex disabled flag, Peacock aktif)
-    -- v8.672: guard _G supaya tidak double-connect kalau script di-reload tanpa rejoin
-    if _G._ZenxDSSwapConnected then
-        addLog("[swap] ds2 sudah connect — skip (reload guard)")
-    else
+    -- v8.746: hapus reload guard _ZenxDSSwapConnected — listener lama mati saat re-inject,
+    -- guard ini justru bikin swap tidak connect ulang. Tiap inject selalu connect fresh.
     _G._ZenxDSSwapConnected = true
     task.spawn(function()
         local function tsLog(msg) addLog("[swap] "..tostring(msg)); dbgLog("[swap] "..tostring(msg)) end
@@ -4239,7 +4238,7 @@ do
 
         tsLog("Peacock fan swap listener ON — CENTER("..PEACOCK_CENTER.X..","..PEACOCK_CENTER.Y..","..PEACOCK_CENTER.Z..")")
     end)
-    end -- v8.672: end if _G._ZenxDSSwapConnected guard
+    -- v8.746: end do-block DataStream swap (reload guard dihapus)
 
 end
 local function petReadyUpl(uuid)
