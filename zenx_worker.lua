@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.636"
+local VERSION = "9.637"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5699,6 +5699,13 @@ local function run(cfg)
                         info("[upkgstat-debug] files: " .. table.concat(_dbgFound, ", "))
                     else
                         warn("[upkgstat-debug] TIDAK ADA file zenx_upkgstat_*.json di semua dir!")
+                        -- v9.637: cari lebih luas — find di seluruh /sdcard + /storage
+                        local _found = sh("su -c 'find /sdcard /storage/emulated/0 -maxdepth 6 -name \"zenx_upkgstat_*.json\" 2>/dev/null | head -20'") or ""
+                        if _found ~= "" then
+                            warn("[upkgstat-debug] TAPI file ADA di: " .. _found:gsub("\n", " | "))
+                        else
+                            warn("[upkgstat-debug] find luas juga tidak nemu — file belum pernah ditulis di device ini")
+                        end
                     end
                     local items = {}
                     local seen = {}
