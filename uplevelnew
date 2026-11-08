@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.751"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.752"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -5917,6 +5917,95 @@ local function runNewLoop()
     setStatus("AUTOLVLNEWW — equip", C.accent)
     _clusterPos = farmCenter()
     waitForContainer(10)
+    -- v8.752: startup scan — pause 3s dulu biar pet masuk semua, baru scan workspace + assign ke pool
+    do
+        dbgLog("[startup] pause 3s — tunggu pet masuk workspace...")
+        task.wait(3)
+        -- Scan modelByUuid: pet yang sudah equip di workspace
+        -- Assign ke sesiPool[5] slot yang masih kosong (uuid valid tapi slot belum diisi)
+        local pool5 = sesiPool[5]
+        if not pool5 then sesiPool[5] = {}; pool5 = sesiPool[5] end
+        -- Hitung slot yang sudah terisi valid per tipe
+        local function getTipeFromModel(mdl)
+            -- coba attribute f (tipe tanpa mutation prefix)
+            local _ok, rawTipe = pcall(function() return mdl:GetAttribute("f") end)
+            if not _ok then rawTipe = nil end
+            if not rawTipe or rawTipe == "" then
+                local _ok2; _ok2, rawTipe = pcall(function() return mdl:GetAttribute("PetType") end)
+                if not _ok2 then rawTipe = nil end
+            end
+            if not rawTipe or rawTipe == "" then
+                local pd = mdl:FindFirstChild("PetData")
+                if pd then
+                    local pt = pd:FindFirstChild("PetType")
+                    rawTipe = pt and tostring(pt.Value) or nil
+                end
+            end
+            if not rawTipe or rawTipe == "" then rawTipe = mdl.Name end
+            return stripMutation and stripMutation(tostring(rawTipe)) or tostring(rawTipe)
+        end
+        -- Kumpulkan semua pet yang sudah ada di workspace per tipe
+        local wsPerTipe = {}  -- tipe -> list uuid
+        for uuid, mdl in pairs(modelByUuid) do
+            local ok, tipe = pcall(getTipeFromModel, mdl)
+            if ok and tipe and tipe ~= "" then
+                if not wsPerTipe[tipe] then wsPerTipe[tipe] = {} end
+                table.insert(wsPerTipe[tipe], uuid)
+            end
+        end
+        -- Log summary pet yang ketemu di workspace
+        local wsSummary = ""
+        for tipe, uuids in pairs(wsPerTipe) do
+            wsSummary = wsSummary .. tipe .. "×" .. #uuids .. " "
+        end
+        dbgLog("[startup] workspace: " .. (wsSummary ~= "" and wsSummary or "(kosong)"))
+        -- Assign ke pool5 slot: pakai POOL_DEF sebagai referensi slot (T-Rex max 6, dll)
+        local function assignToPool(tipeName, maxSlot)
+            if not pool5[tipeName] then pool5[tipeName] = {} end
+            local slotTbl = pool5[tipeName]
+            local wsUuids = wsPerTipe[tipeName] or {}
+            -- Cek slot yang sudah ada UUID valid
+            local usedUuids = {}
+            for i = 1, maxSlot do
+                if slotTbl[i] and slotTbl[i].uuid then
+                    local ustr = tostring(slotTbl[i].uuid)
+                    if modelByUuid[ustr] or (_kgContainer and _kgContainer[ustr]) then
+                        usedUuids[ustr] = true
+                    else
+                        -- UUID lama tidak valid lagi, hapus
+                        dbgLog("[startup] pool5 " .. tipeName .. "#" .. i .. " uuid expired, clear")
+                        slotTbl[i] = nil
+                    end
+                end
+            end
+            -- Assign UUID workspace yang belum ada di pool ke slot kosong
+            local slotIdx = 1
+            local assigned = 0
+            for _, ustr in ipairs(wsUuids) do
+                if not usedUuids[ustr] then
+                    -- Cari slot kosong
+                    while slotIdx <= maxSlot and slotTbl[slotIdx] and slotTbl[slotIdx].uuid do
+                        slotIdx = slotIdx + 1
+                    end
+                    if slotIdx <= maxSlot then
+                        slotTbl[slotIdx] = {uuid = ustr, tipe = tipeName}
+                        usedUuids[ustr] = true
+                        assigned = assigned + 1
+                        dbgLog("[startup] assign " .. tipeName .. "#" .. slotIdx .. " uuid=" .. ustr:sub(1,12))
+                        slotIdx = slotIdx + 1
+                    end
+                end
+            end
+            if assigned > 0 then
+                dbgLog("[startup] " .. tipeName .. " assigned " .. assigned .. " dari workspace")
+            end
+        end
+        -- Assign berdasarkan POOL_DEF (max slot per tipe)
+        for _, sup in ipairs(AUTOLVLNEWW_POOL_DEF) do
+            assignToPool(sup.nama, sup.jml)
+        end
+        dbgLog("[startup] scan selesai — lanjut cek NM + equip")
+    end
     -- v8.524: cek NM sebelum equip pertama — langsung pakai DEF yang tepat
     local _initData = scanFruits()
     local _initNM = _initData.nightmareCount
