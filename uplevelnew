@@ -1,4 +1,4 @@
--- uplevelnew v8.742
+-- uplevelnew v8.743
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.742"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.743"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -2840,7 +2840,136 @@ end)
 
 -- v8.606: DEBUG LOG + DEBUG WEATHER panel dihapus dari GUI
 -- dbgLog/weatherLog tetap no-op agar panggilan di tempat lain tidak error
-dbgLog = function() end
+-- v8.743: debug panel mengambang kanan tengah — nangkap dbgLog ([swap],[bahan-dbg],dll)
+do
+    local _dbgLogs = {}
+    local _dbgMaxLines = 60
+    local _dbgBox = nil
+
+    -- buat panel (pcall supaya error GUI tidak crash script)
+    pcall(function()
+        -- hapus panel lama kalau ada (reload guard)
+        if _G._ZenxDbgPanel then pcall(function() _G._ZenxDbgPanel:Destroy() end) end
+
+        local pg = plr:WaitForChild("PlayerGui", 5)
+        if not pg then return end
+
+        local sg = mk("ScreenGui", {
+            Name = "ZenxDbgGui", ResetOnSpawn = false,
+            DisplayOrder = 99, IgnoreGuiInset = true,
+            Parent = pg
+        })
+        _G._ZenxDbgPanel = sg
+
+        -- frame mengambang kanan tengah
+        local fr = mk("Frame", {
+            Size = UDim2.new(0, 300, 0, 320),
+            Position = UDim2.new(1, -310, 0.5, -160),
+            BackgroundColor3 = Color3.fromRGB(8, 8, 8),
+            BackgroundTransparency = 0.15,
+            BorderSizePixel = 0,
+            Parent = sg
+        })
+        mk("UICorner", {CornerRadius = UDim.new(0, 8), Parent = fr})
+        mk("UIStroke", {Color = Color3.fromRGB(78, 214, 204), Thickness = 1, Transparency = 0.6, Parent = fr})
+
+        -- title bar
+        local tb = mk("Frame", {
+            Size = UDim2.new(1, 0, 0, 24),
+            BackgroundColor3 = Color3.fromRGB(16, 16, 16),
+            BorderSizePixel = 0, Parent = fr
+        })
+        mk("UICorner", {CornerRadius = UDim.new(0, 8), Parent = tb})
+        mk("Frame", {Size=UDim2.new(1,0,0,8), Position=UDim2.new(0,0,1,-8),
+            BackgroundColor3=Color3.fromRGB(16,16,16), BorderSizePixel=0, Parent=tb})
+        lbl(tb, "DBG · SWAP", 11, Color3.fromRGB(78, 214, 204))
+
+        -- tombol clear kanan
+        local clrBtn = mk("TextButton", {
+            Size = UDim2.new(0, 36, 0, 20),
+            Position = UDim2.new(1, -38, 0, 2),
+            BackgroundColor3 = Color3.fromRGB(28, 28, 28),
+            Text = "CLR", Font = FONT_B, TextSize = 10,
+            TextColor3 = Color3.fromRGB(160, 160, 160),
+            AutoButtonColor = true, Parent = tb
+        })
+        mk("UICorner", {CornerRadius = UDim.new(0, 4), Parent = clrBtn})
+
+        -- scroll frame untuk logs
+        local sf = mk("ScrollingFrame", {
+            Size = UDim2.new(1, -4, 1, -28),
+            Position = UDim2.new(0, 2, 0, 26),
+            BackgroundTransparency = 1,
+            ScrollBarThickness = 3,
+            ScrollBarImageColor3 = Color3.fromRGB(78, 214, 204),
+            CanvasSize = UDim2.new(0, 0, 0, 0),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            BorderSizePixel = 0,
+            Parent = fr
+        })
+        local box = mk("TextLabel", {
+            Size = UDim2.new(1, -4, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            Text = "", Font = Enum.Font.Code,
+            TextSize = 10, TextColor3 = Color3.fromRGB(220, 220, 220),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            TextWrapped = true,
+            Parent = sf
+        })
+        _dbgBox = box
+
+        -- drag panel
+        local dragging, dragStart, startPos = false, nil, nil
+        tb.InputBegan:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+                dragging = true; dragStart = inp.Position; startPos = fr.Position
+            end
+        end)
+        tb.InputEnded:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end)
+        game:GetService("UserInputService").InputChanged:Connect(function(inp)
+            if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+                local delta = inp.Position - dragStart
+                fr.Position = UDim2.new(
+                    startPos.X.Scale, startPos.X.Offset + delta.X,
+                    startPos.Y.Scale, startPos.Y.Offset + delta.Y
+                )
+            end
+        end)
+
+        -- tombol clear
+        clrBtn.MouseButton1Click:Connect(function()
+            _dbgLogs = {}
+            if _dbgBox then _dbgBox.Text = "" end
+        end)
+    end)
+
+    local function _renderDbg()
+        if _dbgBox then
+            pcall(function() _dbgBox.Text = table.concat(_dbgLogs, "\n") end)
+            -- auto-scroll ke bawah
+            pcall(function()
+                local sf = _dbgBox.Parent
+                if sf and sf:IsA("ScrollingFrame") then
+                    sf.CanvasPosition = Vector2.new(0, math.huge)
+                end
+            end)
+        end
+    end
+
+    dbgLog = function(s)
+        local str = tostring(s)
+        local ts = string.format("%d.%02d", math.floor(tick() % 1000), math.floor((tick() % 1) * 100))
+        table.insert(_dbgLogs, ts.." "..str)
+        if #_dbgLogs > _dbgMaxLines then table.remove(_dbgLogs, 1) end
+        pcall(_renderDbg)
+    end
+end
 weatherLog = function() end
 
 
@@ -3851,7 +3980,7 @@ do
     else
     _G._ZenxDSSwapConnected = true
     task.spawn(function()
-        local function tsLog(msg) addLog("[swap] "..tostring(msg)) end
+        local function tsLog(msg) addLog("[swap] "..tostring(msg)); dbgLog("[swap] "..tostring(msg)) end
         if not ge2 then tsLog("ERR: ge2 nil"); _G._ZenxDSSwapConnected = false; return end
         local ds2 = ge2:WaitForChild("DataStream", 15)
         if not ds2 then tsLog("ERR: DataStream nil"); _G._ZenxDSSwapConnected = false; return end
