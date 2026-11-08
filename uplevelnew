@@ -1,4 +1,4 @@
--- uplevelnew v8.738
+-- uplevelnew v8.739
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.738"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.739"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -5439,6 +5439,8 @@ local _healerGen = (_G._ZenxHealerGen or 0) + 1
 _G._ZenxHealerGen = _healerGen
 -- v8.600: debounce per-UUID — jangan re-equip kalau baru di-equip dalam 10s (cegah loop akibat server respawn model)
 local _healerLastEquip = {}  -- uuid → tick() terakhir HEALER equip uuid ini
+-- v8.739: catat kapan pertama kali model hilang — equip hanya kalau sudah hilang > 2s (bukan lagi transit)
+local _healerMissingFirst = {}  -- uuid → tick() pertama kali model tidak ketemu
 task.spawn(function()
     while _G._ZenxHealerGen == _healerGen do  -- stop kalau generasi baru muncul
         local ok, err = pcall(function()
@@ -5475,11 +5477,17 @@ task.spawn(function()
                         addLog("[HEAL-DBG] STALE uuid="..tostring(uuid):sub(1,12).." tipe="..(getPetTipeFromUUID and getPetTipeFromUUID(uuid) or "?").." — bukan bahan/tim, hapus dari activeUuids")
                         au[uuid] = nil
                         if _activeUuidsSource then _activeUuidsSource[tostring(uuid)] = nil end
+                        _healerMissingFirst[uuid] = nil
                     elseif not modelByUuid[uuid] then
+                        -- v8.739: catat kapan pertama hilang, equip hanya kalau sudah hilang > 2s
+                        if not _healerMissingFirst[uuid] then _healerMissingFirst[uuid] = tick() end
+                        local missingDur = tick() - _healerMissingFirst[uuid]
                         -- v8.600: debounce — skip re-equip kalau baru di-equip dalam 10s terakhir
                         local lastT = _healerLastEquip[uuid] or 0
                         if tick() - lastT < 10 then
                             dbgLog("[healer-dbg] SKIP debounce "..tostring(uuid):sub(1,12).." ("..math.floor(10-(tick()-lastT)).."s lagi)")
+                        elseif missingDur < 2 then
+                            -- masih dalam 2s — mungkin transit di character/inventory, tunggu dulu
                         else
                             -- model belum muncul/hilang -> re-equip
                             local healTipe = getPetTipeFromUUID and getPetTipeFromUUID(uuid) or "?"
@@ -5517,9 +5525,13 @@ task.spawn(function()
                                 equipPet(uuid); task.wait(0.12)
                                 if _activeUuidsSource then _activeUuidsSource[tostring(uuid)] = "healer-reequip" end  -- v8.735
                                 _healerLastEquip[uuid] = tick()
+                                _healerMissingFirst[uuid] = nil  -- v8.739: reset setelah re-equip
                                 healed = healed + 1
                             end
                         end
+                    else
+                        -- model ada — reset missing timer supaya tidak salah trigger berikutnya
+                        _healerMissingFirst[uuid] = nil
                     end
                 end
                 if healed > 0 then addLog("HEAL: "..healed.." pet model hilang -> re-equip") end
@@ -8056,7 +8068,7 @@ task.spawn(function()
         end)
         task.wait(1)
     end
-    print("[uplevelnew] startup kelar v8.738 (10s tap kanan atas + keyboard)")
+    print("[uplevelnew] startup kelar v8.739 (10s tap kanan atas + keyboard)")
 end)
 
 -- ============================================================
