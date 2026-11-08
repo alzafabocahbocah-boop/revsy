@@ -147,18 +147,15 @@ end)
 -- helper: cek UUID milik kita
 local function getMyUuids()
     local mine = {}
+    -- HANYA dari _kgContainer (RC plr.Name) — sudah filter punya kita saja
+    -- ZenxModelByUuid TIDAK dipakai — isinya semua model workspace termasuk pet orang lain
     local kgC = _G and _G._kgContainer
     if kgC then
         for uuid in pairs(kgC) do
             mine[tostring(uuid):gsub("[{}]","")] = true
         end
     end
-    local mbu = _G and _G.ZenxModelByUuid
-    if mbu then
-        for name in pairs(mbu) do
-            mine[tostring(name):gsub("[{}]","")] = true
-        end
-    end
+    -- fallback backpack attribute kalau container belum ready
     local bp = plr:FindFirstChild("Backpack")
     if bp then
         for _, t in ipairs(bp:GetChildren()) do
