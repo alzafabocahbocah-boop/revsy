@@ -1,4 +1,4 @@
--- uplevelnew v8.735
+-- uplevelnew v8.736
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.735"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.736"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -6341,13 +6341,23 @@ local function runNewLoop()
             end
             local bakuSlot = pool5["Baku"] and pool5["Baku"][1]
             if bakuSlot and bakuSlot.uuid then
-                equipPet(bakuSlot.uuid); task.wait(0.5)
-                _activeUuids[tostring(bakuSlot.uuid)] = true
-                _activeUuidsSource[tostring(bakuSlot.uuid)] = "swap-main-baku"  -- v8.724
-                -- v8.527: verifikasi equip berhasil — retry sekali kalau model belum muncul
-                if not modelByUuid[tostring(bakuSlot.uuid)] then
-                    dbgLog("[newloop] Baku equip retry (model belum muncul)")
-                    task.wait(0.5); equipPet(bakuSlot.uuid); task.wait(0.5)
+                local bakuUstr = tostring(bakuSlot.uuid)
+                _activeUuids[bakuUstr] = true  -- v8.736: set SEBELUM equip supaya healer tidak overlap
+                _activeUuidsSource[bakuUstr] = "swap-main-baku"
+                equipPet(bakuSlot.uuid); task.wait(0.8)  -- v8.736: 0.5→0.8s tunggu server
+                -- v8.527: verifikasi equip berhasil — retry 2x kalau model belum muncul
+                if not modelByUuid[bakuUstr] then
+                    addLog("[newloop] Baku equip retry1 (model belum muncul)")
+                    task.wait(0.5); equipPet(bakuSlot.uuid); task.wait(0.8)
+                end
+                if not modelByUuid[bakuUstr] then
+                    addLog("[newloop] Baku equip retry2 (model masih belum muncul)")
+                    task.wait(0.5); equipPet(bakuSlot.uuid); task.wait(1.0)
+                end
+                if modelByUuid[bakuUstr] then
+                    addLog("[newloop] Baku equip OK: "..bakuUstr:sub(1,12))
+                else
+                    addLog("[newloop] Baku equip GAGAL setelah 3x retry!")
                 end
             else
                 -- v8.528: cari Baku dari container tanpa unequipAll
@@ -6384,6 +6394,7 @@ local function runNewLoop()
                 _newwTimAktif = "nobaku"
                 _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
             end
+            addLog("[newloop] NM0 pulih → unequipAll + equipSesi def="..(tostring(_newwTimAktif)))
             unequipAll(); equipSesi(5, _activeSesiDef)
         end end -- end if false (swap lama disabled v8.550)
 
@@ -8024,7 +8035,7 @@ task.spawn(function()
         end)
         task.wait(1)
     end
-    print("[uplevelnew] startup kelar v8.735 (10s tap kanan atas + keyboard)")
+    print("[uplevelnew] startup kelar v8.736 (10s tap kanan atas + keyboard)")
 end)
 
 -- ============================================================
