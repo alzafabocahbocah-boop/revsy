@@ -1,4 +1,5 @@
--- uplevelnew v8.710
+-- uplevelnew v8.711
+-- v8.711: fix 3 bug CD — (1) threshold stale watchdog 3s→4s (sama dg petReadyUpl), (2) jangan reset _cdFirstSeen saat re-equip (cegah loop infinite), (3) guard _cdWatchReeq supaya ready-loop tidak double-swap saat watchdog sedang re-equip
 -- v8.710: remove isMyPet check — roar/weave/fan langsung swap tanpa filter UUID
 -- v8.709: test — disable deepFind (flat loop) + disable queue 0.3s roar/weave
 -- v8.708: roar/weave queue 0.1s→0.3s
@@ -3660,6 +3661,10 @@ do
     local _cdFirstSeen = {}       -- key → tick() pertama kali terdeteksi di kebun
     local _cdReequipCooldown = {} -- key → tick() terakhir re-equip (hindari loop)
     local _cdWatchLog = {}        -- log lines untuk GUI
+    -- v8.711: guard saat watchdog sedang re-equip → ready-loop tidak double-swap
+    -- expose ke _G supaya ready-loop (di luar do-block) bisa cek
+    if not _G._cdWatchReeq then _G._cdWatchReeq = {} end
+    local _cdWatchReeq = _G._cdWatchReeq
 
     -- v8.449: GUI CD Watch dihapus (tidak dipakai, watchdog disabled)
     local _cdWatchLog = {}  -- tetap ada untuk compat cdLog calls
@@ -3688,7 +3693,8 @@ do
                 local lastReeq = _cdReequipCooldown[key] or 0
                 -- cek: cache nil ATAU cache stale >3s (event berhenti fire)
                 local ce = _cdCache[key]
-                local cacheStale = ce and (now - ce.at) > 3
+                -- v8.711: samakan threshold dg petReadyUpl (4s), dulu 3s → mismatch
+                local cacheStale = ce and (now - ce.at) > 4
                 local hasEvent = ce ~= nil and not cacheStale
                 if not hasEvent then noEvt = noEvt + 1 end
                 -- no event / stale → langsung re-equip (cooldown 20s biar tidak loop)
@@ -3696,13 +3702,17 @@ do
                     local reason = ce and "stale" or "nil"
                     cdLog(string.format("[CD-WATCH] %s %s → pickup", key:sub(1,8), reason), Color3.fromRGB(255,80,80))
                     _cdReequipCooldown[key] = now
-                    _cdFirstSeen[key] = now
+                    -- v8.711: JANGAN reset _cdFirstSeen (dulu reset → infinite loop tiap 25s)
+                    -- v8.711: set guard supaya ready-loop tidak double-swap selama re-equip
+                    _cdWatchReeq[key] = true
                     task.spawn(function()
                         -- v8.698: hapus gate running — re-equip tetap jalan walau farming pause
-                        if _isTransisi or _isCollecting then return end
+                        if _isTransisi or _isCollecting then _cdWatchReeq[key] = nil; return end
                         pcall(function() unequipPet(uuid) end)
                         task.wait(1.2)
                         pcall(function() equipPet(uuid) end)
+                        task.wait(0.5)
+                        _cdWatchReeq[key] = nil  -- guard off setelah re-equip selesai
                     end)
                 end
             end
@@ -5301,6 +5311,9 @@ task.spawn(function()
             local tipe = getPetTipeFromUUID(uuid)
             if not tipe then continue end
             if not SWAP_SKILL_CFG[tipe] then continue end
+            -- v8.711: skip kalau watchdog CD sedang re-equip pet ini
+            local cdKey = tostring(uuid):gsub("[{}]","")
+            if _G._cdWatchReeq and _G._cdWatchReeq[cdKey] then continue end
             local cfgVal  = SWAP_SKILL_CFG[tipe]
             if cfgVal == "noguard" then continue end  -- legacy, skip
             local isNocd  = (cfgVal == "nocd")       -- pet tanpa CD: swap kalau idle >3s
