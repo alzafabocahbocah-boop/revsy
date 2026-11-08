@@ -1,4 +1,4 @@
--- uplevelnew v8.734
+-- uplevelnew v8.735
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.734"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.735"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -5475,10 +5475,29 @@ task.spawn(function()
                             end
                             local bahanStr = #bahanList>0 and table.concat(bahanList,",") or "kosong"
                             addLog("[HEAL-DBG] re-equip tipe="..healTipe.." age="..healAge.." src="..healSrc.." uuid="..tostring(uuid):sub(1,12).." timAktif="..(tostring(_newwTimAktif or "?")).." sesi="..(tostring(_activeSesiNum or "?")).." bahan=["..bahanStr.."]")
-                            unequipPet(uuid); task.wait(0.15)
-                            equipPet(uuid); task.wait(0.12)
-                            _healerLastEquip[uuid] = tick()
-                            healed = healed + 1
+                            -- v8.735: cek apakah UUID ini ada di sesiPool — kalau tidak ada sama sekali, jangan re-equip
+                            local inAnyPool = false
+                            for _, sPool in pairs(sesiPool) do
+                                for _, slots in pairs(sPool) do
+                                    if type(slots)=="table" then
+                                        for _, e in pairs(slots) do
+                                            if e and tostring(e.uuid)==tostring(uuid) then inAnyPool=true end
+                                        end
+                                    end
+                                end
+                            end
+                            local inBahan = _G._ZenxBahanUuids and (_G._ZenxBahanUuids[uuid] or _G._ZenxBahanUuids[tostring(uuid)])
+                            if not inAnyPool and not inBahan then
+                                addLog("[HEAL-DBG] SKIP re-equip — uuid "..tostring(uuid):sub(1,12).." tidak ada di sesiPool maupun bahanUuids, hapus")
+                                au[uuid] = nil
+                                if _activeUuidsSource then _activeUuidsSource[tostring(uuid)] = nil end
+                            else
+                                unequipPet(uuid); task.wait(0.15)
+                                equipPet(uuid); task.wait(0.12)
+                                if _activeUuidsSource then _activeUuidsSource[tostring(uuid)] = "healer-reequip" end  -- v8.735
+                                _healerLastEquip[uuid] = tick()
+                                healed = healed + 1
+                            end
                         end
                     end
                 end
@@ -8005,7 +8024,7 @@ task.spawn(function()
         end)
         task.wait(1)
     end
-    print("[uplevelnew] startup kelar v8.734 (10s tap kanan atas + keyboard)")
+    print("[uplevelnew] startup kelar v8.735 (10s tap kanan atas + keyboard)")
 end)
 
 -- ============================================================
