@@ -1,4 +1,4 @@
--- uplevelnew v8.731
+-- uplevelnew v8.732
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.731"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.732"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -1873,7 +1873,7 @@ do
             local _shouldLog = (_now - _upkgLastLog) >= 60
             if _shouldLog then _upkgLastLog = _now end
             if _upkgIter == 1 then print("[upkgstat-dbg] loop start iter=1") end
-            pcall(function()
+            local _upkgOk, _upkgErr = pcall(function()
 
                 if not (plr and plr.Name) then
                     if _shouldLog then print("[upkgstat-dbg] SKIP — plr/plr.Name nil") end
@@ -1980,12 +1980,17 @@ do
                     jsonKVArr(petAgePlus), jsonKVArr(petAgeMinus),
                     os.time())
                 -- v8.721: tulis ke Workspace/ supaya worker bisa baca (sama dengan file denyut lainnya)
+                -- v8.732: pre-write confirm
+                if _shouldLog then print("[upkgstat-dbg] pre-write total="..total.." plr="..plr.Name) end
                 writefile("Workspace/zenx_upkgstat_" .. plr.Name .. ".json", js)
                 -- v8.728: log sukses (1x per menit)
                 if _shouldLog then
                     print("[upkgstat-dbg] OK tulis — total="..total.." udah="..plus.." belum="..minus.." maxInv="..(_G.__ZenxMaxPetCache or 0).." container="..( function() local n=0; for _ in pairs(c) do n=n+1 end; return n end )())
                 end
             end)
+            if not _upkgOk and _upkgErr then
+                print("[upkgstat-dbg] ERROR: " .. tostring(_upkgErr))
+            end
             task.wait(15)
         end
     end)
@@ -4328,6 +4333,7 @@ equipSesi = function(sesiNum, defs)
                 local uuidStr=tostring(p.uuid)
                 uuidEquipped[uuidStr]=true
                 _activeUuids[uuidStr]=true  -- healer track
+                _activeUuidsSource[uuidStr]="equipSesi2"  -- v8.732: PASS 2 source
                 -- v8.553: catat waktu equip Bahan agar TIME label di GUI bisa tampil
                 -- v8.554: daftarkan ke _bahanUuids agar UUID dikunci sampai age 500 (tidak ganti-ganti)
                 if nm == "Bahan" then
@@ -7980,7 +7986,7 @@ task.spawn(function()
         end)
         task.wait(1)
     end
-    print("[uplevelnew] startup kelar v8.731 (10s tap kanan atas + keyboard)")
+    print("[uplevelnew] startup kelar v8.732 (10s tap kanan atas + keyboard)")
 end)
 
 -- ============================================================
