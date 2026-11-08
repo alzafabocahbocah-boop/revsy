@@ -1,4 +1,4 @@
--- uplevelnew v8.747
+-- uplevelnew v8.760
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.759"  -- v8.759: isMyPetUUID hapus modelByUuid — fix false positive pet orang lain
+local VERSION = "v8.760"  -- v8.760: healer skip re-equip kalau swap in-flight (_ZenxSwapInFlight)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -4084,6 +4084,7 @@ do
 
         -- v8.758: debounce per-UUID — cegah multiple swap in-flight untuk pet yang sama
         local _swapInFlight = {}  -- r8 -> true kalau sedang swap
+        _G._ZenxSwapInFlight = _swapInFlight  -- expose ke healer
         local function withSwapDebounce(r8, fn)
             if _swapInFlight[r8] then return end
             _swapInFlight[r8] = true
@@ -5746,12 +5747,20 @@ task.spawn(function()
                                 au[uuid] = nil
                                 if _activeUuidsSource then _activeUuidsSource[tostring(uuid)] = nil end
                             else
+                                -- v8.760: skip re-equip kalau swap sedang in-flight untuk UUID ini
+                                local _sif = _G._ZenxSwapInFlight
+                                local r8h = tostring(uuid):gsub("[{}]",""):sub(1,8)
+                                if _sif and _sif[r8h] then
+                                    dbgLog("[healer-dbg] SKIP re-equip — swap in-flight "..r8h)
+                                    goto continueHeal
+                                end
                                 -- v8.739: langsung equip tanpa unequip dulu — healer cuma mastiin pet ada di garden
                                 equipPet(uuid); task.wait(0.12)
                                 if _activeUuidsSource then _activeUuidsSource[tostring(uuid)] = "healer-reequip" end  -- v8.735
                                 _healerLastEquip[uuid] = tick()
                                 _healerMissingFirst[uuid] = nil  -- v8.739: reset setelah re-equip
                                 healed = healed + 1
+                                ::continueHeal::
                             end
                         end
                     else
