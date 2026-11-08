@@ -1,4 +1,4 @@
--- uplevelnew v8.727
+-- uplevelnew v8.728
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.727"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.728"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -1867,15 +1867,22 @@ do
     task.spawn(function()
         while true do
             pcall(function()
-                if not (plr and plr.Name) then return end
-                -- v8.721: debug kenapa upkgstat tidak ditulis
+                -- v8.728: log lengkap tiap siklus (1x per menit supaya tidak spam)
+                local _now = os.time()
+                local _shouldLog = not _upkgLastLog or (_now - _upkgLastLog) >= 60
+                if _shouldLog then _upkgLastLog = _now end
+
+                if not (plr and plr.Name) then
+                    if _shouldLog then print("[upkgstat-dbg] SKIP — plr/plr.Name nil") end
+                    return
+                end
                 if not writefile then
-                    dbgLog("[upkgstat-dbg] SKIP — writefile tidak tersedia")
+                    if _shouldLog then print("[upkgstat-dbg] SKIP — writefile tidak tersedia (executor belum support?)") end
                     return
                 end
                 local c = _kgContainer
                 if not c then
-                    print("[upkgstat-dbg] SKIP tulis file — _kgContainer nil")
+                    if _shouldLog then print("[upkgstat-dbg] SKIP — _kgContainer nil (RC belum berhasil)") end
                     return
                 end
                 local plus, minus, total = 0, 0, 0
@@ -1971,6 +1978,10 @@ do
                     os.time())
                 -- v8.721: tulis ke Workspace/ supaya worker bisa baca (sama dengan file denyut lainnya)
                 writefile("Workspace/zenx_upkgstat_" .. plr.Name .. ".json", js)
+                -- v8.728: log sukses (1x per menit)
+                if _shouldLog then
+                    print("[upkgstat-dbg] OK tulis — total="..total.." udah="..plus.." belum="..minus.." maxInv="..(_G.__ZenxMaxPetCache or 0).." container="..( function() local n=0; for _ in pairs(c) do n=n+1 end; return n end )())
+                end
             end)
             task.wait(15)
         end
@@ -7950,7 +7961,7 @@ task.spawn(function()
         end)
         task.wait(1)
     end
-    print("[uplevelnew] startup kelar v8.727 (10s tap kanan atas + keyboard)")
+    print("[uplevelnew] startup kelar v8.728 (10s tap kanan atas + keyboard)")
 end)
 
 -- ============================================================
