@@ -1,4 +1,5 @@
--- uplevelnew v8.714
+-- uplevelnew v8.715
+-- v8.715: fix TIME ganti-ganti — 2 loop update bahanAgeL format beda (nama+waktu vs waktu doang), samakan ke format lengkap di keduanya
 -- v8.714: fix nyangkut di nobaku — _newwSwapping=true + _activeSesiDef=NOBAKU_DEF harus di-set SEBELUM task.spawn delay 5s (dulu ada gap 5s: timAktif=nobaku tapi _activeSesiDef masih main → equipOneBahan equip bahan lagi)
 -- v8.713: fix bahan masuk 3 — tambah _G._ZenxBahanLock mutex di equipOneBahan (cegah concurrent call equip bersamaan)
 -- v8.712: fix bahan age 500 — (1) re-equip "kunci" tambah filter age<max, (2) unequipBahanTua pakai getAgeFromWorkspace (bukan getAgeFallback yg stale), (3) sort auto bahan by age asc dulu (termuda dipilih)
@@ -2848,22 +2849,30 @@ local function updateUI(collected,kebun,sesiNum)
                 end
             end
             age500plusL.Text=tostring(plus); age500minusL.Text=tostring(minus)
-            -- bahan time (elapsed sejak equip)
-            -- v8.608: baca dari _G langsung agar tidak stale
+            -- bahan time (elapsed sejak equip) — v8.715: format sama dg background loop (nama+age+kg+waktu)
             do
-                local times = {}
+                local lines = {}
                 local _bu = type(_G._ZenxBahanUuids)=="table" and _G._ZenxBahanUuids or {}
                 local _bt = type(_G._ZenxBahanEquipTime)=="table" and _G._ZenxBahanEquipTime or {}
+                local cont = _kgContainer or {}
                 for uuid in pairs(_bu) do
                     local t0 = _bt[uuid]
-                    if t0 then
-                        local elapsed = math.floor(tick() - t0)
-                        local m = math.floor(elapsed / 60)
-                        local s = elapsed % 60
-                        table.insert(times, m..":"..string.format("%02d", s))
+                    local elapsed = t0 and math.floor(tick() - t0) or 0
+                    local m = math.floor(elapsed / 60)
+                    local s = elapsed % 60
+                    local timeStr = m..":"..string.format("%02d", s)
+                    local entry = cont[uuid] or cont[tostring(uuid)]
+                    local nama, age, kg = "?", 0, 0
+                    if entry and entry.PetData then
+                        nama = tostring(entry.PetType or entry.PetData.PetType or "?")
+                        nama = nama:match("^(.-)%s*%[") or nama
+                        age  = tonumber(entry.PetData.Level) or 0
+                        local bw = tonumber(entry.PetData.BaseWeight) or 0
+                        kg = bw * (age + 10) / 10
                     end
+                    table.insert(lines, string.format("%s (%d, %.0fkg)  %s", nama, age, kg, timeStr))
                 end
-                bahanAgeL.Text = #times > 0 and table.concat(times, "/") or "—"
+                bahanAgeL.Text = #lines > 0 and table.concat(lines, "\n") or "—"
             end
         end)
         if sesiNum then
