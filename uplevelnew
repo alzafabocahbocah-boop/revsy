@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.757"  -- v8.757: isMyPetUUID tambah fallback _kgContainer
+local VERSION = "v8.758"  -- v8.758: debounce per-UUID di swap DS — cegah multiple swap in-flight tabrakan
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -4087,6 +4087,18 @@ do
             return false
         end
 
+        -- v8.758: debounce per-UUID — cegah multiple swap in-flight untuk pet yang sama
+        local _swapInFlight = {}  -- r8 -> true kalau sedang swap
+        local function withSwapDebounce(r8, fn)
+            if _swapInFlight[r8] then return end
+            _swapInFlight[r8] = true
+            task.spawn(function()
+                local ok, err = pcall(fn)
+                if not ok then tsLog("swap-err "..r8..": "..tostring(err)) end
+                _swapInFlight[r8] = nil
+            end)
+        end
+
         local function processHits(hits)
             -- dedup per r8 dalam 1 event (kalau uuid muncul 2x di tree)
             local seen = {}
@@ -4112,7 +4124,8 @@ do
                     if waitNeeded > 0 then task.wait(waitNeeded) end
                     _fanLastSwap = tick()
                     tsLog("Peacock fan → swap "..r8)
-                    task.spawn(function()
+                    -- v8.758: debounce
+                    withSwapDebounce(r8, function()
                         pcall(function() unequipPet(raw) end); task.wait(0.03)
                         pcall(function() equipPet(raw) end)
                         local done, spawnPos = false, nil
@@ -4155,7 +4168,8 @@ do
                     -- if waitNeededW > 0 then task.wait(waitNeededW) end
                     -- _weaveLastSwap = tick()
                     tsLog("Spider weave → swap "..r8)
-                    task.spawn(function()
+                    -- v8.758: debounce
+                    withSwapDebounce(r8, function()
                         pcall(function() unequipPet(raw) end); task.wait(0.03)
                         pcall(function() equipPet(raw) end)
                         local done, spawnPos = false, nil
@@ -4198,7 +4212,8 @@ do
                     -- if waitNeededR > 0 then task.wait(waitNeededR) end
                     -- _roarLastSwap = tick()
                     tsLog("T-Rex roar → swap "..r8)
-                    task.spawn(function()
+                    -- v8.758: debounce — skip kalau swap untuk UUID ini sudah in-flight
+                    withSwapDebounce(r8, function()
                         pcall(function() unequipPet(raw) end); task.wait(0.03)
                         pcall(function() equipPet(raw) end)
                     end)
