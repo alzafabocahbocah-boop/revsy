@@ -1,4 +1,4 @@
--- uplevelnew v8.740
+-- uplevelnew v8.741
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -1956,8 +1956,12 @@ do
                     return "{" .. table.concat(parts, ",") .. "}"
                 end
                 -- bahan: tipe bahan yang sedang dipakai (ambil dari container via _bahanUuids)
+                -- v8.741: fallback ke _ZenxLastBahanUuids kalau _ZenxBahanUuids kosong (misal saat nobaku)
                 local bahan = {}
-                local _upkgBahanUuids = _G._ZenxBahanUuids or {}  -- v8.734: pakai _G langsung, bukan local scope
+                local _upkgBahanUuids = _G._ZenxBahanUuids or {}
+                if next(_upkgBahanUuids) == nil then
+                    _upkgBahanUuids = _G._ZenxLastBahanUuids or {}
+                end
                 if c then
                     for uuid in pairs(_upkgBahanUuids) do
                         local e = c[fmtUUID(uuid)] or c[tostring(uuid)]
@@ -4243,6 +4247,12 @@ unequipAll = function()
     for k in pairs(_activeUuids) do _activeUuids[k]=nil end; if _activeUuidsSource then for k in pairs(_activeUuidsSource) do _activeUuidsSource[k]=nil end end
     -- v8.554: clear _bahanUuids karena semua pet di-unequip (termasuk Bahan)
     -- agar equipOneBahan / equipSesi tidak skip uuid lama yang sudah tidak equip
+    -- v8.741: simpan ke _ZenxLastBahanUuids sebelum clear (upkgstat fallback ke ini saat nobaku)
+    if next(_bahanUuids) ~= nil then
+        if type(_G._ZenxLastBahanUuids) ~= "table" then _G._ZenxLastBahanUuids = {} end
+        for k in pairs(_G._ZenxLastBahanUuids) do _G._ZenxLastBahanUuids[k] = nil end
+        for k in pairs(_bahanUuids) do _G._ZenxLastBahanUuids[k] = true end
+    end
     for k in pairs(_bahanUuids) do _bahanUuids[k]=nil end
     for tri = 1, 3 do
         local uuids = {}
