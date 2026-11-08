@@ -1,4 +1,4 @@
--- uplevelnew v8.723
+-- uplevelnew v8.724
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -4150,6 +4150,9 @@ _G.ZenxUnequipPet = unequipPet  -- v8.637: expose untuk debug
 -- Disimpan di _G supaya healer loop bisa akses meski script di-re-exec
 if type(_G._ZenxActiveUuids) ~= "table" then _G._ZenxActiveUuids = {} end
 local _activeUuids = _G._ZenxActiveUuids
+-- v8.724: track jalur mana yang set UUID ke _activeUuids (untuk HEAL-DBG)
+if type(_G._ZenxActiveUuidsSource) ~= "table" then _G._ZenxActiveUuidsSource = {} end
+local _activeUuidsSource = _G._ZenxActiveUuidsSource
 -- v8.561: jadikan _G supaya GUI loop (deklarasi di atas) bisa akses tabel yang sama
 if type(_G._ZenxBahanUuids) ~= "table" then _G._ZenxBahanUuids = {} end
 if type(_G._ZenxBahanEquipTime) ~= "table" then _G._ZenxBahanEquipTime = {} end
@@ -4169,7 +4172,7 @@ local _geLogged = false      -- gameEvents log cukup sekali
 -- Mirip pickupAll uplevel asli: scan modelByUuid + workspace fresh, retry 3x
 unequipAll = function()
     _isTransisi = true
-    for k in pairs(_activeUuids) do _activeUuids[k]=nil end
+    for k in pairs(_activeUuids) do _activeUuids[k]=nil end; if _activeUuidsSource then for k in pairs(_activeUuidsSource) do _activeUuidsSource[k]=nil end end
     -- v8.554: clear _bahanUuids karena semua pet di-unequip (termasuk Bahan)
     -- agar equipOneBahan / equipSesi tidak skip uuid lama yang sudah tidak equip
     for k in pairs(_bahanUuids) do _bahanUuids[k]=nil end
@@ -4194,7 +4197,7 @@ end
 
 unequipAllExceptBahan = function()
     -- Sama seperti unequipAll tapi skip Bahan yang sedang aktif
-    for k in pairs(_activeUuids) do _activeUuids[k]=nil end
+    for k in pairs(_activeUuids) do _activeUuids[k]=nil end; if _activeUuidsSource then for k in pairs(_activeUuidsSource) do _activeUuidsSource[k]=nil end end
     for tri = 1, 3 do
         local uuids = {}
         for uuid in pairs(modelByUuid) do uuids[uuid] = true end
@@ -4221,7 +4224,7 @@ end
 -- Prioritas: slot manual dari sesiPool → auto dari container by tipe → fallback backpack
 equipSesi = function(sesiNum, defs)
     -- clear active uuid tracker + mimic slot tracker
-    for k in pairs(_activeUuids) do _activeUuids[k]=nil end
+    for k in pairs(_activeUuids) do _activeUuids[k]=nil end; if _activeUuidsSource then for k in pairs(_activeUuidsSource) do _activeUuidsSource[k]=nil end end
     for k in pairs(_mimicSlotByUuid) do _mimicSlotByUuid[k]=nil end
     local pool=sesiPool[sesiNum] or {}
     local uuidEquipped={}
@@ -4241,6 +4244,7 @@ equipSesi = function(sesiNum, defs)
                     equipPet(entry.uuid)
                     uuidEquipped[uuidStr]=true
                     _activeUuids[uuidStr]=true  -- healer track
+                    _activeUuidsSource[uuidStr]="equipSesi"  -- v8.724
                     -- assign slot posisi Mimic
                     if sup.nama == "Mimic Octopus" then
                         mimicSlotCounter = mimicSlotCounter + 1
@@ -5390,16 +5394,19 @@ task.spawn(function()
                         else
                             -- model belum muncul/hilang -> re-equip
                             local healTipe = getPetTipeFromUUID and getPetTipeFromUUID(uuid) or "?"
-                            -- v8.723: log sesi + bahan aktif
+                            local healAge = getAgeFromWorkspace and getAgeFromWorkspace(uuid) or -1
+                            local healSrc = _activeUuidsSource and (_activeUuidsSource[tostring(uuid)] or "?") or "?"
+                            -- v8.724: log sesi + jalur + age + bahan+age
                             local bahanList = {}
                             if type(_G._ZenxBahanUuids) == "table" then
                                 for bu in pairs(_G._ZenxBahanUuids) do
                                     local bt = getPetTipeFromUUID and getPetTipeFromUUID(bu) or "?"
-                                    bahanList[#bahanList+1] = bt.."("..tostring(bu):sub(1,8)..")"
+                                    local ba = getAgeFromWorkspace and getAgeFromWorkspace(bu) or -1
+                                    bahanList[#bahanList+1] = bt.."(age="..ba..")"
                                 end
                             end
                             local bahanStr = #bahanList>0 and table.concat(bahanList,",") or "kosong"
-                            addLog("[HEAL-DBG] re-equip tipe="..healTipe.." uuid="..tostring(uuid):sub(1,12).." timAktif="..(tostring(_newwTimAktif or "?")).." sesi="..(tostring(_activeSesiNum or "?")).." bahan=["..bahanStr.."]")
+                            addLog("[HEAL-DBG] re-equip tipe="..healTipe.." age="..healAge.." src="..healSrc.." uuid="..tostring(uuid):sub(1,12).." timAktif="..(tostring(_newwTimAktif or "?")).." sesi="..(tostring(_activeSesiNum or "?")).." bahan=["..bahanStr.."]")
                             unequipPet(uuid); task.wait(0.15)
                             equipPet(uuid); task.wait(0.12)
                             _healerLastEquip[uuid] = tick()
@@ -6217,6 +6224,7 @@ local function runNewLoop()
             if trex5 and trex5.uuid then
                 equipPet(trex5.uuid); task.wait(0.5)
                 _activeUuids[tostring(trex5.uuid)] = true
+                _activeUuidsSource[tostring(trex5.uuid)] = "swap-nobaku-trex5"  -- v8.724
                 -- verifikasi equip berhasil — retry sekali kalau model belum muncul
                 if not modelByUuid[tostring(trex5.uuid)] then
                     dbgLog("[newloop] T-Rex5 equip retry (model belum muncul)")
@@ -6244,6 +6252,7 @@ local function runNewLoop()
             if bakuSlot and bakuSlot.uuid then
                 equipPet(bakuSlot.uuid); task.wait(0.5)
                 _activeUuids[tostring(bakuSlot.uuid)] = true
+                _activeUuidsSource[tostring(bakuSlot.uuid)] = "swap-main-baku"  -- v8.724
                 -- v8.527: verifikasi equip berhasil — retry sekali kalau model belum muncul
                 if not modelByUuid[tostring(bakuSlot.uuid)] then
                     dbgLog("[newloop] Baku equip retry (model belum muncul)")
@@ -6268,6 +6277,7 @@ local function runNewLoop()
                 if foundBaku then
                     equipPet(foundBaku.uuid); task.wait(0.5)
                     _activeUuids[tostring(foundBaku.uuid)] = true
+                    _activeUuidsSource[tostring(foundBaku.uuid)] = "swap-main-baku-fallback"  -- v8.724
                 else
                     dbgLog("[newloop] Baku tidak ditemukan sama sekali — skip swap")
                 end
@@ -9168,7 +9178,7 @@ local function _mutSwapLineup(def, label, fase, sesiNum)
     task.wait(2)
 
     -- step 2: clear _activeUuids
-    for k in pairs(_activeUuids or {}) do _activeUuids[k] = nil end
+    for k in pairs(_activeUuids or {}) do _activeUuids[k] = nil end; if _activeUuidsSource then for k in pairs(_activeUuidsSource) do _activeUuidsSource[k]=nil end end
 
     -- step 3: cek pool — kalau ada UUID tersimpan, equip langsung
     local pool = (_mutPool and _mutPool[sesiNum]) or {}
@@ -9193,6 +9203,7 @@ local function _mutSwapLineup(def, label, fase, sesiNum)
         -- tandai _activeUuids (best-effort)
         for uuid in pairs(pool) do
             if _activeUuids then _activeUuids[uuid] = true end
+            if _activeUuidsSource then _activeUuidsSource[uuid] = "mutSwap" end  -- v8.724
         end
     else
         -- fallback: equipSesi auto-pick
