@@ -1,4 +1,4 @@
--- uplevelnew v8.747
+-- uplevelnew v8.760
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.759"  -- v8.759: isMyPetUUID hapus modelByUuid — fix false positive pet orang lain
+local VERSION = "v8.760"  -- v8.760: equipOneBahan — save ke _ZenxLastBahanUuids sebelum unequip bahan saat DEF no-Bahan (nobaku)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -4681,6 +4681,13 @@ equipOneBahan = function()
     -- kalau DEF aktif tidak punya Bahan sama sekali, langsung return — unequip bahan yang ada juga
     if not bahanAdaDiDef then
         local nUnequip = 0
+        -- v8.760: save ke _ZenxLastBahanUuids sebelum clear (agar nobaku→main bisa restore bahan yang sama)
+        if next(_bahanUuids) ~= nil then
+            if type(_G._ZenxLastBahanUuids) ~= "table" then _G._ZenxLastBahanUuids = {} end
+            for k in pairs(_G._ZenxLastBahanUuids) do _G._ZenxLastBahanUuids[k] = nil end
+            for k in pairs(_bahanUuids) do _G._ZenxLastBahanUuids[k] = true end
+            dbgLog("[bahan-dbg] DEF no-Bahan — save "..( function() local n=0; for _ in pairs(_bahanUuids) do n=n+1 end; return n end() ).." bahan ke LastBahanUuids sebelum unequip")
+        end
         for uuid in pairs(_bahanUuids) do
             pcall(function() unequipPet(uuid) end)
             _bahanUuids[uuid] = nil
