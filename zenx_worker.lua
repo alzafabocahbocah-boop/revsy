@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.634"
+local VERSION = "9.635"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5686,15 +5686,27 @@ local function run(cfg)
                     end
                     local items = {}
                     local seen = {}
+                    local lvlmaxParts = {}   -- v9.635: kumpulin buat auto-PUT /lvlmax
                     for line in rawU:gmatch("[^\n]+") do
                         local nama, js = line:match("zenx_upkgstat_(.-)%.json|(.+)")
                         if nama and js and #js > 5 and not seen[nama] then
                             seen[nama] = true
                             items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
+                            -- v9.635: ekstrak maxInv dan totalAll buat bangun string lvlmax
+                            local mx = tonumber(js:match('"maxInv"%s*:%s*(%d+)')) or 0
+                            local cn = tonumber(js:match('"totalAll"%s*:%s*(%d+)')) or 0
+                            if mx > 0 then
+                                lvlmaxParts[#lvlmaxParts+1] = nama .. "=" .. mx .. ":" .. cn
+                            end
                         end
                     end
                     if #items > 0 then
                         pcall(function() api_post(cfg, "/upkgstat-batch", '{"list":[' .. table.concat(items, ",") .. ']}') end)
+                    end
+                    -- v9.635: auto-PUT /lvlmax dari upkgstat supaya akun baru langsung muncul di picker
+                    if #lvlmaxParts > 0 then
+                        local lvlStr = table.concat(lvlmaxParts, ",")
+                        pcall(function() api_post(cfg, "/lvlmax", '{"data":"' .. lvlStr .. '"}', "PUT") end)
                     end
                 end
                 do
