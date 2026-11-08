@@ -1,4 +1,4 @@
--- uplevelnew v8.725
+-- uplevelnew v8.726
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.725"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.726"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -5390,7 +5390,25 @@ task.spawn(function()
                     activeCount = activeCount + 1
                 end
                 for uuid in pairs(au) do
-                    if not modelByUuid[uuid] then
+                    -- v8.726: skip UUID yang bukan bahan aktif DAN bukan pet tim — clear dari _activeUuids
+                    local isBahan = _G._ZenxBahanUuids and (_G._ZenxBahanUuids[uuid] or _G._ZenxBahanUuids[tostring(uuid)])
+                    local isTimAktif = _activeSesiDef ~= nil  -- ada def aktif
+                    -- cek apakah UUID ini ada di sesiPool (pet tim)
+                    local inPool = false
+                    for _, sPool in pairs(sesiPool) do
+                        for _, slots in pairs(sPool) do
+                            if type(slots) == "table" then
+                                for _, e in pairs(slots) do
+                                    if e and (tostring(e.uuid) == tostring(uuid)) then inPool = true end
+                                end
+                            end
+                        end
+                    end
+                    if not isBahan and not inPool then
+                        addLog("[HEAL-DBG] STALE uuid="..tostring(uuid):sub(1,12).." tipe="..(getPetTipeFromUUID and getPetTipeFromUUID(uuid) or "?").." — bukan bahan/tim, hapus dari activeUuids")
+                        au[uuid] = nil
+                        if _activeUuidsSource then _activeUuidsSource[tostring(uuid)] = nil end
+                    elseif not modelByUuid[uuid] then
                         -- v8.600: debounce — skip re-equip kalau baru di-equip dalam 10s terakhir
                         local lastT = _healerLastEquip[uuid] or 0
                         if tick() - lastT < 10 then
@@ -7921,7 +7939,7 @@ task.spawn(function()
         end)
         task.wait(1)
     end
-    print("[uplevelnew] startup kelar v8.725 (10s tap kanan atas + keyboard)")
+    print("[uplevelnew] startup kelar v8.726 (10s tap kanan atas + keyboard)")
 end)
 
 -- ============================================================
