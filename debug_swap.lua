@@ -200,7 +200,7 @@ local function updateCountBar()
         table.insert(parts, r8:sub(1,6)..":"..c.total.."/"..c.skipped.."s")
     end
     table.sort(parts)
-    lbCount.Text = (#parts>0 and table.concat(parts,"  ") or "—").." (total/skip)")
+    lbCount.Text = (#parts>0 and table.concat(parts,"  ") or "—").." (total/skip)"
 end
 
 -- ── Refresh pet info ─────────────────────────────────────────────────────────
