@@ -1,4 +1,5 @@
--- uplevelnew v8.711
+-- uplevelnew v8.712
+-- v8.712: fix bahan age 500 — (1) re-equip "kunci" tambah filter age<max, (2) unequipBahanTua pakai getAgeFromWorkspace (bukan getAgeFallback yg stale), (3) sort auto bahan by age asc dulu (termuda dipilih)
 -- v8.711: fix 3 bug CD — (1) threshold stale watchdog 3s→4s (sama dg petReadyUpl), (2) jangan reset _cdFirstSeen saat re-equip (cegah loop infinite), (3) guard _cdWatchReeq supaya ready-loop tidak double-swap saat watchdog sedang re-equip
 -- v8.710: remove isMyPet check — roar/weave/fan langsung swap tanpa filter UUID
 -- v8.709: test — disable deepFind (flat loop) + disable queue 0.3s roar/weave
@@ -4359,11 +4360,17 @@ equipOneBahan = function()
         local n = 0; for _ in pairs(_bahanUuids) do n = n + 1 end; return n
     end
 
-    -- re-equip yang masih valid
+    -- re-equip yang masih valid — v8.712: tambah filter age<max (cegah bahan tua lolos)
     for uuid in pairs(_bahanUuids) do
-        local age = getAgeFallback(uuid)
-        equipPet(uuid)
-        addLog("Equip bahan (kunci) age="..age)
+        local age = getAgeFromWorkspace(uuid)
+        if age >= CFG.bahanMaxAge then
+            addLog("Bahan kunci age="..age.." >= "..CFG.bahanMaxAge.." — skip re-equip, hapus dari kunci")
+            pcall(function() unequipPet(uuid) end)
+            _bahanUuids[uuid] = nil
+        else
+            equipPet(uuid)
+            addLog("Equip bahan (kunci) age="..age)
+        end
     end
 
     -- isi slot yang kosong sampai BAHAN_SLOT
@@ -4409,7 +4416,8 @@ equipOneBahan = function()
     if countBahan() < BAHAN_SLOT then
         local bp = plr:FindFirstChild("Backpack"); if not bp then return end
         local all = listPetsAll()
-        table.sort(all, function(a,b) return (a.kg or 0) < (b.kg or 0) end)
+        -- v8.712: sort by age asc — pilih bahan termuda dulu (kg sort sebelumnya tidak ada hubungan dg age)
+        table.sort(all, function(a,b) return (a.age or 0) < (b.age or 0) end)
         for _, p in ipairs(all) do
             if countBahan() >= BAHAN_SLOT then break end
             local ustr = tostring(p.uuid)
@@ -4437,20 +4445,35 @@ equipOneBahan = function()
 end
 
 unequipBahanTua = function()
-    local bp=plr:FindFirstChild("Backpack"); if not bp then return end
-    for _,t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") then
-            local rawTipe=t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name
-            if stripMutation(tostring(rawTipe))==CFG.bahanType then
-                local uuid=getUUIDAlt(t)
-                if uuid then
-                    local ustr = tostring(uuid)
-                    local age=getAgeFallback(uuid)
-                    -- v8.628: debug bahan age check
-                    dbgLog("[bahanTua] uuid="..ustr:sub(1,12).." age="..tostring(age).." maxAge="..tostring(CFG.bahanMaxAge).." inUuids="..tostring(_bahanUuids[ustr]~=nil))
-                    if age>=CFG.bahanMaxAge then
-                        unequipPet(uuid); _bahanUuids[ustr]=nil
-                        addLog("Unequip bahan tua age="..age); task.wait(CFG.equipWait)
+    -- v8.712: scan Backpack + Character (bahan bisa ter-equip di lapangan, tidak ada di BP)
+    -- v8.712: pakai getAgeFromWorkspace (lebih fresh dari getAgeFallback yang bisa stale)
+    local function getAgeFromWorkspaceLocal(uuid)
+        local ustr = tostring(uuid)
+        local mdl = modelByUuid and modelByUuid[ustr]
+        if mdl then
+            local pd = mdl:FindFirstChild("PetData")
+            local lv = pd and pd:FindFirstChild("Level") and tonumber(pd.Level.Value)
+            if lv then return lv end
+        end
+        return getAgeFallback(uuid)
+    end
+    local containers = {}
+    local bp = plr:FindFirstChild("Backpack"); if bp then table.insert(containers, bp) end
+    local ch = plr.Character; if ch then table.insert(containers, ch) end
+    for _, cont in ipairs(containers) do
+        for _,t in ipairs(cont:GetChildren()) do
+            if t:IsA("Tool") then
+                local rawTipe=t:GetAttribute("f") or t:GetAttribute("PetType") or t.Name
+                if stripMutation(tostring(rawTipe))==CFG.bahanType then
+                    local uuid=getUUIDAlt(t)
+                    if uuid then
+                        local ustr = tostring(uuid)
+                        local age=getAgeFromWorkspaceLocal(uuid)
+                        dbgLog("[bahanTua] uuid="..ustr:sub(1,12).." age="..tostring(age).." maxAge="..tostring(CFG.bahanMaxAge).." inUuids="..tostring(_bahanUuids[ustr]~=nil))
+                        if age>=CFG.bahanMaxAge then
+                            unequipPet(uuid); _bahanUuids[ustr]=nil
+                            addLog("Unequip bahan tua age="..age); task.wait(CFG.equipWait)
+                        end
                     end
                 end
             end
