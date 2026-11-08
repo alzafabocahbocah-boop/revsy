@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI) | v1.73: trade langsung semua akun present, hapus cek inv lawan  ║
+-- ║  UP KG — v0.1 (KERANGKA UI) | v1.74: gohome kalau 2 menit gak ada trade diterima  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -4248,14 +4248,8 @@ do
                 table.sort(cand, function(a,b) return a.cnt < b.cnt end)
                 targets = {}; for _, c in ipairs(cand) do targets[#targets+1] = c.nm end
                 _G.ZenxGiftNext = (cand[1] and (tostring(cand[1].nm):sub(1,12).." ("..cand[1].cnt..")")) or nil
-                -- gohome kalo panel bilang SEMUA full (nFull == nOther, minimal 2)
-                local semuaFull = (nOther >= 2 and nFull == nOther)
-                _G.ZenxLvlAllFull = semuaFull
-                if semuaFull then
-                    setStat("SEMUA akun leveling ("..nFull..") FULL (panel) - minta balik home")
-                    pcall(function() if writefile then writefile("zenx_gohome_"..(player and player.Name or "x")..".txt", tostring(os.time())) end end)
-                end
             end
+            local petsBefore = #pets
             for _, nama in ipairs(targets) do
                 local tp = Players:FindFirstChild(nama)
                 if tp then
@@ -4267,6 +4261,8 @@ do
                     if #pets == 0 then break end
                 end
             end
+            -- v1.74: kalau ada pet berhasil terkirim (count berkurang), update lastSentTs
+            if #pets < petsBefore then _G._ZenxTr38LastSent = tick() end
             if nTgt == 0 then setStat("gak ada target ONLINE di server") else setStat("selesai ("..nTgt.." target)") end
             trBusy = false
         end)
@@ -4274,36 +4270,29 @@ do
 
     -- AUTO-LOOP: kalau TR.mode ON (trade/gift), kirim pet lolos filter TERUS (gak perlu pencet tiap kali)
     task.spawn(function()
-        local hadPets, emptyCount = false, 0
         local lastDiag = 0
+        -- v1.74: gohome kalau 2 menit gak ada pet berhasil diterima lawan (semua tolak / gak ada akun)
+        _G._ZenxTr38LastSent = tick()   -- init saat script jalan, biar gak langsung gohome
+        local GOHOME_TIMEOUT = 120   -- 2 menit
         while true do
             task.wait(2)
-            -- v10.84: diagnostic SELALU (throttle 10s) -> keliatan kenapa gak trade (mode/autoLevel/trBusy)
+            -- v10.84: diagnostic SELALU (throttle 10s)
             if os.time() - lastDiag >= 10 then
                 lastDiag = os.time()
                 trLogAdd(string.format("[loop] mode=%s autoLevel=%s trBusy=%s", tostring(TR.mode), tostring(TR.autoLevel), tostring(trBusy)))
             end
             if (TR.mode == "trade" or TR.mode == "gift" or TR.autoLevel) and not trBusy then
                 local pets = petsLolos()
-                if _G.__ZenxPlLog then trLogAdd(_G.__ZenxPlLog) end   -- v10.84: breakdown SELALU (walau #pets==0) -> keliatan kenapa 0
-                if #pets > 0 then jalankan(TR.autoLevel and "trade" or TR.mode); hadPets = true; emptyCount = 0
-                elseif TR.autoLevel and hadPets then
-                    -- v10.24: autoLevel (Gift 1) + PERNAH gift, sekarang 3.8kg+ bahan HABIS -> balik home.
-                    -- v10.50: WAJIB cek dulu LAGI di server LEVELING (ada akun leveling present). Kalo di
-                    -- HACT (gak ada akun leveling) -> 6kg+ habis GAK NGARUH, JANGAN balik home.
-                    emptyCount = emptyCount + 1
-                    if emptyCount >= 3 then   -- konsisten kosong ~6s
-                        local diLeveling = false
-                        pcall(function()
-                            local Players = game:GetService("Players")
-                            for nm in pairs(_G.ZenxLvlMax or {}) do
-                                if nm ~= player.Name and Players:FindFirstChild(nm) then diLeveling = true; break end
-                            end
-                        end)
-                        if diLeveling then
-                            pcall(function() if writefile then writefile("zenx_gohome_"..(player and player.Name or "x")..".txt", tostring(os.time())) end end)
-                        end
-                        hadPets = false; emptyCount = 0
+                if _G.__ZenxPlLog then trLogAdd(_G.__ZenxPlLog) end
+                if #pets > 0 then
+                    jalankan(TR.autoLevel and "trade" or TR.mode)
+                    -- v1.74: cek timeout — kalau sudah 2 menit gak ada yang diterima -> gohome
+                    local idle = tick() - (_G._ZenxTr38LastSent or tick())
+                    if idle >= GOHOME_TIMEOUT then
+                        setStat("2 menit gak ada trade diterima -> gohome")
+                        trLogAdd("GOHOME: timeout "..math.floor(idle).."s gak ada trade diterima")
+                        pcall(function() if writefile then writefile("zenx_gohome_"..(player and player.Name or "x")..".txt", tostring(os.time())) end end)
+                        _G._ZenxTr38LastSent = tick()   -- reset biar gak spam gohome
                     end
                 end
             end
