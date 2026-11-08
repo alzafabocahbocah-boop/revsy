@@ -1,4 +1,5 @@
--- uplevelnew v8.716
+-- uplevelnew v8.717
+-- v8.717: direct POST /upkgstat-batch tiap 1 menit (selain file) supaya maxInv masuk /lvlmax walau Termux gak jalan
 -- v8.716: TIME card lebih lebar (0.46) + font 12, 3 card kecil (AGE+/AGE-/TOTAL) w=0.18 biar muat
 -- v8.715: fix TIME ganti-ganti — 2 loop update bahanAgeL format beda (nama+waktu vs waktu doang), samakan ke format lengkap di keduanya
 -- v8.714: fix nyangkut di nobaku — _newwSwapping=true + _activeSesiDef=NOBAKU_DEF harus di-set SEBELUM task.spawn delay 5s (dulu ada gap 5s: timAktif=nobaku tapi _activeSesiDef masih main → equipOneBahan equip bahan lagi)
@@ -1949,6 +1950,36 @@ do
                 writefile("zenx_upkgstat_" .. plr.Name .. ".json", js)
             end)
             task.wait(15)
+        end
+    end)
+
+    -- v8.717: direct POST /upkgstat-batch tiap 1 menit — supaya maxInv masuk /lvlmax
+    -- walau Termux worker tidak jalan (up6kg port v10.234). File tetap ditulis tiap 15s di atas.
+    task.spawn(function()
+        local _req = (syn and syn.request) or (fluxus and fluxus.request)
+                  or (krnl and krnl.request) or http_request or request or httprequest
+        if type(http) == "table" and http.request then _req = http.request end
+        if not (_req and plr and plr.Name) then return end
+        local _URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+        local _KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+        task.wait(15)   -- kasih waktu maxInv ke-detect dulu
+        local _lastPost = 0
+        while true do
+            task.wait(5)
+            if (os.time() - _lastPost) >= 60 then
+                pcall(function()
+                    local mx = _G.__ZenxMaxPetCache or 0
+                    if mx <= 0 then return end   -- belum ke-detect, skip
+                    local c = _kgContainer; if not c then return end
+                    local tot = 0; for _ in pairs(c) do tot = tot + 1 end
+                    local stat = string.format('{"akun":%q,"totalAll":%d,"maxInv":%d,"ts":%d}', plr.Name, tot, mx, os.time())
+                    local body = '{"list":[{"akun":"' .. plr.Name .. '","stat":' .. stat .. '}]}'
+                    _req({ Url = _URL .. "/upkgstat-batch", Method = "POST",
+                           Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = _KUNCI },
+                           Body = body })
+                    _lastPost = os.time()
+                end)
+            end
         end
     end)
 
