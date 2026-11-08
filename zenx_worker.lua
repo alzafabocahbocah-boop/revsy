@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.638"
+local VERSION = "9.639"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -459,7 +459,7 @@ function denyut_fresh_sec(cfg)
 end
 function denyut_dirs(cfg)
     local seen, dirs = {}, {}
-    local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace", "/sdcard/Arceus X", "/storage/emulated/0/Delta/Workspace", "/storage/emulated/0/Arceus X/Workspace", "/storage/emulated/0/Arceus X" }
+    local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace", "/storage/emulated/0/Delta/Workspace", "/storage/emulated/0/Arceus X/Workspace" }
     for _, d in ipairs(kandidat) do
         if d and d ~= "" and not seen[d] then seen[d] = true; dirs[#dirs + 1] = d end
     end
