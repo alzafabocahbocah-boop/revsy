@@ -1953,35 +1953,37 @@ do
         end
     end)
 
-    -- v8.717: direct POST /upkgstat-batch tiap 1 menit — supaya maxInv masuk /lvlmax
-    -- walau Termux worker tidak jalan (up6kg port v10.234). File tetap ditulis tiap 15s di atas.
-    task.spawn(function()
-        local _req = (syn and syn.request) or (fluxus and fluxus.request)
-                  or (krnl and krnl.request) or http_request or request or httprequest
-        if type(http) == "table" and http.request then _req = http.request end
-        if not (_req and plr and plr.Name) then return end
-        local _URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
-        local _KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
-        task.wait(15)   -- kasih waktu maxInv ke-detect dulu
-        local _lastPost = 0
-        while true do
-            task.wait(5)
-            if (os.time() - _lastPost) >= 60 then
-                pcall(function()
-                    local mx = _G.__ZenxMaxPetCache or 0
-                    if mx <= 0 then return end   -- belum ke-detect, skip
-                    local c = _kgContainer; if not c then return end
-                    local tot = 0; for _ in pairs(c) do tot = tot + 1 end
-                    local stat = string.format('{"akun":%q,"totalAll":%d,"maxInv":%d,"ts":%d}', plr.Name, tot, mx, os.time())
-                    local body = '{"list":[{"akun":"' .. plr.Name .. '","stat":' .. stat .. '}]}'
-                    _req({ Url = _URL .. "/upkgstat-batch", Method = "POST",
-                           Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = _KUNCI },
-                           Body = body })
-                    _lastPost = os.time()
-                end)
+    -- v8.717: direct POST /upkgstat-batch — HANYA kalau writefile tidak tersedia (Termux gak jalan)
+    -- Kalau writefile ada, Termux yang kirim -> gak perlu dobel POST.
+    if not writefile then
+        task.spawn(function()
+            local _req = (syn and syn.request) or (fluxus and fluxus.request)
+                      or (krnl and krnl.request) or http_request or request or httprequest
+            if type(http) == "table" and http.request then _req = http.request end
+            if not (_req and plr and plr.Name) then return end
+            local _URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+            local _KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+            task.wait(15)   -- kasih waktu maxInv ke-detect dulu
+            local _lastPost = 0
+            while true do
+                task.wait(5)
+                if (os.time() - _lastPost) >= 60 then
+                    pcall(function()
+                        local mx = _G.__ZenxMaxPetCache or 0
+                        if mx <= 0 then return end
+                        local c = _kgContainer; if not c then return end
+                        local tot = 0; for _ in pairs(c) do tot = tot + 1 end
+                        local stat = string.format('{"akun":%q,"totalAll":%d,"maxInv":%d,"ts":%d}', plr.Name, tot, mx, os.time())
+                        local body = '{"list":[{"akun":"' .. plr.Name .. '","stat":' .. stat .. '}]}'
+                        _req({ Url = _URL .. "/upkgstat-batch", Method = "POST",
+                               Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = _KUNCI },
+                               Body = body })
+                        _lastPost = os.time()
+                    end)
+                end
             end
-        end
-    end)
+        end)
+    end
 
     local sesiF=mk("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.card,BorderSizePixel=0,
         LayoutOrder=5,Parent=cfgScroll}); corner(sesiF,10); stroke(sesiF,C.accent,1)
