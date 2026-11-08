@@ -1,4 +1,4 @@
--- uplevelnew v8.741
+-- uplevelnew v8.742
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -5957,6 +5957,33 @@ local function runNewLoop()
                         if not sesiPool[5]["Bahan"] then sesiPool[5]["Bahan"] = {} end
                         sesiPool[5]["Bahan"][1] = bahanSlot
                         dbgLog("[newloop-fast] Bahan auto-pick (age<"..CFG.bahanMaxAge..") dari container: "..bahanSlot.uuid:sub(1,12).." tipe="..bahanSlot.tipe.." age="..bahanSlot.age)
+                    end
+                end
+                -- v8.741: saat masuk baku def, cek bahan lama — kalau age >= max langsung clear
+                -- (seperti up6kg fast-harvest: jangan equip bahan tua lagi saat masuk baku)
+                do
+                    local function getAgeSwap(uuid)
+                        local ustr = tostring(uuid)
+                        local mdl = modelByUuid and modelByUuid[ustr]
+                        if mdl then
+                            local pd = mdl:FindFirstChild("PetData")
+                            local lv = pd and pd:FindFirstChild("Level") and tonumber(pd.Level.Value)
+                            if lv then return lv end
+                        end
+                        return getAgeFallback(uuid)
+                    end
+                    for ustr in pairs(_bahanUuids) do
+                        local age = getAgeSwap(ustr)
+                        if age >= CFG.bahanMaxAge then
+                            addLog("[swap-baku] Bahan lama age="..age.." >= "..CFG.bahanMaxAge.." — clear sebelum equip baru")
+                            _bahanUuids[ustr] = nil
+                            _bahanEquipTime[ustr] = nil
+                            -- clear dari pool5 juga supaya equipOneBahan tidak re-pick yang sama
+                            local p5b = sesiPool[5] and sesiPool[5]["Bahan"] or {}
+                            for i, e in pairs(p5b) do
+                                if e and tostring(e.uuid) == ustr then p5b[i] = nil end
+                            end
+                        end
                     end
                 end
                 -- v8.591: equip ulang semua UUID di _bahanUuids (tidak dinil saat nobaku)
