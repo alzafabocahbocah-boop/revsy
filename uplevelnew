@@ -1,4 +1,5 @@
--- uplevelnew v8.708
+-- uplevelnew v8.709
+-- v8.709: test — disable deepFind (flat loop) + disable queue 0.3s roar/weave
 -- v8.708: roar/weave queue 0.1s→0.3s
 -- v8.707: swap anim roar/weave kasih queue 0.1s antar swap (sama kayak fan 0.5s) biar gak simultan
 -- v8.706: panel kiri bawah — gedein font statMini2 (AGE 500+/500-/TOTAL PET): nilai 18→24, label 9→11, tinggi 72→80
@@ -238,7 +239,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.708"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.709"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3843,11 +3844,11 @@ do
                     end)
                 -- Spider weave → swap
                 elseif anim == "weave" then
-                    -- v8.707: queue 0.1s antar weave swap
-                    local myTurnW = _weaveLastSwap + 0.3
-                    local waitNeededW = myTurnW - tick()
-                    if waitNeededW > 0 then task.wait(waitNeededW) end
-                    _weaveLastSwap = tick()
+                    -- v8.709: TEST disable queue weave
+                    -- local myTurnW = _weaveLastSwap + 0.3
+                    -- local waitNeededW = myTurnW - tick()
+                    -- if waitNeededW > 0 then task.wait(waitNeededW) end
+                    -- _weaveLastSwap = tick()
                     tsLog("Spider weave → swap "..r8)
                     task.spawn(function()
                         pcall(function() unequipPet(raw) end); task.wait(0.03)
@@ -3886,11 +3887,11 @@ do
                     end)
                 -- T-Rex animStr roar → swap
                 elseif anim == "roar" then
-                    -- v8.707: queue 0.1s antar roar swap
-                    local myTurnR = _roarLastSwap + 0.3
-                    local waitNeededR = myTurnR - tick()
-                    if waitNeededR > 0 then task.wait(waitNeededR) end
-                    _roarLastSwap = tick()
+                    -- v8.709: TEST disable queue roar
+                    -- local myTurnR = _roarLastSwap + 0.3
+                    -- local waitNeededR = myTurnR - tick()
+                    -- if waitNeededR > 0 then task.wait(waitNeededR) end
+                    -- _roarLastSwap = tick()
                     tsLog("T-Rex roar → swap "..r8)
                     task.spawn(function()
                         pcall(function() unequipPet(raw) end); task.wait(0.03)
@@ -3908,7 +3909,20 @@ do
                 local svc = tostring(args[2] or "")
                 if not svc:find("ActivePets",1,true) then return end
                 local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
-                if data then processHits(deepFind(data, 0)) end
+                -- v8.709: TEST flat loop (disable deepFind)
+                if data then
+                    local hits = {}
+                    for _, v in pairs(data) do
+                        if type(v) == "table" then
+                            local v1 = tostring(v[1] or "")
+                            if v1:find("CustomAnimationState",1,true) and v[2] ~= nil then
+                                local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                                hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(v[2])}
+                            end
+                        end
+                    end
+                    processHits(hits)
+                end
             end)
             ds.AncestryChanged:Connect(function()
                 if ds.Parent == nil then
