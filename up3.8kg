@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI) | v1.72: skip acc trade kalau inv full (port up6kg)  ║
+-- ║  UP KG — v0.1 (KERANGKA UI) | v1.73: trade langsung semua akun present, hapus cek inv lawan  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -4226,61 +4226,45 @@ do
             local nTgt = 0
             local targets = TR.targets
             if TR.autoLevel then
-                -- v10.10: hitung pet count tiap akun leveling, skip yg FULL (count>=max), sort PALING KOSONG duluan
+                -- v1.73: langsung trade ke SEMUA akun present, gak cek inv lawan dulu.
+                -- Kalau full, lawan sendiri yg tolak (guard invFull di up6kg/uplevelnew v8.559).
+                -- gohome: pakai count dari panel (ZenxLvlCount) bukan ViewInventory yg lambat.
                 local lvlMax = _G.ZenxLvlMax or {}
-                local cand, nOther = {}, 0
-                -- v10.11: target = DAFTAR akun leveling dari panel (bukan scan semua player), yg present di server
-                local nFull = 0
+                local cand, nOther, nFull = {}, 0, 0
                 for nm, mxv in pairs(lvlMax) do
                     local present = Players:FindFirstChild(nm)
                     if nm ~= player.Name and present then
                         nOther = nOther + 1
-                        local cnt = countTargetPets(present)   -- nil = read gagal (VI + panel dua-duanya gagal)
-                        local pc = (_G.ZenxLvlCount or {})[nm]
-                        local full = (mxv and cnt ~= nil and cnt >= mxv)
-                        local gagal = (cnt == nil)
-                        trLogAdd(nm..": cnt="..(gagal and ("GAGAL(panel="..tostring(pc)..")") or tostring(cnt)).." max="..tostring(mxv)..(full and " -> FULL skip" or (gagal and " -> GAGAL skip (gak di-trade)" or " -> ok")))
+                        local pc = (_G.ZenxLvlCount or {})[nm]   -- count self-report dari panel
+                        local full = (mxv and pc and pc >= mxv)
                         if full then nFull = nFull + 1 end
-                        -- v10.39: GAGAL (count gak kebaca) -> JANGAN gift. gak diverifikasi = jangan di-trade
-                        -- (biar gak nyangkut trade ke akun yg mungkin udah full)
-                        if not full and not gagal then cand[#cand+1] = { nm=nm, cnt=(cnt or 999) } end
+                        cand[#cand+1] = { nm=nm, cnt=(pc or 0) }
+                        trLogAdd(nm..": panel_cnt="..tostring(pc).." max="..tostring(mxv)..(full and " (mungkin full, tetap coba)" or " -> ok"))
                     elseif nm ~= player.Name then
                         trLogAdd(nm..": gak di server (skip)")
                     end
                 end
-                trLogAdd("total: "..nOther.." present, "..nFull.." full, "..#cand.." bisa di-gift")
+                trLogAdd("total: "..nOther.." present, "..#cand.." akan di-trade")
                 table.sort(cand, function(a,b) return a.cnt < b.cnt end)
                 targets = {}; for _, c in ipairs(cand) do targets[#targets+1] = c.nm end
                 _G.ZenxGiftNext = (cand[1] and (tostring(cand[1].nm):sub(1,12).." ("..cand[1].cnt..")")) or nil
-                -- v10.41: gohome kalo SEMUA akun present CONFIRMED full (nFull == nOther) + minimal 2.
-                -- BUKAN #cand==0 (itu keitung kalo ada akun GAGAL yg di-skip tapi belum tentu full).
-                -- Harus akunnya EMANG full beneran (kebaca count-nya >= max), bukan sekedar gak bisa gift.
+                -- gohome kalo panel bilang SEMUA full (nFull == nOther, minimal 2)
                 local semuaFull = (nOther >= 2 and nFull == nOther)
                 _G.ZenxLvlAllFull = semuaFull
                 if semuaFull then
-                    setStat("SEMUA akun leveling ("..nFull..") FULL - minta balik home")
+                    setStat("SEMUA akun leveling ("..nFull..") FULL (panel) - minta balik home")
                     pcall(function() if writefile then writefile("zenx_gohome_"..(player and player.Name or "x")..".txt", tostring(os.time())) end end)
                 end
             end
             for _, nama in ipairs(targets) do
                 local tp = Players:FindFirstChild(nama)
                 if tp then
-                    -- v10.25: cek inventory target FRESH sebelum gift -> skip kalo udah FULL (target bisa keburu penuh)
-                    local skip = false
-                    if TR.autoLevel then
-                        local cnt = countTargetPets(tp)   -- pake cache 5s (gak invalidate -> read gak sering gagal)
-                        local mx = (_G.ZenxLvlMax or {})[nama]
-                        -- v10.31: cuma skip kalo count KEBACA + udah full. read gagal (nil) -> JANGAN skip, trade tetep jalan (biar gak macet gara2 read flaky).
-                        if cnt ~= nil and mx and cnt >= mx then skip = true; setStat(nama.." FULL ("..cnt.."/"..mx..") - skip, cari akun lain") end
-                    end
-                    if not skip then
-                        nTgt = nTgt + 1
-                        setStat((mode=="trade" and "TRADE" or "GIFT").." -> "..nama.." ("..#pets.." pet)")
-                        if mode == "trade" then tradeToTarget(tp, pets) else giftToTarget(tp, pets) end
-                        task.wait(1)
-                        pets = petsLolos()
-                        if #pets == 0 then break end
-                    end
+                    nTgt = nTgt + 1
+                    setStat((mode=="trade" and "TRADE" or "GIFT").." -> "..nama.." ("..#pets.." pet)")
+                    if mode == "trade" then tradeToTarget(tp, pets) else giftToTarget(tp, pets) end
+                    task.wait(1)
+                    pets = petsLolos()
+                    if #pets == 0 then break end
                 end
             end
             if nTgt == 0 then setStat("gak ada target ONLINE di server") else setStat("selesai ("..nTgt.." target)") end
