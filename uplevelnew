@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.746"  -- v8.697: threshold swap main balik 1000
+local VERSION = "v8.747"  -- v8.697: threshold swap main balik 1000
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -6138,6 +6138,29 @@ local function runNewLoop()
                     end
                 end
                 -- v8.591: equip ulang semua UUID di _bahanUuids (tidak dinil saat nobaku)
+                -- v8.747: kalau _bahanUuids kosong (habis nobaku), restore dari _ZenxLastBahanUuids kalau age masih < max
+                if next(_bahanUuids) == nil then
+                    local lastBahan = _G._ZenxLastBahanUuids or {}
+                    local function getAgeRestore(uuid)
+                        local ustr = tostring(uuid)
+                        local mdl = modelByUuid and modelByUuid[ustr]
+                        if mdl then
+                            local pd = mdl:FindFirstChild("PetData")
+                            local lv = pd and pd:FindFirstChild("Level") and tonumber(pd.Level.Value)
+                            if lv then return lv end
+                        end
+                        return getAgeFallback(uuid)
+                    end
+                    for ustr in pairs(lastBahan) do
+                        local age = getAgeRestore(ustr)
+                        if age < CFG.bahanMaxAge then
+                            _bahanUuids[ustr] = true
+                            dbgLog("[swap-baku] v8.747: restore bahan dari LastBahanUuids age="..age.." uuid="..ustr:sub(1,12))
+                        else
+                            dbgLog("[swap-baku] v8.747: skip restore bahan age="..age.." >= "..CFG.bahanMaxAge.." uuid="..ustr:sub(1,12))
+                        end
+                    end
+                end
                 -- kalau _bahanUuids ada isi, equip ulang dari sana langsung
                 local bahanEquipped = false
                 for ustr in pairs(_bahanUuids or {}) do
@@ -6148,7 +6171,7 @@ local function runNewLoop()
                     dbgLog("[newloop-fast] Bahan re-equip dari _bahanUuids saat swap ke main: "..ustr:sub(1,12))
                     bahanEquipped = true
                 end
-                -- kalau _bahanUuids kosong, fallback pool5 / container
+                -- kalau _bahanUuids kosong (dan LastBahanUuids juga kosong/semua tua), fallback pool5 / container
                 if not bahanEquipped then
                     if bahanSlot and bahanSlot.uuid then
                         local ustr = tostring(bahanSlot.uuid)
