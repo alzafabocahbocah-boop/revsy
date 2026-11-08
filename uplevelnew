@@ -1,4 +1,5 @@
--- uplevelnew v8.713
+-- uplevelnew v8.714
+-- v8.714: fix nyangkut di nobaku — _newwSwapping=true + _activeSesiDef=NOBAKU_DEF harus di-set SEBELUM task.spawn delay 5s (dulu ada gap 5s: timAktif=nobaku tapi _activeSesiDef masih main → equipOneBahan equip bahan lagi)
 -- v8.713: fix bahan masuk 3 — tambah _G._ZenxBahanLock mutex di equipOneBahan (cegah concurrent call equip bersamaan)
 -- v8.712: fix bahan age 500 — (1) re-equip "kunci" tambah filter age<max, (2) unequipBahanTua pakai getAgeFromWorkspace (bukan getAgeFallback yg stale), (3) sort auto bahan by age asc dulu (termuda dipilih)
 -- v8.711: fix 3 bug CD — (1) threshold stale watchdog 3s→4s (sama dg petReadyUpl), (2) jangan reset _cdFirstSeen saat re-equip (cegah loop infinite), (3) guard _cdWatchReeq supaya ready-loop tidak double-swap saat watchdog sedang re-equip
@@ -5757,11 +5758,13 @@ local function runNewLoop()
                 else
                     dbgLog("[newloop-fast] NM "..nmC.." < 200 — tunggu 5s sebelum swap ke nobaku")
                     _newwTimAktif = "nobaku"  -- set dulu biar tidak trigger ulang di loop berikutnya
+                    -- v8.714: set _newwSwapping + _activeSesiDef SEBELUM spawn, bukan di dalam spawn setelah delay
+                    -- dulu ada gap 5s: timAktif=nobaku tapi _activeSesiDef masih MAIN → equipOneBahan equip bahan lagi
+                    _newwSwapping = true
+                    _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
                     task.spawn(function()
                     task.wait(5)  -- v8.624: delay 5s sebelum swap ke nobaku
                     dbgLog("[newloop-fast] NM < 100 — swap Baku+Bahan→T-Rex slot5+6 (after 5s)")
-                    _newwSwapping = true  -- v8.591: block enforceEquip selama swap
-                    _activeSesiDef = AUTOLVLNEWW_NOBAKU_DEF; _G._UPL_SESI_DEF = AUTOLVLNEWW_NOBAKU_DEF
                     local pool5 = sesiPool[5] or {}
                     -- v8.579: unequip Baku + Bahan dulu, retry max 3x, tunggu hilang dari workspace
                     local uuidsToWait = {}
