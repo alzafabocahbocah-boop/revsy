@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.635"
+local VERSION = "9.636"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5680,9 +5680,25 @@ local function run(cfg)
                 do
                     -- v9.481: scan upkgstat dari semua clone dir
                     local rawU = ""
+                    local _dbgDirs, _dbgFound = {}, {}   -- v9.636: debug
                     for _, _dd in ipairs(denyut_dirs(cfg)) do
                         local _rU = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_upkgstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
-                        if _rU ~= "" then rawU = rawU .. _rU .. "\n" end
+                        -- v9.636: debug — catat dir yang discan + file apa yang ketemu
+                        local _fCount = 0
+                        for _ in tostring(_rU):gmatch("zenx_upkgstat_") do _fCount = _fCount + 1 end
+                        _dbgDirs[#_dbgDirs+1] = _dd .. "(" .. _fCount .. ")"
+                        if _rU ~= "" then
+                            rawU = rawU .. _rU .. "\n"
+                            for fn in tostring(_rU):gmatch("(zenx_upkgstat_[^\n|]+%.json)") do
+                                _dbgFound[#_dbgFound+1] = fn
+                            end
+                        end
+                    end
+                    info("[upkgstat-debug] dirs: " .. table.concat(_dbgDirs, " | "))
+                    if #_dbgFound > 0 then
+                        info("[upkgstat-debug] files: " .. table.concat(_dbgFound, ", "))
+                    else
+                        warn("[upkgstat-debug] TIDAK ADA file zenx_upkgstat_*.json di semua dir!")
                     end
                     local items = {}
                     local seen = {}
