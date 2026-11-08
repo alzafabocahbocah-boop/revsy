@@ -173,20 +173,80 @@ local function getMyUuids()
 end
 
 -- ── Destroy logic ─────────────────────────────────────────────────────────────
+local function getMySubfarms()
+    local mine = {}
+    local farmWS = workspace:FindFirstChild("Farm")
+    if not farmWS then return mine end
+    for _, sf in ipairs(farmWS:GetChildren()) do
+        local isMine = false
+        pcall(function()
+            local imp = sf:FindFirstChild("Important")
+            if imp then
+                local ow = imp:FindFirstChild("Owner")
+                if ow and ow.Value == plr.Name then isMine = true end
+            end
+            local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign",true)
+            if sign then
+                local owner = sign:GetAttribute("_owner") or sign:GetAttribute("Owner")
+                if owner == plr.Name then isMine = true end
+            end
+        end)
+        if isMine then mine[sf] = true end
+    end
+    return mine
+end
+
 local function destroyForeign()
     local myUuids = getMyUuids()
-    local pp = workspace:FindFirstChild("PetsPhysical")
-    if not pp then setStatus("PetsPhysical tidak ada", Color3.fromRGB(220,100,100)); return 0 end
-
     local del = 0
-    for _, obj in ipairs(pp:GetChildren()) do
-        if obj:IsA("Model") then
-            local raw = tostring(obj.Name):gsub("[{}]","")
-            if not myUuids[raw] then
-                pcall(function() obj:Destroy() end)
-                del = del + 1
+
+    -- coba PetsPhysical (shared workspace, children = Model UUID)
+    local pp = workspace:FindFirstChild("PetsPhysical")
+    if pp then
+        for _, obj in ipairs(pp:GetChildren()) do
+            if obj:IsA("Model") then
+                local raw = tostring(obj.Name):gsub("[{}]","")
+                if not myUuids[raw] then
+                    pcall(function() obj:Destroy() end)
+                    del = del + 1
+                end
             end
         end
+    end
+
+    -- coba Farm subfarm orang lain
+    local farmWS = workspace:FindFirstChild("Farm")
+    if farmWS then
+        local mySubfarms = getMySubfarms()
+        local sfDel = 0
+        for _, sf in ipairs(farmWS:GetChildren()) do
+            if not mySubfarms[sf] then
+                for _, obj in ipairs(sf:GetDescendants()) do
+                    if obj:IsA("Model") then
+                        local raw = tostring(obj.Name):gsub("[{}]","")
+                        if raw:match("^[%x%-]+$") and #raw > 10 and not myUuids[raw] then
+                            pcall(function() obj:Destroy() end)
+                            sfDel = sfDel + 1
+                        end
+                    end
+                end
+            end
+        end
+        del = del + sfDel
+    end
+
+    if del == 0 then
+        setStatus("0 dihapus — coba lihat log COPY buat debug", Color3.fromRGB(220,120,80))
+        -- log struktur workspace buat debug
+        local info = {}
+        pcall(function()
+            if pp then table.insert(info, "PP children="..#pp:GetChildren()) end
+            local farmWS2 = workspace:FindFirstChild("Farm")
+            if farmWS2 then table.insert(info, "Farm sf="..#farmWS2:GetChildren()) end
+        end)
+        table.insert(copyBuf, 1, "[DBG] "..table.concat(info," | "))
+    else
+        setStatus("del="..del.." model dihapus", Color3.fromRGB(220,160,80))
     end
     return del
 end
