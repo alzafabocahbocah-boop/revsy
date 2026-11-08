@@ -1,4 +1,5 @@
--- uplevelnew v8.717
+-- uplevelnew v8.718
+-- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
 -- v8.717: direct POST /upkgstat-batch tiap 1 menit (selain file) supaya maxInv masuk /lvlmax walau Termux gak jalan
 -- v8.716: TIME card lebih lebar (0.46) + font 12, 3 card kecil (AGE+/AGE-/TOTAL) w=0.18 biar muat
 -- v8.715: fix TIME ganti-ganti — 2 loop update bahanAgeL format beda (nama+waktu vs waktu doang), samakan ke format lengkap di keduanya
@@ -4359,7 +4360,10 @@ end
 -- v8.455: equipOneBahan -> equipBahans, support 2 slot bahan aging bersamaan
 equipOneBahan = function()
     -- v8.713: mutex — kalau ada call lain lagi jalan, skip biar tidak overlap → bahan masuk 3
-    if _G._ZenxBahanLock then return end
+    if _G._ZenxBahanLock then
+        dbgLog("[bahan-dbg] equipOneBahan SKIP — lock aktif (concurrent call), caller="..tostring(debug and debug.traceback and debug.traceback("",2) or "?"):sub(1,80))
+        return
+    end
     _G._ZenxBahanLock = true
     local ok, err = pcall(function()
     -- baca jml Bahan dari sesi aktif
@@ -4371,12 +4375,22 @@ equipOneBahan = function()
             if d.nama == "Bahan" then BAHAN_SLOT = d.jml; bahanAdaDiDef = true; break end
         end
     end
+    -- v8.718: debug — log kondisi masuk equipOneBahan
+    do
+        local defNames = {}
+        for _, d in ipairs(_activeSesiDef or {}) do defNames[#defNames+1] = d.nama.."x"..d.jml end
+        local nBahan = 0; for _ in pairs(_bahanUuids) do nBahan = nBahan + 1 end
+        dbgLog("[bahan-dbg] equipOneBahan — sesiDef=["..table.concat(defNames,",").."] BAHAN_SLOT="..BAHAN_SLOT.." curBahan="..nBahan.." sesiNum="..(tostring(_activeSesiNum or "?")))
+    end
     -- kalau DEF aktif tidak punya Bahan sama sekali, langsung return — unequip bahan yang ada juga
     if not bahanAdaDiDef then
+        local nUnequip = 0
         for uuid in pairs(_bahanUuids) do
             pcall(function() unequipPet(uuid) end)
             _bahanUuids[uuid] = nil
+            nUnequip = nUnequip + 1
         end
+        if nUnequip > 0 then dbgLog("[bahan-dbg] DEF tidak punya Bahan — unequip "..nUnequip.." bahan") end
         return
     end
     -- v8.568: pakai pool sesi aktif, bukan hardcode pool2
@@ -4486,6 +4500,9 @@ equipOneBahan = function()
                         _bahanUuids[ustr] = true
                         _bahanEquipTime[ustr] = tick()
                         addLog("Equip bahan (auto) "..tostring(p.tipe).." age="..age.." kg="..string.format("%.1f", p.kg or 0))
+                        dbgLog("[bahan-dbg] AUTO equip — tipe="..tostring(p.tipe).." fullName="..(p.fullName or p.displayName or "?").." age="..age.." kg="..string.format("%.2f",p.kg or 0).." uuid="..ustr:sub(1,12).." inPooledUuids="..tostring(pooledUuids[ustr]~=nil).." inBahanUuids=".."false")
+                    else
+                        dbgLog("[bahan-dbg] AUTO skip (age tua) — tipe="..tostring(p.tipe).." age="..age.." >= "..CFG.bahanMaxAge)
                     end
                 end
             end
@@ -4525,7 +4542,7 @@ unequipBahanTua = function()
                     if uuid then
                         local ustr = tostring(uuid)
                         local age=getAgeFromWorkspaceLocal(uuid)
-                        dbgLog("[bahanTua] uuid="..ustr:sub(1,12).." age="..tostring(age).." maxAge="..tostring(CFG.bahanMaxAge).." inUuids="..tostring(_bahanUuids[ustr]~=nil))
+                        dbgLog("[bahanTua] uuid="..ustr:sub(1,12).." age="..tostring(age).." maxAge="..tostring(CFG.bahanMaxAge).." inUuids="..tostring(_bahanUuids[ustr]~=nil).." tua="..(age>=CFG.bahanMaxAge and "YA->unequip" or "BELUM"))
                         if age>=CFG.bahanMaxAge then
                             unequipPet(uuid); _bahanUuids[ustr]=nil
                             addLog("Unequip bahan tua age="..age); task.wait(CFG.equipWait)
@@ -5581,6 +5598,9 @@ local function runNewLoop()
             if _newStopRequested then break end
             if _newwTimAktif == "main" and not _newwSwapping then
                 pcall(function() unequipBahanTua(); equipOneBahan() end)
+            else
+                -- v8.718: debug — kenapa bahan loop tidak jalan
+                dbgLog("[bahan-loop] SKIP — timAktif="..(tostring(_newwTimAktif or "?")).." swapping="..tostring(_newwSwapping))
             end
         end
     end)
