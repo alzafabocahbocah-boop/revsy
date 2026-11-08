@@ -1,10 +1,7 @@
--- debug_swap.lua — monitor DS swap: skip vs execute, roar count per UUID
--- GUI: panel kiri layar, 2 kolom (SKIP | EXEC), roar counter + pet info (age/kg)
-
+-- debug_swap.lua — monitor DS roar/fan: kiri=asing, kanan=mine+age/kg
 local plr = game:GetService("Players").LocalPlayer
 local RS = game:GetService("ReplicatedStorage")
 
--- ── GUI ──────────────────────────────────────────────────────────────────────
 local sg = Instance.new("ScreenGui")
 sg.Name = "DBG_SWAP"
 sg.ResetOnSpawn = false
@@ -12,7 +9,7 @@ sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 sg.Parent = plr:WaitForChild("PlayerGui")
 
 local panel = Instance.new("Frame")
-panel.Size = UDim2.new(0, 440, 0, 560)
+panel.Size = UDim2.new(0, 440, 0, 480)
 panel.Position = UDim2.new(0, 8, 0.05, 0)
 panel.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
 panel.BorderSizePixel = 0
@@ -20,20 +17,18 @@ panel.Active = true
 panel.Draggable = true
 panel.Parent = sg
 
--- title bar
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 24)
 title.Position = UDim2.new(0,0,0,0)
 title.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
 title.BorderSizePixel = 0
-title.Text = "  🔁 SWAP DEBUG  v8.758"
+title.Text = "  🔁 DS ROAR DEBUG"
 title.TextColor3 = Color3.fromRGB(180,180,220)
 title.TextSize = 12
 title.Font = Enum.Font.Code
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = panel
 
--- tombol-tombol
 local function mkBtn(txt, x, w, color)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(0, w, 0, 20)
@@ -48,222 +43,108 @@ local function mkBtn(txt, x, w, color)
     return b
 end
 
-local btnClr  = mkBtn("CLR",     4,   50, Color3.fromRGB(60,30,30))
-local btnCopy = mkBtn("COPY",   58,   60, Color3.fromRGB(30,50,60))
-local btnRst  = mkBtn("RST CNT",122,  65, Color3.fromRGB(40,40,20))
-local btnRef  = mkBtn("REFRESH",191,  70, Color3.fromRGB(30,40,50))
+local btnClr  = mkBtn("CLR",  4,  50, Color3.fromRGB(60,30,30))
+local btnCopy = mkBtn("COPY", 58, 60, Color3.fromRGB(30,50,60))
 
--- ── SECTION: pet info (atas, full width) ─────────────────────────────────────
-local hdrPet = Instance.new("TextLabel")
-hdrPet.Size = UDim2.new(1,-8,0,14)
-hdrPet.Position = UDim2.new(0,4,0,48)
-hdrPet.BackgroundColor3 = Color3.fromRGB(20,20,35)
-hdrPet.BorderSizePixel = 0
-hdrPet.Text = "  UUID PETS  (tipe | uuid8 | age | kg)"
-hdrPet.TextColor3 = Color3.fromRGB(160,160,200)
-hdrPet.TextSize = 11
-hdrPet.Font = Enum.Font.Code
-hdrPet.TextXAlignment = Enum.TextXAlignment.Left
-hdrPet.Parent = panel
-
-local sfPet = Instance.new("ScrollingFrame")
-sfPet.Size = UDim2.new(1,-8,0,120)
-sfPet.Position = UDim2.new(0,4,0,63)
-sfPet.BackgroundColor3 = Color3.fromRGB(14,14,22)
-sfPet.BorderSizePixel = 0
-sfPet.ScrollBarThickness = 4
-sfPet.CanvasSize = UDim2.new(0,0,0,0)
-sfPet.AutomaticCanvasSize = Enum.AutomaticSize.Y
-sfPet.Parent = panel
-
-local lbPet = Instance.new("TextLabel")
-lbPet.Size = UDim2.new(1,0,0,0)
-lbPet.AutomaticSize = Enum.AutomaticSize.Y
-lbPet.BackgroundTransparency = 1
-lbPet.TextColor3 = Color3.fromRGB(160,220,255)
-lbPet.TextSize = 10
-lbPet.Font = Enum.Font.Code
-lbPet.TextXAlignment = Enum.TextXAlignment.Left
-lbPet.TextWrapped = true
-lbPet.Text = "(belum di-refresh)"
-lbPet.Parent = sfPet
-
--- ── SECTION: header kolom swap ───────────────────────────────────────────────
-local function mkHdr(txt, x, w)
+-- header kolom
+local function mkHdr(txt, x, w, col)
     local h = Instance.new("TextLabel")
     h.Size = UDim2.new(0,w,0,14)
-    h.Position = UDim2.new(0,x,0,185)
+    h.Position = UDim2.new(0,x,0,48)
     h.BackgroundColor3 = Color3.fromRGB(20,20,30)
     h.BorderSizePixel = 0
     h.Text = txt
-    h.TextColor3 = Color3.fromRGB(160,160,200)
+    h.TextColor3 = col
     h.TextSize = 11
     h.Font = Enum.Font.Code
     h.TextXAlignment = Enum.TextXAlignment.Left
     h.Parent = panel
 end
-mkHdr("  ✗ SKIP (in-flight)", 4, 210)
-mkHdr("  ✓ EXEC",             218, 210)
+mkHdr("  ✗ ASING", 4, 210, Color3.fromRGB(220,120,120))
+mkHdr("  ✓ MINE (anim | uuid8 | age | kg)", 218, 220, Color3.fromRGB(120,220,140))
 
--- scroll kiri (skip)
-local sfSkip = Instance.new("ScrollingFrame")
-sfSkip.Size = UDim2.new(0,210,0,250)
-sfSkip.Position = UDim2.new(0,4,0,200)
-sfSkip.BackgroundColor3 = Color3.fromRGB(18,10,10)
-sfSkip.BorderSizePixel = 0
-sfSkip.ScrollBarThickness = 4
-sfSkip.CanvasSize = UDim2.new(0,0,0,0)
-sfSkip.AutomaticCanvasSize = Enum.AutomaticSize.Y
-sfSkip.Parent = panel
+-- scroll kiri (asing)
+local sfL = Instance.new("ScrollingFrame")
+sfL.Size = UDim2.new(0,210,0,380)
+sfL.Position = UDim2.new(0,4,0,63)
+sfL.BackgroundColor3 = Color3.fromRGB(18,10,10)
+sfL.BorderSizePixel = 0
+sfL.ScrollBarThickness = 4
+sfL.CanvasSize = UDim2.new(0,0,0,0)
+sfL.AutomaticCanvasSize = Enum.AutomaticSize.Y
+sfL.Parent = panel
 
-local lbSkip = Instance.new("TextLabel")
-lbSkip.Size = UDim2.new(1,0,0,0)
-lbSkip.AutomaticSize = Enum.AutomaticSize.Y
-lbSkip.BackgroundTransparency = 1
-lbSkip.TextColor3 = Color3.fromRGB(230,100,100)
-lbSkip.TextSize = 10
-lbSkip.Font = Enum.Font.Code
-lbSkip.TextXAlignment = Enum.TextXAlignment.Left
-lbSkip.TextWrapped = true
-lbSkip.Text = ""
-lbSkip.Parent = sfSkip
+local lbL = Instance.new("TextLabel")
+lbL.Size = UDim2.new(1,0,0,0)
+lbL.AutomaticSize = Enum.AutomaticSize.Y
+lbL.BackgroundTransparency = 1
+lbL.TextColor3 = Color3.fromRGB(230,100,100)
+lbL.TextSize = 10
+lbL.Font = Enum.Font.Code
+lbL.TextXAlignment = Enum.TextXAlignment.Left
+lbL.TextWrapped = true
+lbL.Text = "(menunggu...)"
+lbL.Parent = sfL
 
--- scroll kanan (exec)
-local sfExec = Instance.new("ScrollingFrame")
-sfExec.Size = UDim2.new(0,210,0,250)
-sfExec.Position = UDim2.new(0,218,0,200)
-sfExec.BackgroundColor3 = Color3.fromRGB(10,18,10)
-sfExec.BorderSizePixel = 0
-sfExec.ScrollBarThickness = 4
-sfExec.CanvasSize = UDim2.new(0,0,0,0)
-sfExec.AutomaticCanvasSize = Enum.AutomaticSize.Y
-sfExec.Parent = panel
+-- scroll kanan (mine)
+local sfR = Instance.new("ScrollingFrame")
+sfR.Size = UDim2.new(0,218,0,380)
+sfR.Position = UDim2.new(0,218,0,63)
+sfR.BackgroundColor3 = Color3.fromRGB(10,18,10)
+sfR.BorderSizePixel = 0
+sfR.ScrollBarThickness = 4
+sfR.CanvasSize = UDim2.new(0,0,0,0)
+sfR.AutomaticCanvasSize = Enum.AutomaticSize.Y
+sfR.Parent = panel
 
-local lbExec = Instance.new("TextLabel")
-lbExec.Size = UDim2.new(1,0,0,0)
-lbExec.AutomaticSize = Enum.AutomaticSize.Y
-lbExec.BackgroundTransparency = 1
-lbExec.TextColor3 = Color3.fromRGB(100,230,120)
-lbExec.TextSize = 10
-lbExec.Font = Enum.Font.Code
-lbExec.TextXAlignment = Enum.TextXAlignment.Left
-lbExec.TextWrapped = true
-lbExec.Text = ""
-lbExec.Parent = sfExec
+local lbR = Instance.new("TextLabel")
+lbR.Size = UDim2.new(1,0,0,0)
+lbR.AutomaticSize = Enum.AutomaticSize.Y
+lbR.BackgroundTransparency = 1
+lbR.TextColor3 = Color3.fromRGB(100,230,120)
+lbR.TextSize = 10
+lbR.Font = Enum.Font.Code
+lbR.TextXAlignment = Enum.TextXAlignment.Left
+lbR.TextWrapped = true
+lbR.Text = "(menunggu...)"
+lbR.Parent = sfR
 
--- roar counter bar (paling bawah)
-local lbCount = Instance.new("TextLabel")
-lbCount.Size = UDim2.new(1,-8,0,32)
-lbCount.Position = UDim2.new(0,4,0,452)
-lbCount.BackgroundColor3 = Color3.fromRGB(18,18,28)
-lbCount.BorderSizePixel = 0
-lbCount.TextColor3 = Color3.fromRGB(180,180,100)
-lbCount.TextSize = 10
-lbCount.Font = Enum.Font.Code
-lbCount.TextXAlignment = Enum.TextXAlignment.Left
-lbCount.TextWrapped = true
-lbCount.Text = "roar cnt: —"
-lbCount.Parent = panel
-
--- ── State ─────────────────────────────────────────────────────────────────────
-local MAX = 120
-local skipLines = {}
-local execLines = {}
-local roarCount = {}  -- r8 -> {total, skipped}
+-- state
+local MAX = 150
+local linesL, linesR = {}, {}
 local copyBuf = {}
 
 local function ts()
     return string.format("%.2f", os.clock() % 1000)
 end
 
-local function addSkip(r8, anim)
-    local line = ts().." ✗ "..anim.." "..r8
-    table.insert(skipLines, 1, line)
-    table.insert(copyBuf, 1, "[SKIP] "..line)
-    if #skipLines > MAX then skipLines[#skipLines] = nil end
-    if #copyBuf > 400 then copyBuf[#copyBuf] = nil end
-    lbSkip.Text = table.concat(skipLines, "\n")
+local function addL(line)
+    table.insert(linesL, 1, line)
+    table.insert(copyBuf, 1, "[ASING] "..line)
+    if #linesL > MAX then linesL[#linesL] = nil end
+    if #copyBuf > 500 then copyBuf[#copyBuf] = nil end
+    lbL.Text = table.concat(linesL, "\n")
 end
 
-local function addExec(r8, anim)
-    local line = ts().." ✓ "..anim.." "..r8
-    table.insert(execLines, 1, line)
-    table.insert(copyBuf, 1, "[EXEC] "..line)
-    if #execLines > MAX then execLines[#execLines] = nil end
-    if #copyBuf > 400 then copyBuf[#copyBuf] = nil end
-    lbExec.Text = table.concat(execLines, "\n")
+local function addR(line)
+    table.insert(linesR, 1, line)
+    table.insert(copyBuf, 1, "[MINE] "..line)
+    if #linesR > MAX then linesR[#linesR] = nil end
+    if #copyBuf > 500 then copyBuf[#copyBuf] = nil end
+    lbR.Text = table.concat(linesR, "\n")
 end
 
-local function updateCountBar()
-    local parts = {}
-    for r8, c in pairs(roarCount) do
-        table.insert(parts, r8:sub(1,6)..":"..c.total.."/"..c.skipped.."s")
-    end
-    table.sort(parts)
-    lbCount.Text = (#parts>0 and table.concat(parts,"  ") or "—").." (total/skip)"
-end
-
--- ── Refresh pet info ─────────────────────────────────────────────────────────
-local function refreshPetInfo()
-    local kgC = _G and _G._kgContainer
-    if not kgC then
-        lbPet.Text = "_kgContainer belum ready"
-        return
-    end
-    local lines = {}
-    for uuid, data in pairs(kgC) do
-        local raw = tostring(uuid):gsub("[{}]","")
-        local r8 = raw:sub(1,8)
-        local pd = data and data.PetData
-        local tipe = (data and data.PetType) or "?"
-        local age = pd and pd.Level or "?"
-        local kg = pd and pd.BaseWeight or "?"
-        -- tipe pendek (ambil kata terakhir setelah spasi/titik)
-        local tipeShort = tostring(tipe):match("[^ .]+$") or tostring(tipe):sub(1,10)
-        table.insert(lines, string.format("%-12s %s  age=%-5s kg=%s", tipeShort, r8, tostring(age), tostring(kg)))
-    end
-    table.sort(lines)
-    if #lines == 0 then
-        lbPet.Text = "(kosong)"
-    else
-        lbPet.Text = table.concat(lines, "\n")
-        -- tambah ke copyBuf juga
-        table.insert(copyBuf, 1, "=== PET INFO ===\n"..table.concat(lines,"\n"))
-    end
-end
-
--- ── Tombol ───────────────────────────────────────────────────────────────────
 btnClr.MouseButton1Click:Connect(function()
-    skipLines={}; execLines={}; copyBuf={}
-    lbSkip.Text=""; lbExec.Text=""
+    linesL={}; linesR={}; copyBuf={}
+    lbL.Text=""; lbR.Text=""
 end)
-
 btnCopy.MouseButton1Click:Connect(function()
     setclipboard(table.concat(copyBuf,"\n"))
     btnCopy.Text="✓ OK"
     task.delay(1.5, function() btnCopy.Text="COPY" end)
 end)
 
-btnRst.MouseButton1Click:Connect(function()
-    roarCount={}; updateCountBar()
-end)
-
-btnRef.MouseButton1Click:Connect(function()
-    refreshPetInfo()
-    btnRef.Text="✓ OK"
-    task.delay(1, function() btnRef.Text="REFRESH" end)
-end)
-
--- auto refresh tiap 5s
-task.spawn(function()
-    while task.wait(5) do
-        pcall(refreshPetInfo)
-    end
-end)
-
--- ── Helpers ──────────────────────────────────────────────────────────────────
-local SWAP_ANIM = {roar=true, fan=true, weave=true}
-
+-- helper: cek UUID milik kita
 local function getMyUuids()
     local mine = {}
     local kgC = _G and _G._kgContainer
@@ -288,16 +169,24 @@ local function getMyUuids()
     return mine
 end
 
-local _inFlight = {}  -- r8 -> tick() saat event pertama
+-- helper: ambil age + kg dari _kgContainer
+local function getPetInfo(raw)
+    local kgC = _G and _G._kgContainer
+    if not kgC then return "?","?" end
+    local entry = kgC[raw] or kgC["{"..raw.."}"]
+    if not entry then return "?","?" end
+    local pd = entry.PetData
+    local age = pd and pd.Level or "?"
+    local kg  = pd and pd.BaseWeight or "?"
+    return tostring(age), tostring(kg)
+end
 
--- ── DS Listener ──────────────────────────────────────────────────────────────
+local SWAP_ANIM = {roar=true, fan=true, weave=true}
+
 local gs = RS:WaitForChild("GameEvents",10)
-if not gs then lbSkip.Text="ERR: GameEvents not found"; return end
+if not gs then lbL.Text="ERR: GameEvents not found"; return end
 local ds2 = gs:WaitForChild("DataStream",10)
-if not ds2 then lbSkip.Text="ERR: DataStream not found"; return end
-
-lbSkip.Text = "(menunggu event...)"
-lbExec.Text = "(menunggu event...)"
+if not ds2 then lbL.Text="ERR: DataStream not found"; return end
 
 ds2.OnClientEvent:Connect(function(...)
     local args = {...}
@@ -316,31 +205,20 @@ ds2.OnClientEvent:Connect(function(...)
                 local raw = uuid:gsub("[{}]","")
                 local anim = tostring(v[2]):lower()
                 if not SWAP_ANIM[anim] then continue end
-
                 local r8 = raw:sub(1,8)
-                if not myUuids[raw] then continue end  -- skip pet lain
+                local t = ts()
 
-                -- hitung per UUID
-                if not roarCount[r8] then roarCount[r8] = {total=0, skipped=0} end
-                roarCount[r8].total = roarCount[r8].total + 1
-
-                -- deteksi kemungkinan skip: event kedua < 0.5s dari event sebelumnya
-                local now = tick()
-                local last = _inFlight[r8]
-                if last and (now - last) < 0.5 then
-                    roarCount[r8].skipped = roarCount[r8].skipped + 1
-                    addSkip(r8, anim)
+                if myUuids[raw] then
+                    -- mine: tampilkan age + kg
+                    local age, kg = getPetInfo(raw)
+                    addR(t.." "..anim.." "..r8.." a="..age.." k="..kg)
                 else
-                    _inFlight[r8] = now
-                    addExec(r8, anim)
+                    -- asing: hanya uuid8
+                    addL(t.." "..anim.." "..r8)
                 end
-
-                updateCountBar()
             end
         end
     end
 end)
 
--- refresh pertama
-task.delay(2, function() pcall(refreshPetInfo) end)
 print("[debug_swap] aktif")
