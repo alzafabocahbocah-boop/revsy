@@ -1,4 +1,4 @@
--- uplevelnew v8.760
+-- uplevelnew v8.767
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -7277,13 +7277,22 @@ do
                 continue
             end
             TR_ALL[1].mode="gift"
-            pcall(function()
+            local _btOk,_btErr=pcall(function()
                 local mk2=_G.ZenxMarketAkun
                 local Players=game:GetService("Players"); local tgt={}
                 -- hardcode akun market yg gak lapor panel
                 local _hardcode={dinoegg208=200,dinoegg415=200}
                 if type(mk2)=="table" and next(mk2) then
                     -- data sudah ada: pakai total/max dari panel
+                    -- v8.767: log setiap akun panel untuk debug
+                    for nm,d in pairs(mk2) do
+                        local onl=Players:FindFirstChild(nm)~=nil
+                        local full=(d and d.max and d.max>0 and d.total and d.total>=d.max)
+                        if onl then
+                            print(string.format("[Gift-DBG] panel akun=%s total=%s max=%s online=%s full=%s",
+                                nm, tostring(d and d.total), tostring(d and d.max), tostring(onl), tostring(full~=nil and full)))
+                        end
+                    end
                     for nm,d in pairs(mk2) do
                         if Players:FindFirstChild(nm) then
                             local full=d and d.max and d.max>0 and d.total and d.total>=d.max
@@ -7304,9 +7313,15 @@ do
                     end
                 else
                     -- v9.500: data belum fetch -> fallback default max=200, kirim ke semua akun market hadir
-                    for _,pl in ipairs(Players:GetPlayers()) do
+                    -- v8.767: log semua player + sc attribute mereka untuk debug
+                    local allPl=Players:GetPlayers()
+                    print("[Gift-DBG] fallback scan: "..#allPl.." player di server")
+                    for _,pl in ipairs(allPl) do
                         local sc=(pl.GetAttribute and pl:GetAttribute("sc") or "")
-                        if type(sc)=="string" and sc:find("MARKET") then tgt[#tgt+1]=pl.Name end
+                        local scStr=tostring(sc)
+                        local hasMarket=(type(sc)=="string" and sc:find("MARKET"))
+                        print("[Gift-DBG] player="..pl.Name.." sc=["..scStr.."] hasMarket="..tostring(hasMarket~=nil))
+                        if hasMarket then tgt[#tgt+1]=pl.Name end
                     end
                     -- tambahkan hardcode di fallback juga
                     for nm,_ in pairs(_hardcode) do
@@ -7317,10 +7332,12 @@ do
                         end
                     end
                 end
+                print("[Gift-DBG] build tgt selesai: "..#tgt.." target -> "..(#tgt>0 and table.concat(tgt,",") or "kosong"))
                 TR_ALL[1].targets=tgt
                 if type(_G.ZenxUplevelGiftTipe)=="table" then TR_ALL[1].tipe=_G.ZenxUplevelGiftTipe end
                 TR_ALL[1].minKg=3.8; TR_ALL[1].minAge=500; TR_ALL[1].mode="gift"
             end)
+            if not _btOk then print("[Gift-DBG][ERR] build target error: "..tostring(_btErr)) end
             -- selalu jalankan dari TR_ALL[1] (market template), bukan TR (active template)
             -- TR bisa beda kalau user switch ke template 2/3 -> target/filter beda -> gak kirim
             local mkt=TR_ALL[1]
