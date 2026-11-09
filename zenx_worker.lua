@@ -460,6 +460,12 @@ end
 function denyut_dirs(cfg)
     local seen, dirs = {}, {}
     local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace", "/storage/emulated/0/Delta/Workspace", "/storage/emulated/0/Arceus X/Workspace" }
+    -- v9.640: beberapa executor tulis file ke Workspace/Workspace (subfolder double) — tambah variant
+    local extra = {}
+    for _, d in ipairs(kandidat) do
+        if d and d ~= "" then extra[#extra+1] = d .. "/Workspace" end
+    end
+    for _, d in ipairs(extra) do kandidat[#kandidat+1] = d end
     for _, d in ipairs(kandidat) do
         if d and d ~= "" and not seen[d] then seen[d] = true; dirs[#dirs + 1] = d end
     end
