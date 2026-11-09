@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.763"  -- v8.763: giftToTarget cek equipped==char sebelum FireServer + debug log EquipTool gagal
+local VERSION = "v8.764"  -- v8.764: giftToTarget full debug di setStat kanan (char/hum/equip/giftRE/FireServer error)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -7186,30 +7186,60 @@ do
     end
     local function giftToTarget(targetPlayer,pets)
         local char=plr.Character; local hum=char and char:FindFirstChildOfClass("Humanoid")
-        if not (hum and targetPlayer) then return 0 end
-        -- v8.761: re-lookup giftRE kalau masih nil (belum ready waktu startup)
+        -- v8.764: debug detail di setStat kanan
+        local function gdbg(s) setStat("GIFT-DBG: "..s); print("[Gift-DBG] "..s) end
+        if not char then gdbg("char nil"); return 0 end
+        if not hum then gdbg("hum nil"); return 0 end
+        if not targetPlayer then gdbg("target nil"); return 0 end
+        -- re-lookup giftRE kalau masih nil
         if not GiftSys.giftRE then
             GiftSys.giftRE = GE and GE:FindFirstChild("PetGiftingService")
             if not GiftSys.giftRE then GiftSys.giftRE = RS:FindFirstChild("PetGiftingService", true) end
+            gdbg("re-lookup giftRE="..(GiftSys.giftRE and "OK" or "NIL"))
         end
-        if not GiftSys.pgs then pcall(function()
-            local mods=RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("PetServices")
-            local gm=mods and mods:FindFirstChild("PetGiftingInputService")
-            if gm then local ok,mod=pcall(require,gm); if ok then GiftSys.pgs=mod end end
-        end) end
-        unfavSemua(pets); local sent=0
-        for _,p in ipairs(pets) do
+        if not GiftSys.pgs then
+            local ok2,err2=pcall(function()
+                local mods=RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("PetServices")
+                local gm=mods and mods:FindFirstChild("PetGiftingInputService")
+                if gm then local ok,mod=pcall(require,gm); if ok then GiftSys.pgs=mod end end
+            end)
+            if not ok2 then gdbg("pgs lookup err: "..tostring(err2):sub(1,40)) end
+        end
+        gdbg(string.format("start -> %s | giftRE=%s pgs=%s | %d pets",
+            tostring(targetPlayer.Name), tostring(GiftSys.giftRE~=nil), tostring(GiftSys.pgs~=nil), #pets))
+        local ok1,e1=pcall(function() unfavSemua(pets) end)
+        if not ok1 then gdbg("unfav err: "..tostring(e1):sub(1,40)) end
+        task.wait(0.25)
+        local sent=0
+        for i,p in ipairs(pets) do
             local petTool=p.tool
-            pcall(function()hum:EquipTool(petTool)end); task.wait(0.2)
-            if petTool.Parent~=char then pcall(function()hum:EquipTool(petTool)end); task.wait(0.2) end
-            -- v8.763: cek parent==char (bukan sekedar parent!=nil) sebelum gift
+            if not petTool or not petTool.Parent then gdbg("pet "..i.." tool nil/destroyed, skip"); continue end
+            local ok3,e3=pcall(function()hum:EquipTool(petTool)end)
+            if not ok3 then gdbg("equip1 err: "..tostring(e3):sub(1,40)) end
+            task.wait(0.2)
+            if petTool.Parent~=char then
+                local ok4,e4=pcall(function()hum:EquipTool(petTool)end)
+                if not ok4 then gdbg("equip2 err: "..tostring(e4):sub(1,40)) end
+                task.wait(0.2)
+            end
             local equipped = (petTool.Parent == char)
-            if GiftSys.pgs and GiftSys.pgs.GivePet then pcall(function()GiftSys.pgs.GivePet(targetPlayer)end); task.wait(0.25) end
-            if equipped and GiftSys.giftRE then pcall(function()GiftSys.giftRE:FireServer("GivePet",targetPlayer,fmtU(p.uuid))end); task.wait(0.25) end
-            if not equipped then print("[Gift-DBG] skip "..tostring(p.uuid):sub(1,8).." — EquipTool gagal") end
+            if not equipped then gdbg("pet "..i.." EquipTool gagal, parent="..(petTool.Parent and petTool.Parent.Name or "nil")); continue end
+            if GiftSys.pgs and GiftSys.pgs.GivePet then
+                local ok5,e5=pcall(function()GiftSys.pgs.GivePet(targetPlayer)end)
+                if not ok5 then gdbg("GivePet err: "..tostring(e5):sub(1,40)) end
+                task.wait(0.25)
+            end
+            if GiftSys.giftRE then
+                local ok6,e6=pcall(function()GiftSys.giftRE:FireServer("GivePet",targetPlayer,fmtU(p.uuid))end)
+                if not ok6 then gdbg("FireServer err: "..tostring(e6):sub(1,40)) end
+                task.wait(0.25)
+            else
+                gdbg("giftRE nil, skip FireServer")
+            end
             if not petTool.Parent then sent=sent+1 end
             task.wait(0.1)
         end
+        gdbg("selesai sent="..sent.."/"..#pets)
         return sent
     end
 
