@@ -1,4 +1,4 @@
--- uplevelnew v8.767
+-- uplevelnew v8.768
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -7111,6 +7111,9 @@ do
         local scan={}
         for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end
         if plr.Character then for _,t in ipairs(plr.Character:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
+        -- v8.768: debug scan tiap 30s
+        local _plDbg=not _G.__ZenxPetsLolosDbg or (os.time()-_G.__ZenxPetsLolosDbg)>=30
+        if _plDbg then _G.__ZenxPetsLolosDbg=os.time(); print("[Gift-DBG] petsLolos scan: "..#scan.." tool di bp+char") end
         for _,t in ipairs(scan) do
             local uuid=t:GetAttribute("PET_UUID")
             local supAll=_G.ZenxSupportUuids or {}; local sk=_G.ZenxSupportKunci or {}; local pr=_G.__ZenxSupProtect or {}
@@ -7124,10 +7127,22 @@ do
                         local kgBase,age=0,0
                         if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end
                         local function th(val,thr) thr=thr or 0; if thr<0 then return val<(-thr) end; return val>=thr end
-                        if th(kgBase,TR.minKg) and th(age,TR.minAge) and not isFavP(t,uuid) then
+                        local fav=isFavP(t,uuid)
+                        local kgOk=th(kgBase,TR.minKg); local ageOk=th(age,TR.minAge)
+                        if kgOk and ageOk and not fav then
                             out[#out+1]={uuid=uuid,tool=t,tipe=tipe,kg=kgBase,age=age}
+                        elseif _plDbg then
+                            -- print alasan skip (hanya tiap 30s supaya gak spam)
+                            print(string.format("[Gift-DBG] skip %s tipe=%s kg=%.1f/%.1f age=%d/%d fav=%s",
+                                t.Name, tipe, kgBase, TR.minKg or 0, age, TR.minAge or 0, tostring(fav)))
                         end
+                    elseif _plDbg then
+                        local e2=c and (c[fmtU(uuid)] or c[tostring(uuid)])
+                        local tipe2=(type(e2)=="table" and e2.PetType) and stripMutation(tostring(e2.PetType)) or stripMutation(tostring(t:GetAttribute("f") or ""))
+                        print(string.format("[Gift-DBG] skip %s tipe=%s — tidak ada di filter tipe", t.Name, tipe2))
                     end
+                elseif _plDbg then
+                    print(string.format("[Gift-DBG] skip %s uuid=%s — isSup/pool/active", t.Name, tostring(uuid):sub(1,8)))
                 end
             end
         end
@@ -7358,11 +7373,15 @@ do
                 -- petsLolos() baca TR jadi swap sementara
                 local _oldTR=TR; TR=mkt
                 local pets=petsLolos(); TR=_oldTR
+                -- v8.768: selalu print tiap iterasi (bukan hanya 30s) supaya ketahuan
                 if not _G.__ZenxGiftPetsDbgLast or (os.time()-_G.__ZenxGiftPetsDbgLast)>=30 then
                     _G.__ZenxGiftPetsDbgLast=os.time()
                     print(string.format("[Gift-DBG] petsLolos=%d minKg=%.1f minAge=%d tipe=%s",
                         #pets, mkt.minKg or 0, mkt.minAge or 0,
                         (next(mkt.tipe or {})==nil) and "semua" or table.concat((function() local t={} for k in pairs(mkt.tipe or {}) do t[#t+1]=k end return t end)(),",")))
+                else
+                    -- compact log tiap iterasi
+                    print(string.format("[Gift-DBG] iter: pets=%d tgt=%d busy=%s", #pets, #(mkt.targets or {}), tostring(trBusy)))
                 end
                 if #pets>0 then
                     trBusy=true
