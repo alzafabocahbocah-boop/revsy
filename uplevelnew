@@ -1,4 +1,4 @@
--- uplevelnew v8.773
+-- uplevelnew v8.774
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.773"  -- v8.773: fix petsLolos crash — _activeUuids nil di iterasi ke-2
+local VERSION = "v8.774"  -- v8.774: guard gift — skip kalau sesiPool kosong (lineup belum diisi, pet tim belum terproteksi)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -7279,6 +7279,14 @@ do
 
     local function jalankan(mode)
         if trBusy then setStat("lagi jalan, tunggu...") return end
+        -- v8.774: guard sesiPool kosong — cegah pet tim ke-gift sebelum lineup diisi
+        local _poolAdaIsi = false
+        for _, sPool in pairs(sesiPool) do if next(sPool) then _poolAdaIsi = true; break end end
+        if not _poolAdaIsi then
+            setStat("⚠️ lineup kosong! isi lineup dulu sebelum gift")
+            print("[Gift-DBG] SKIP gift — sesiPool kosong, isi lineup dulu (pet tim belum terproteksi)")
+            return
+        end
         trBusy=true
         task.spawn(function()
             local Players=game:GetService("Players"); local pets=petsLolos()
