@@ -1,4 +1,4 @@
--- uplevelnew v8.768
+-- uplevelnew v8.769
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.768"  -- v8.768: debug petsLolos skip reason + iter log
+local VERSION = "v8.769"  -- v8.769: debug petsLolos — count uuid vs noUuid
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -7111,13 +7111,15 @@ do
         local scan={}
         for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end
         if plr.Character then for _,t in ipairs(plr.Character:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
-        -- v8.768: debug scan tiap 30s
+        -- v8.769: debug scan tiap 30s
         local _plDbg=not _G.__ZenxPetsLolosDbg or (os.time()-_G.__ZenxPetsLolosDbg)>=30
+        local _noUuidCount=0; local _uuidCount=0
         if _plDbg then _G.__ZenxPetsLolosDbg=os.time(); print("[Gift-DBG] petsLolos scan: "..#scan.." tool di bp+char") end
         for _,t in ipairs(scan) do
             local uuid=t:GetAttribute("PET_UUID")
             local supAll=_G.ZenxSupportUuids or {}; local sk=_G.ZenxSupportKunci or {}; local pr=_G.__ZenxSupProtect or {}
             if uuid then
+                _uuidCount=_uuidCount+1
                 -- _activeUuids = pet equip di kebun | sesiPool = uuid dipilih di picker (belum tentu ke-equip)
                 local isSup=(supAll[uuid] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[uuid] or pr[fmtU(uuid)] or _activeUuids[uuid] or _activeUuids[fmtU(uuid)] or _poolUuids[uuid] or _poolUuids[fmtU(uuid)])
                 if not isSup then
@@ -7144,7 +7146,12 @@ do
                 elseif _plDbg then
                     print(string.format("[Gift-DBG] skip %s uuid=%s — isSup/pool/active", t.Name, tostring(uuid):sub(1,8)))
                 end
+            else
+                _noUuidCount=_noUuidCount+1
             end
+        end
+        if _plDbg then
+            print(string.format("[Gift-DBG] petsLolos result: uuid=%d noUuid=%d lolos=%d", _uuidCount, _noUuidCount, #out))
         end
         return out
     end
