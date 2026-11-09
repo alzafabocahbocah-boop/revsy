@@ -250,7 +250,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.761"  -- v8.761: giftToTarget re-lookup giftRE/pgs tiap call kalau masih nil (belum ready waktu startup)
+local VERSION = "v8.762"  -- v8.762: debug log Gift-DBG tiap 30s (mode/busy/tgt/giftRE/petsLolos)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -7286,10 +7286,23 @@ do
             -- selalu jalankan dari TR_ALL[1] (market template), bukan TR (active template)
             -- TR bisa beda kalau user switch ke template 2/3 -> target/filter beda -> gak kirim
             local mkt=TR_ALL[1]
+            -- v8.762: debug log tiap 30s
+            if not _G.__ZenxGiftDbgLast or (os.time()-_G.__ZenxGiftDbgLast)>=30 then
+                _G.__ZenxGiftDbgLast=os.time()
+                print(string.format("[Gift-DBG] mode=%s busy=%s tgt=%d giftRE=%s pgs=%s",
+                    tostring(mkt.mode), tostring(trBusy), #(mkt.targets or {}),
+                    tostring(GiftSys.giftRE~=nil), tostring(GiftSys.pgs~=nil)))
+            end
             if (mkt.mode=="trade" or mkt.mode=="gift") and not trBusy then
                 -- petsLolos() baca TR jadi swap sementara
                 local _oldTR=TR; TR=mkt
                 local pets=petsLolos(); TR=_oldTR
+                if not _G.__ZenxGiftPetsDbgLast or (os.time()-_G.__ZenxGiftPetsDbgLast)>=30 then
+                    _G.__ZenxGiftPetsDbgLast=os.time()
+                    print(string.format("[Gift-DBG] petsLolos=%d minKg=%.1f minAge=%d tipe=%s",
+                        #pets, mkt.minKg or 0, mkt.minAge or 0,
+                        (next(mkt.tipe or {})==nil) and "semua" or table.concat((function() local t={} for k in pairs(mkt.tipe or {}) do t[#t+1]=k end return t end)(),",")))
+                end
                 if #pets>0 then
                     trBusy=true
                     task.spawn(function()
