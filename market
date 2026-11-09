@@ -398,7 +398,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.537"
+local VERSION = "8.540"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -931,6 +931,20 @@ task.spawn(function()
                             if now >= anchor + 120 then
                                 if not _G.__ZenxBalikHomeTulis then
                                     _G.__ZenxBalikHomeTulis = true
+                                    -- v8.540: jalur 1 — SC langsung fire TP Market (pakai mekanisme gTravelBtn)
+                                    pcall(function()
+                                        local tpb = _G.__ZenxTPBtn
+                                        if tpb and getconnections then
+                                            print("[ZenxMarket] balik home DIRECT — fire gTravelBtn")
+                                            for _, c in ipairs(getconnections(tpb.MouseButton1Click)) do
+                                                if c.Function then c.Function() elseif c.Fire then c:Fire() end
+                                            end
+                                        elseif tpb and firesignal then
+                                            print("[ZenxMarket] balik home DIRECT — firesignal gTravelBtn")
+                                            firesignal(tpb.MouseButton1Click)
+                                        end
+                                    end)
+                                    -- v8.540: jalur 2 — tulis flag ke worker sebagai fallback (kalau TP gagal/gak support)
                                     pcall(function() writefile("zenx_balikhome_" .. plr.Name .. ".txt", tostring(os.time())) end)
                                     print("[ZenxMarket] minta BALIK HOME ke market (abis countdown)")
                                 end
@@ -1040,12 +1054,34 @@ task.spawn(function()
     end
 end)
 
+-- v8.536: tulis zenx_upkgstat_<akun>.json tiap 15s supaya worker push ke /upkgstat-batch
+-- -> panel bisa baca totalPet & maxInv di card market (sama kayak uplevel)
+task.spawn(function()
+    while masihGuaYangAktif() do
+        pcall(function()
+            if not (plr and plr.Name) then return end
+            if not writefile then return end
+            local tot = totalPetTerakhir or 0
+            local mx  = maxInvTerakhir or 0
+            if tot == 0 and mx == 0 then return end   -- belum ada data, skip dulu
+            local js = string.format(
+                '{"akun":%q,"config":"market","totalAll":%d,"total":%d,"maxInv":%d,"ts":%d}',
+                plr.Name, tot, tot, mx, os.time())
+            writefile("Workspace/zenx_upkgstat_" .. plr.Name .. ".json", js)
+        end)
+        task.wait(15)
+    end
+end)
+
 local pg = player:WaitForChild("PlayerGui")
 
 -- v8.440: SENTUHAN ASLI (Touch/Mouse input kita) -> _G.__ZenxLastTouch. Dipake buat tunda balik-home 5 menit.
+-- v8.539: filter gpe=true (klik tombol UI sc sendiri) -- sebelumnya klik tombol di panel market
+-- ikut dianggap sentuhan -> balik-home kena tunda 5 menit terus padahal user gak beneran main.
 do
     local UIS = game:GetService("UserInputService")
     UIS.InputBegan:Connect(function(input, gpe)
+        if gpe then return end   -- v8.539: klik di UI Roblox (tombol sc dll) gak dihitung sentuhan asli
         if input.UserInputType == Enum.UserInputType.Touch
            or input.UserInputType == Enum.UserInputType.MouseButton1 then
             _G.__ZenxLastTouch = os.time()
