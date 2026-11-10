@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI) | v2.27: debug panel — posisi bawah + tombol copy + tutup  ║
+-- ║  UP KG — v0.1 (KERANGKA UI) | v2.28: animStr swap jalan walau upkg off (fix scope+isMyPet)  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.27"
+local VERSION = "up38kg-v2.28"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1546,6 +1546,10 @@ do
         if pos then pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), CFrame.new(pos)) end)
         else pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), nil) end) end
     end
+    -- v2.28: expose ke _G biar animStr block (di luar do-scope ini) bisa akses walau upkg off
+    _G._ZenxUnequipPet = unequipPet
+    _G._ZenxEquipPet   = equipPet
+    _G._ZenxFmtUUID    = fmtUUID
     -- cooldown ready (swap gacor)
     local cdEventCache = {}
     -- ready kalau SALAH SATU skill ready (Time<=0). Skip entry MUTASI (Passive ada "mutation").
@@ -2745,6 +2749,12 @@ end
 -- v2.24: dipindah keluar dari kgStart
 -- SEBELUM: di dalam kgStart, exit saat KG.aktif = false → swap mati kalau upkg di-stop
 -- SESUDAH: di luar kgStart, pakai inject-once guard _G._ZenxAnimSwapStarted — jalan terus
+-- v2.28: pakai _G._ZenxUnequipPet/_G._ZenxEquipPet (expose dari do-scope)
+-- SEBELUM: unequipPet/equipPet dipanggil dari luar scope → nil → pcall silent fail → gak swap
+-- SESUDAH: pakai _G wrapper → akses valid walau upkg off
+-- v2.28: isMyPetUUID — scan backpack + character (equipped), gak butuh _kgContainer
+-- SEBELUM: kalau _kgContainer nil (upkg belum jalan), isMyPetUUID return false → semua skip
+-- SESUDAH: langsung scan backpack + char → kerja walau _kgContainer nil
 do
     if not _G._ZenxAnimSwapStarted then
         _G._ZenxAnimSwapStarted = true
@@ -2764,16 +2774,21 @@ do
             local ANIM_BLACKLIST = { roar = { "trex", "t-rex", "tyrannosaurus" } }
             local LOOKUP_KW = { pee = { "hotdog" }, pew = { "hotdog" } }
 
+            -- v2.28: scan backpack + character — gak butuh _kgContainer, kerja walau upkg off
             local function isMyPetUUID(raw)
-                if _kgContainer and _kgContainer[raw] then return true end
-                if _kgContainer and _kgContainer["{"..raw.."}"] then return true end
-                local bp = plr:FindFirstChild("Backpack")
-                if bp then
-                    for _, t in ipairs(bp:GetChildren()) do
+                -- cek container dulu kalau ada (cepat, O(1))
+                if _kgContainer and (_kgContainer[raw] or _kgContainer["{"..raw.."}"]) then return true end
+                -- fallback: scan backpack + character (equipped) — robust walau _kgContainer nil
+                local function scanContainer(container)
+                    if not container then return false end
+                    for _, t in ipairs(container:GetChildren()) do
                         local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
                         if u and tostring(u):gsub("[{}]","") == raw then return true end
                     end
+                    return false
                 end
+                if scanContainer(plr:FindFirstChild("Backpack")) then return true end
+                if scanContainer(plr.Character) then return true end
                 return false
             end
 
@@ -2824,12 +2839,16 @@ do
                     animDbgPush(r, animStr)
                     local raw = targetR:gsub("[{}]","")
                     local raw8 = raw:sub(1,8)
+                    -- v2.28: pakai _G wrapper — akses valid walau upkg off (scope luar do-block)
+                    local _unequip = _G._ZenxUnequipPet
+                    local _equip   = _G._ZenxEquipPet
+                    if not _unequip or not _equip then ssLog("ERR: equip fn nil, skip"); continue end
                     task.spawn(function()
                         pcall(function()
                             if anim == "frill" then task.wait(0.2) end
-                            unequipPet(raw)
+                            _unequip(raw)
                             task.wait(0.03)
-                            equipPet(raw)
+                            _equip(raw)
                             local CENTER = anim == "frill" and Vector3.new(11,22,8) or Vector3.new(10,3,12)
                             local done, spawnPos = false, nil
                             local conn2 = workspace.DescendantAdded:Connect(function(d)
@@ -2847,7 +2866,7 @@ do
                             while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
                             conn2:Disconnect()
                             if spawnPos and (spawnPos-CENTER).Magnitude > 2.0 then
-                                unequipPet(raw); task.wait(0.03); equipPet(raw)
+                                _unequip(raw); task.wait(0.03); _equip(raw)
                             end
                         end)
                     end)
