@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI) | v2.24: animStr swap dipindah keluar kgStart — jalan terus walau upkg stop  ║
+-- ║  UP KG — v0.1 (KERANGKA UI) | v2.25: debug panel animStr swap mengambang kanan  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.24"
+local VERSION = "up38kg-v2.25"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2743,7 +2743,11 @@ do
     if not _G._ZenxAnimSwapStarted then
         _G._ZenxAnimSwapStarted = true
         task.spawn(function()
-            local function ssLog(msg) local s="[SuppSwap] "..tostring(msg); print(s); if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end end
+            local function ssLog(msg)
+                local s="[SuppSwap] "..tostring(msg)
+                print(s)
+                if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end
+            end
             local ge2 = RS:WaitForChild("GameEvents", 15)
             if not ge2 then ssLog("ERR: ge2 nil"); _G._ZenxAnimSwapStarted = false; return end
             local ds2 = ge2:WaitForChild("DataStream", 15)
@@ -2948,7 +2952,143 @@ local gui = mk("ScreenGui", {
 pcall(function() gui.Parent = (gethui and gethui()) or CoreGui end)
 if not gui.Parent then gui.Parent = player:WaitForChild("PlayerGui") end
 
-_G.ZenxSuppDebug = function(msg) end -- debug panel dihapus
+-- ============ ANIM SWAP DEBUG PANEL (mengambang kanan) ============
+-- v2.25: panel debug animStr swap — tampilkan trigger, skip reason, unequip/equip
+do
+    local DBG_MAX = 40  -- maks baris di panel
+    local _dbgLog = {}  -- {time, msg, color}
+    local _dbgVisible = true
+
+    local function dbgPush(msg, col)
+        local ts = os.date("%H:%M:%S")
+        local ms = math.floor((tick()%1)*1000)
+        table.insert(_dbgLog, 1, {ts..string.format(".%03d",ms), msg, col or Color3.fromRGB(220,220,220)})
+        if #_dbgLog > DBG_MAX then table.remove(_dbgLog) end
+    end
+
+    -- re-route ZenxSuppDebug ke panel ini
+    _G.ZenxSuppDebug = function(msg)
+        local m = tostring(msg)
+        local col = Color3.fromRGB(220,220,220)
+        if m:find("SKIP") or m:find("skip") or m:find("bukan") or m:find("blacklist") then
+            col = Color3.fromRGB(255,100,100)   -- merah = skip/alasan gak diproses
+        elseif m:find("DS ") then
+            col = Color3.fromRGB(100,220,255)   -- biru = trigger masuk
+        elseif m:find("UNQ") or m:find("unequip") or m:find("Unequip") then
+            col = Color3.fromRGB(255,200,80)    -- kuning = unequip
+        elseif m:find("EQP") or m:find("equip") or m:find("Equip") then
+            col = Color3.fromRGB(100,255,140)   -- hijau = equip
+        elseif m:find("reconnect") or m:find("DEAD") or m:find("ERR") then
+            col = Color3.fromRGB(255,140,60)    -- oranye = DS event
+        end
+        dbgPush(m, col)
+    end
+
+    -- buat panel
+    local dbgFrame = mk("Frame", {
+        Size = UDim2.new(0, 310, 0, 420),
+        Position = UDim2.new(1, -320, 0.5, -210),
+        BackgroundColor3 = Color3.fromRGB(8,8,8),
+        BackgroundTransparency = 0.15,
+        BorderSizePixel = 0, Parent = gui })
+    corner(dbgFrame, 8); stroke(dbgFrame, Color3.fromRGB(50,50,60), 1)
+
+    -- title bar
+    local dbgTitle = mk("Frame", {
+        Size = UDim2.new(1,0,0,28), BackgroundColor3 = Color3.fromRGB(18,18,24),
+        BorderSizePixel = 0, Parent = dbgFrame })
+    corner(dbgTitle, 8)
+    mk("TextLabel", {
+        Size = UDim2.new(1,-60,1,0), Position = UDim2.new(0,8,0,0),
+        BackgroundTransparency = 1, Text = "🐾 Anim Swap Debug",
+        TextColor3 = Color3.fromRGB(100,220,255), TextSize = 12,
+        Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = dbgTitle })
+
+    -- tombol tutup/buka
+    local dbgToggle = mk("TextButton", {
+        Size = UDim2.new(0,50,0,22), Position = UDim2.new(1,-54,0,3),
+        BackgroundColor3 = Color3.fromRGB(30,30,40), Text = "tutup",
+        TextColor3 = Color3.fromRGB(160,160,160), TextSize = 11,
+        Font = Enum.Font.Gotham, BorderSizePixel = 0, Parent = dbgTitle })
+    corner(dbgToggle, 4)
+
+    -- scroll frame untuk log
+    local dbgScroll = mk("ScrollingFrame", {
+        Size = UDim2.new(1,-4,1,-32), Position = UDim2.new(0,2,0,30),
+        BackgroundTransparency = 1, ScrollBarThickness = 3,
+        ScrollBarImageColor3 = Color3.fromRGB(80,80,100),
+        CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Parent = dbgFrame })
+    mk("UIPadding", { PaddingLeft=UDim.new(0,4), PaddingRight=UDim.new(0,4), PaddingTop=UDim.new(0,2), Parent=dbgScroll })
+    mk("UIListLayout", { SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,1), Parent=dbgScroll })
+
+    -- toggle tutup/buka
+    dbgToggle.MouseButton1Click:Connect(function()
+        _dbgVisible = not _dbgVisible
+        dbgScroll.Visible = _dbgVisible
+        dbgToggle.Text = _dbgVisible and "tutup" or "buka"
+        dbgFrame.Size = _dbgVisible
+            and UDim2.new(0,310,0,420)
+            or  UDim2.new(0,310,0,28)
+    end)
+
+    -- refresh log ke UI tiap 0.3s
+    local _rowPool = {}
+    local function getRow(i)
+        if not _rowPool[i] then
+            _rowPool[i] = mk("TextLabel", {
+                Size = UDim2.new(1,0,0,13),
+                BackgroundTransparency = 1,
+                TextSize = 10, Font = Enum.Font.Code,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextWrapped = false,
+                LayoutOrder = i,
+                Parent = dbgScroll })
+        end
+        return _rowPool[i]
+    end
+
+    task.spawn(function()
+        local lastCount = -1
+        while true do
+            task.wait(0.3)
+            if not _dbgVisible then continue end
+            -- sync dari ZenxAnimDbgLog juga (unequip/equip/spawn log)
+            for _, line in ipairs(_G.ZenxAnimDbgLog or {}) do
+                local alreadyIn = false
+                for _, e in ipairs(_dbgLog) do
+                    if (e[1]..e[2]) == line then alreadyIn=true; break end
+                end
+                if not alreadyIn then
+                    -- parse warna dari marker
+                    local col = Color3.fromRGB(220,220,220)
+                    if line:find(">> UNQ") then col = Color3.fromRGB(255,200,80)
+                    elseif line:find(">> EQP") then col = Color3.fromRGB(100,255,140)
+                    elseif line:find(">> SPAWN") then col = Color3.fromRGB(160,255,160)
+                    elseif line:find(">> DESPAWN") then col = Color3.fromRGB(180,100,100)
+                    else col = Color3.fromRGB(100,220,255) end
+                    table.insert(_dbgLog, 1, {"", line, col})
+                    if #_dbgLog > DBG_MAX then table.remove(_dbgLog) end
+                end
+            end
+            if #_dbgLog == lastCount then continue end
+            lastCount = #_dbgLog
+            -- render rows
+            for i = 1, DBG_MAX do
+                local row = getRow(i)
+                local entry = _dbgLog[i]
+                if entry then
+                    row.Text = entry[2]
+                    row.TextColor3 = entry[3]
+                    row.Visible = true
+                else
+                    row.Visible = false
+                end
+            end
+        end
+    end)
+end
 
 -- main frame
 local main = mk("Frame", {
