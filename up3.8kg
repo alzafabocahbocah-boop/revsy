@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI) | v1.76: re-enable animStr swap (sebelumnya if false = mati)  ║
+-- ║  UP KG — v0.1 (KERANGKA UI) | v2.19: animStr swap — flat loop+isMyPet+inFlight+reconnect DS  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -2506,8 +2506,21 @@ do
                 task.wait(0.5)
             end
         end)
-        -- v1.78: SUPPORT SWAP via DataStream + CustomAnimationState (DIMATIIN SEMENTARA)
-        do -- v1.76: re-enable DataStream animStr swap (sebelumnya if false = dimatiin)
+        -- v2.19: SUPPORT SWAP via DataStream + CustomAnimationState
+        -- Perubahan dari versi sebelumnya (v1.76–v1.83):
+        --   [1] deepFind rekursif → flat loop 1 level (port uplevelnew v8.709)
+        --       SEBELUM: deepFind(data, 0) — rekursif depth-first, bisa miss event kalau struktur DS berubah
+        --       SESUDAH: for _, v in pairs(data) — satu level langsung, lebih reliable dan cepat
+        --   [2] _debounce[r8] time-based (0.5s) → _swapInFlight[r8] in-flight guard (port uplevelnew v8.758)
+        --       SEBELUM: if _debounce[r8] and (now - _debounce[r8]) < 0.5 then continue end
+        --       SESUDAH: withSwapDebounce(r8, fn) — skip kalau swap untuk UUID ini masih in-flight
+        --   [3] tidak ada filter kepemilikan → tambah isMyPetUUID() (port uplevelnew v8.750)
+        --       SEBELUM: semua UUID di DS diproses termasuk pet orang lain di server
+        --       SESUDAH: cek _kgContainer / backpack dulu, skip kalau bukan pet sendiri
+        --   [4] tidak ada reconnect DS → tambah AncestryChanged + ChildAdded reconnect (port uplevelnew v8.679–v8.680)
+        --       SEBELUM: kalau DataStream mati/di-replace server, listener mati dan swap berhenti
+        --       SESUDAH: AncestryChanged reconnect otomatis + ge2.ChildAdded tangkap DS baru
+        do -- v2.19: animStr swap block
         task.spawn(function()
             local function ssLog(msg) local s="[SuppSwap] "..tostring(msg); kgLog(s); if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end end
             local ge2 = RS:WaitForChild("GameEvents", 15)
@@ -2516,90 +2529,68 @@ do
             if not ds2 then ssLog("ERR: DataStream nil"); return end
             ssLog("ds2 OK")
 
-            -- deepFind: kumpulkan semua {uuid, animStr} dari CustomAnimationState
-            local function deepFind(t, depth, out)
-                depth = depth or 0; out = out or {}
-                if depth > 12 or type(t) ~= "table" then return out end
-                for _, v in pairs(t) do
-                    if type(v) == "table" then
-                        local v1 = tostring(v[1] or "")
-                        if v1:find("CustomAnimationState", 1, true) then
-                            -- v1.82: v[2] nil = state di-clear (idle/selesai) → skip, bukan animasi aktif
-                            if v[2] == nil then
-                                deepFind(v, depth+1, out)
-                            else
-                            local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
-                            local r = uuid:gsub("[{}]", "")
-                            local animStr = tostring(v[2])
-                            out[#out+1] = {r, animStr}
-                            end
-                        else
-                            deepFind(v, depth+1, out)
-                        end
-                    end
-                end
-                return out
-            end
-
-            -- helper: cek apakah uuid ada di supportKunci (plain atau {uuid})
-            local function isSupport(r)
-                if supportKunci[r] then return true end
-                if supportKunci["{"..r.."}"] then return true end
-                -- cek partial match (8 char prefix)
-                for k in pairs(supportKunci) do
-                    local kk = tostring(k):gsub("[{}]","")
-                    if kk == r then return true end
-                end
-                return false
-            end
-
-            -- v1.83: animStr trigger per tipe pet — swap hanya kalau animasi spesifik
-            local function animTriggerOk(r, animStr)
-                local petType = ""
-                pcall(function()
-                    local fmtU = "{"..r.."}"
-                    local e = _kgContainer and (_kgContainer[fmtU] or _kgContainer[r])
-                    if type(e) == "table" then
-                        petType = tostring(e.PetType or (e.PetData and e.PetData.PetType) or ""):lower()
-                    end
-                end)
-                local a = tostring(animStr):lower()
-                if petType:find("dilophosaurus",1,true) then return a == "frill" end
-                if petType:find("lion",1,true)          then return a == "roar" end
-                if petType:find("peacock",1,true)       then return a == "fan" end
-                if petType:find("peryton",1,true)       then return a == "fly" or a == "flyup" end
-                if petType:find("daschund",1,true) or petType:find("dachshund",1,true) then return a == "pee" end
-                -- tipe gak dikenal → swap kalau animStr ada (fallback)
-                return true
-            end
-
             -- skill → langsung swap, tanpa cek isSupport/animTriggerOk
             local SWAP_ANIM = { frill=true, fan=true, roar=true, pee=true, pew=true }
             -- fly/flyup = skip (gilded pakai logika lain)
             -- pet yang di-blacklist meski animStr cocok (mis. T-Rex roar bukan Lion)
             local ANIM_BLACKLIST = { roar = { "trex", "t-rex", "tyrannosaurus" } }
-            -- kind yg UUID-nya bisa milik orang lain → lookup dari supportKunci
+            -- kind yg UUID-nya bisa milik orang lain → lookup dari backpack
             local LOOKUP_KW = {
                 pee   = { "hotdog" },
                 pew   = { "hotdog" },
             }
+
+            -- v2.19 [3]: isMyPetUUID — cek _kgContainer / backpack (port uplevelnew v8.750)
+            -- SEBELUM: tidak ada filter, semua UUID dari DS diproses termasuk pet orang lain
+            -- SESUDAH: skip kalau UUID bukan milik player sendiri
+            local function isMyPetUUID(raw)
+                if _kgContainer and _kgContainer[raw] then return true end
+                if _kgContainer and _kgContainer["{"..raw.."}"] then return true end
+                local bp = plr:FindFirstChild("Backpack")
+                if bp then
+                    for _, t in ipairs(bp:GetChildren()) do
+                        local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                        if u then
+                            local uclean = tostring(u):gsub("[{}]","")
+                            if uclean == raw then return true end
+                        end
+                    end
+                end
+                return false
+            end
+
+            -- v2.19 [2]: _swapInFlight in-flight guard (port uplevelnew v8.758)
+            -- SEBELUM: _debounce[r8] = tick() — time-based 0.5s, bisa double-spawn kalau swap lambat
+            -- SESUDAH: _swapInFlight[r8] = true saat spawn, nil setelah selesai — skip kalau masih in-flight
+            local _swapInFlight = {}
+            local function withSwapDebounce(r8, fn)
+                if _swapInFlight[r8] then return end
+                _swapInFlight[r8] = true
+                task.spawn(function()
+                    local ok, err = pcall(fn)
+                    if not ok then ssLog("swap-err "..r8..": "..tostring(err)) end
+                    _swapInFlight[r8] = nil
+                end)
+            end
+
             local _lastParse = 0
-            local _debounce  = {}  -- [uuid8] = tick()
-            local conn = ds2.OnClientEvent:Connect(function(...)
-                local now = tick()
-                if now - _lastParse < 0.05 then return end
-                _lastParse = now
-                local args = {...}
-                local svc = tostring(args[2] or "")
-                if not svc:find("ActivePets", 1, true) then return end
-                local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
-                if not data then return end
-                local hits = deepFind(data, 0)
+
+            local function processHits(hits)
+                local seen = {}
                 for _, hit in ipairs(hits) do
                     local r, animStr = hit[1], hit[2]
                     local anim = tostring(animStr):lower()
                     if not SWAP_ANIM[anim] then continue end
                     if not _G.ZenxSuppSwapOn then continue end
+                    local r8 = r:sub(1,8)
+                    if seen[r8] then continue end  -- duplikat dalam 1 event → skip
+                    seen[r8] = true
+                    -- v2.19 [3]: filter kepemilikan — skip pet orang lain
+                    if not isMyPetUUID(r) then
+                        ssLog("DS "..anim.." uuid="..r8.." bukan milik kita → skip")
+                        continue
+                    end
+                    ssLog("DS "..anim.." uuid="..r8.." mine=true")
                     -- blacklist: skip kalau pet tipe ini di-blacklist untuk animStr ini
                     do
                         local bl = ANIM_BLACKLIST[anim]
@@ -2616,14 +2607,10 @@ do
                             for _, bkw in ipairs(bl) do
                                 if pt:find(bkw, 1, true) then blocked = true; break end
                             end
-                            if blocked then continue end
+                            if blocked then ssLog("blacklist "..anim.." uuid="..r8.." → skip"); continue end
                         end
                     end
-                    -- debounce 0.5s per uuid
-                    local r8 = r:sub(1,8)
-                    if _debounce[r8] and (now - _debounce[r8]) < 0.5 then continue end
-                    _debounce[r8] = now
-                    -- cari UUID target: dari DataStream langsung, atau lookup supportKunci
+                    -- cari UUID target: dari DataStream langsung, atau lookup backpack
                     local targetR = r
                     local kw = LOOKUP_KW[anim]
                     if kw then
@@ -2651,7 +2638,9 @@ do
                     end
                     animDbgPush(r, animStr)
                     local raw = targetR:gsub("[{}]","")
-                    task.spawn(function()
+                    local raw8 = raw:sub(1,8)
+                    -- v2.19 [2]: withSwapDebounce — in-flight guard, bukan time-based
+                    withSwapDebounce(raw8, function()
                         -- frill/dilop: delay 200ms sebelum swap
                         if anim == "frill" then task.wait(0.2) end
                         unequipPet(raw)
@@ -2662,7 +2651,6 @@ do
                             and Vector3.new(11, 22, 8)
                             or  Vector3.new(10, 3, 12)
                         local THRESH = 2.0
-                        local raw8 = raw:sub(1,8)
                         local done, spawnPos = false, nil
                         local conn2 = workspace.DescendantAdded:Connect(function(d)
                             if done then return end
@@ -2684,20 +2672,82 @@ do
                         while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
                         conn2:Disconnect()
                         if spawnPos then
-                            local dist = math.sqrt((spawnPos.X-CENTER.X)^2+(spawnPos.Y-CENTER.Y)^2+(spawnPos.Z-CENTER.Z)^2)
+                            local dist = (spawnPos - CENTER).Magnitude
                             if dist > THRESH then
                                 unequipPet(raw); task.wait(0.03); equipPet(raw)
                             end
                         end
                     end)
                 end
+            end
+
+            -- v2.19 [4]: connectDS — bisa dipanggil ulang saat reconnect (port uplevelnew v8.679)
+            -- SEBELUM: conn tunggal di ds2, kalau DS mati listener mati dan swap berhenti selamanya
+            -- SESUDAH: AncestryChanged reconnect otomatis + ge2.ChildAdded tangkap DS baru
+            local function connectDS(ds)
+                local conn = ds.OnClientEvent:Connect(function(...)
+                    local now = tick()
+                    if now - _lastParse < 0.05 then return end
+                    _lastParse = now
+                    local args = {...}
+                    local svc = tostring(args[2] or "")
+                    if not svc:find("ActivePets", 1, true) then return end
+                    local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
+                    if not data then return end
+                    -- v2.19 [1]: flat loop 1 level (port uplevelnew v8.709)
+                    -- SEBELUM: deepFind(data, 0) — rekursif depth-first
+                    -- SESUDAH: flat loop for _, v in pairs(data) — satu level, lebih reliable
+                    local hits = {}
+                    for _, v in pairs(data) do
+                        if type(v) == "table" then
+                            local v1 = tostring(v[1] or "")
+                            if v1:find("CustomAnimationState", 1, true) and v[2] ~= nil then
+                                local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                                hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(v[2])}
+                            end
+                        end
+                    end
+                    processHits(hits)
+                end)
+                ds.AncestryChanged:Connect(function()
+                    if ds.Parent == nil then
+                        ssLog("DS DEAD — reconnect...")
+                        pcall(function() conn:Disconnect() end)
+                        task.spawn(function()
+                            task.wait(1)
+                            local dsNew = ge2 and ge2:WaitForChild("DataStream", 30)
+                            if dsNew then
+                                connectDS(dsNew)
+                                ssLog("DS reconnect OK")
+                            else
+                                ssLog("ERR: DS reconnect FAIL — DataStream tidak muncul 30s")
+                            end
+                        end)
+                    end
+                end)
+                ssLog("DS listener ON")
+                return conn
+            end
+
+            local activeConn = connectDS(ds2)
+
+            -- v2.19 [4]: monitor ge2.ChildAdded — kalau server buat DS baru tanpa destroy lama
+            local _lastDsId = ds2
+            ge2.ChildAdded:Connect(function(child)
+                if child.Name ~= "DataStream" then return end
+                if child == _lastDsId then return end
+                ssLog("DS baru via ChildAdded — reconnect")
+                _lastDsId = child
+                pcall(function() activeConn:Disconnect() end)
+                activeConn = connectDS(child)
             end)
+
             -- tunggu sampai engine mati / reset
             while KG.aktif and _G.__ZenxKgResetGen == resetGen do task.wait(5) end
-            conn:Disconnect()
+            pcall(function() activeConn:Disconnect() end)
             ssLog("OFF")
         end)
-        end -- v1.76: do block animStr swap
+        end -- v2.19: do block animStr swap
         -- v1.66: CD WATCHDOG support — tiap 3s scan supportKunci, kalau cdEventCache nil/stale >2s → pickup
         task.spawn(function()
             local function cdwLog(msg) local s="[CDWatch] "..tostring(msg); kgLog(s); if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end end
