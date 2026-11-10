@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI) | v2.23: hapus filter ActivePets di DS listener  ║
+-- ║  UP KG — v0.1 (KERANGKA UI) | v2.24: animStr swap dipindah keluar kgStart — jalan terus walau upkg stop  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.23"
+local VERSION = "up38kg-v2.24"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2514,237 +2514,7 @@ do
                 task.wait(0.5)
             end
         end)
-        -- v2.20: SUPPORT SWAP via DataStream + CustomAnimationState
-        -- Perubahan dari versi sebelumnya (v1.76–v1.83):
-        --   [1] deepFind rekursif → flat loop 1 level (port uplevelnew v8.709)
-        --       SEBELUM: deepFind(data, 0) — rekursif depth-first, bisa miss event kalau struktur DS berubah
-        --       SESUDAH: for _, v in pairs(data) — satu level langsung, lebih reliable dan cepat
-        --   [2] hapus _debounce / _swapInFlight — tidak perlu skip antar trigger
-        --       SEBELUM: _debounce[r8] time-based 0.5s (v1.x) → _swapInFlight in-flight guard (v2.19)
-        --       SESUDAH: tiap animasi trigger langsung swap, tanpa guard apapun (up3.8kg tidak ada healer loop / transisi)
-        --   [3] tidak ada filter kepemilikan → tambah isMyPetUUID() (port uplevelnew v8.750)
-        --       SEBELUM: semua UUID di DS diproses termasuk pet orang lain di server
-        --       SESUDAH: cek _kgContainer / backpack dulu, skip kalau bukan pet sendiri
-        --   [4] tidak ada reconnect DS → tambah AncestryChanged + ChildAdded reconnect (port uplevelnew v8.679–v8.680)
-        --       SEBELUM: kalau DataStream mati/di-replace server, listener mati dan swap berhenti
-        --       SESUDAH: AncestryChanged reconnect otomatis + ge2.ChildAdded tangkap DS baru
-        do -- v2.19: animStr swap block
-        task.spawn(function()
-            local function ssLog(msg) local s="[SuppSwap] "..tostring(msg); kgLog(s); if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end end
-            local ge2 = RS:WaitForChild("GameEvents", 15)
-            if not ge2 then ssLog("ERR: ge2 nil"); return end
-            local ds2 = ge2:WaitForChild("DataStream", 15)
-            if not ds2 then ssLog("ERR: DataStream nil"); return end
-            ssLog("ds2 OK")
-
-            -- skill → langsung swap, tanpa cek isSupport/animTriggerOk
-            local SWAP_ANIM = { frill=true, fan=true, roar=true, pee=true, pew=true }
-            -- fly/flyup = skip (gilded pakai logika lain)
-            -- pet yang di-blacklist meski animStr cocok (mis. T-Rex roar bukan Lion)
-            local ANIM_BLACKLIST = { roar = { "trex", "t-rex", "tyrannosaurus" } }
-            -- kind yg UUID-nya bisa milik orang lain → lookup dari backpack
-            local LOOKUP_KW = {
-                pee   = { "hotdog" },
-                pew   = { "hotdog" },
-            }
-
-            -- v2.19 [3]: isMyPetUUID — cek _kgContainer / backpack (port uplevelnew v8.750)
-            -- SEBELUM: tidak ada filter, semua UUID dari DS diproses termasuk pet orang lain
-            -- SESUDAH: skip kalau UUID bukan milik player sendiri
-            local function isMyPetUUID(raw)
-                if _kgContainer and _kgContainer[raw] then return true end
-                if _kgContainer and _kgContainer["{"..raw.."}"] then return true end
-                local bp = plr:FindFirstChild("Backpack")
-                if bp then
-                    for _, t in ipairs(bp:GetChildren()) do
-                        local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
-                        if u then
-                            local uclean = tostring(u):gsub("[{}]","")
-                            if uclean == raw then return true end
-                        end
-                    end
-                end
-                return false
-            end
-
-            -- v2.20 [2]: hapus _debounce / _swapInFlight — langsung spawn swap tiap trigger
-            -- SEBELUM: _debounce time-based 0.5s (v1.x) → _swapInFlight in-flight guard (v2.19)
-            -- SESUDAH: tidak ada guard skip — up3.8kg tidak punya healer loop / transisi seperti uplevelnew
-
-            local function processHits(hits)
-                local seen = {}
-                for _, hit in ipairs(hits) do
-                    local r, animStr = hit[1], hit[2]
-                    local anim = tostring(animStr):lower()
-                    if not SWAP_ANIM[anim] then continue end
-                    if not _G.ZenxSuppSwapOn then continue end
-                    local r8 = r:sub(1,8)
-                    if seen[r8] then continue end  -- duplikat dalam 1 event → skip
-                    seen[r8] = true
-                    -- v2.19 [3]: filter kepemilikan — skip pet orang lain
-                    if not isMyPetUUID(r) then
-                        ssLog("DS "..anim.." uuid="..r8.." bukan milik kita → skip")
-                        continue
-                    end
-                    ssLog("DS "..anim.." uuid="..r8.." mine=true")
-                    -- blacklist: skip kalau pet tipe ini di-blacklist untuk animStr ini
-                    do
-                        local bl = ANIM_BLACKLIST[anim]
-                        if bl then
-                            local pt = ""
-                            pcall(function()
-                                local fmtU = "{"..r.."}"
-                                local e = _kgContainer and (_kgContainer[fmtU] or _kgContainer[r])
-                                if type(e) == "table" then
-                                    pt = tostring(e.PetType or (e.PetData and e.PetData.PetType) or ""):lower()
-                                end
-                            end)
-                            local blocked = false
-                            for _, bkw in ipairs(bl) do
-                                if pt:find(bkw, 1, true) then blocked = true; break end
-                            end
-                            if blocked then ssLog("blacklist "..anim.." uuid="..r8.." → skip"); continue end
-                        end
-                    end
-                    -- cari UUID target: dari DataStream langsung, atau lookup backpack
-                    local targetR = r
-                    local kw = LOOKUP_KW[anim]
-                    if kw then
-                        local found = nil
-                        local bp = plr:FindFirstChild("Backpack")
-                        local char = plr.Character
-                        for _, container in ipairs({bp, char}) do
-                            if not container then continue end
-                            for _, t in ipairs(container:GetChildren()) do
-                                if t:IsA("Tool") then
-                                    local uuid = t:GetAttribute("PET_UUID")
-                                    local f = tostring(t:GetAttribute("f") or ""):lower()
-                                    if uuid then
-                                        for _, k in ipairs(kw) do
-                                            if f:find(k,1,true) then found = tostring(uuid); break end
-                                        end
-                                    end
-                                end
-                                if found then break end
-                            end
-                            if found then break end
-                        end
-                        if not found then continue end
-                        targetR = found
-                    end
-                    animDbgPush(r, animStr)
-                    local raw = targetR:gsub("[{}]","")
-                    local raw8 = raw:sub(1,8)
-                    -- v2.20 [2]: langsung task.spawn swap, tanpa guard skip
-                    task.spawn(function()
-                        pcall(function()
-                        -- frill/dilop: delay 200ms sebelum swap
-                        if anim == "frill" then task.wait(0.2) end
-                        unequipPet(raw)
-                        task.wait(0.03)
-                        equipPet(raw)
-                        -- cek posisi spawn
-                        local CENTER = anim == "frill"
-                            and Vector3.new(11, 22, 8)
-                            or  Vector3.new(10, 3, 12)
-                        local THRESH = 2.0
-                        local done, spawnPos = false, nil
-                        local conn2 = workspace.DescendantAdded:Connect(function(d)
-                            if done then return end
-                            if not d:IsA("Model") then return end
-                            if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
-                            local dn = d.Name
-                            local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
-                            if d8 ~= raw8 then return end
-                            task.defer(function()
-                                if done then return end
-                                pcall(function()
-                                    local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
-                                    if p then spawnPos = p.Position end
-                                end)
-                                done = true
-                            end)
-                        end)
-                        local t0 = tick()
-                        while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
-                        conn2:Disconnect()
-                        if spawnPos then
-                            local dist = (spawnPos - CENTER).Magnitude
-                            if dist > THRESH then
-                                unequipPet(raw); task.wait(0.03); equipPet(raw)
-                            end
-                        end
-                        end) -- pcall
-                    end) -- task.spawn
-                end
-            end
-
-            -- v2.20 [4]: connectDS — bisa dipanggil ulang saat reconnect (port uplevelnew v8.679)
-            -- SEBELUM: conn tunggal di ds2, kalau DS mati listener mati dan swap berhenti selamanya
-            -- SESUDAH: AncestryChanged reconnect otomatis + ge2.ChildAdded tangkap DS baru
-            local function connectDS(ds)
-                local conn = ds.OnClientEvent:Connect(function(...)
-                    -- v2.22: hapus _lastParse throttle 0.05s — tiap event langsung diproses
-                    -- v2.23: hapus filter args[2] ActivePets — tiap event DS langsung dicek
-                    -- SEBELUM: if not svc:find("ActivePets") then return end
-                    -- SESUDAH: tidak ada filter svc, semua event DS diproses
-                    local args = {...}
-                    local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
-                    if not data then return end
-                    -- v2.19 [1]: flat loop 1 level (port uplevelnew v8.709)
-                    -- SEBELUM: deepFind(data, 0) — rekursif depth-first
-                    -- SESUDAH: flat loop for _, v in pairs(data) — satu level, lebih reliable
-                    local hits = {}
-                    for _, v in pairs(data) do
-                        if type(v) == "table" then
-                            local v1 = tostring(v[1] or "")
-                            if v1:find("CustomAnimationState", 1, true) and v[2] ~= nil then
-                                local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
-                                hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(v[2])}
-                            end
-                        end
-                    end
-                    processHits(hits)
-                end)
-                ds.AncestryChanged:Connect(function()
-                    if ds.Parent == nil then
-                        ssLog("DS DEAD — reconnect...")
-                        pcall(function() conn:Disconnect() end)
-                        task.spawn(function()
-                            task.wait(1)
-                            local dsNew = ge2 and ge2:WaitForChild("DataStream", 30)
-                            if dsNew then
-                                connectDS(dsNew)
-                                ssLog("DS reconnect OK")
-                            else
-                                ssLog("ERR: DS reconnect FAIL — DataStream tidak muncul 30s")
-                            end
-                        end)
-                    end
-                end)
-                ssLog("DS listener ON")
-                return conn
-            end
-
-            local activeConn = connectDS(ds2)
-
-            -- v2.19 [4]: monitor ge2.ChildAdded — kalau server buat DS baru tanpa destroy lama
-            local _lastDsId = ds2
-            ge2.ChildAdded:Connect(function(child)
-                if child.Name ~= "DataStream" then return end
-                if child == _lastDsId then return end
-                ssLog("DS baru via ChildAdded — reconnect")
-                _lastDsId = child
-                pcall(function() activeConn:Disconnect() end)
-                activeConn = connectDS(child)
-            end)
-
-            -- tunggu sampai engine mati / reset
-            while KG.aktif and _G.__ZenxKgResetGen == resetGen do task.wait(5) end
-            pcall(function() activeConn:Disconnect() end)
-            ssLog("OFF")
-        end)
-        end -- v2.19: do block animStr swap
+        -- v2.24: animStr swap dipindah ke luar kgStart — jalan terus walau upkg di-stop
         -- v1.66: CD WATCHDOG support — tiap 3s scan supportKunci, kalau cdEventCache nil/stale >2s → pickup
         task.spawn(function()
             local function cdwLog(msg) local s="[CDWatch] "..tostring(msg); kgLog(s); if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end end
@@ -2963,6 +2733,161 @@ do
     end
     _G.ZenxKgStart = kgStart
     _G.ZenxKgStop = kgStop
+end
+
+-- ============ ANIM STR SWAP — jalan terus walau upkg di-stop ============
+-- v2.24: dipindah keluar dari kgStart
+-- SEBELUM: di dalam kgStart, exit saat KG.aktif = false → swap mati kalau upkg di-stop
+-- SESUDAH: di luar kgStart, pakai inject-once guard _G._ZenxAnimSwapStarted — jalan terus
+do
+    if not _G._ZenxAnimSwapStarted then
+        _G._ZenxAnimSwapStarted = true
+        task.spawn(function()
+            local function ssLog(msg) local s="[SuppSwap] "..tostring(msg); print(s); if _G.ZenxSuppDebug then _G.ZenxSuppDebug(s) end end
+            local ge2 = RS:WaitForChild("GameEvents", 15)
+            if not ge2 then ssLog("ERR: ge2 nil"); _G._ZenxAnimSwapStarted = false; return end
+            local ds2 = ge2:WaitForChild("DataStream", 15)
+            if not ds2 then ssLog("ERR: DataStream nil"); _G._ZenxAnimSwapStarted = false; return end
+            ssLog("ds2 OK")
+
+            local SWAP_ANIM = { frill=true, fan=true, roar=true, pee=true, pew=true }
+            local ANIM_BLACKLIST = { roar = { "trex", "t-rex", "tyrannosaurus" } }
+            local LOOKUP_KW = { pee = { "hotdog" }, pew = { "hotdog" } }
+
+            local function isMyPetUUID(raw)
+                if _kgContainer and _kgContainer[raw] then return true end
+                if _kgContainer and _kgContainer["{"..raw.."}"] then return true end
+                local bp = plr:FindFirstChild("Backpack")
+                if bp then
+                    for _, t in ipairs(bp:GetChildren()) do
+                        local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                        if u and tostring(u):gsub("[{}]","") == raw then return true end
+                    end
+                end
+                return false
+            end
+
+            local function processHits(hits)
+                local seen = {}
+                for _, hit in ipairs(hits) do
+                    local r, animStr = hit[1], hit[2]
+                    local anim = tostring(animStr):lower()
+                    if not SWAP_ANIM[anim] then continue end
+                    if not _G.ZenxSuppSwapOn then continue end
+                    local r8 = r:sub(1,8)
+                    if seen[r8] then continue end
+                    seen[r8] = true
+                    if not isMyPetUUID(r) then ssLog("skip bukan milik kita "..r8); continue end
+                    ssLog("DS "..anim.." uuid="..r8)
+                    do
+                        local bl = ANIM_BLACKLIST[anim]
+                        if bl then
+                            local pt = ""
+                            pcall(function()
+                                local e = _kgContainer and (_kgContainer["{"..r.."}"] or _kgContainer[r])
+                                if type(e)=="table" then pt = tostring(e.PetType or (e.PetData and e.PetData.PetType) or ""):lower() end
+                            end)
+                            local blocked = false
+                            for _, bkw in ipairs(bl) do if pt:find(bkw,1,true) then blocked=true; break end end
+                            if blocked then ssLog("blacklist "..anim.." "..r8); continue end
+                        end
+                    end
+                    local targetR = r
+                    local kw = LOOKUP_KW[anim]
+                    if kw then
+                        local found = nil
+                        for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
+                            if not container then continue end
+                            for _, t in ipairs(container:GetChildren()) do
+                                if t:IsA("Tool") then
+                                    local uuid = t:GetAttribute("PET_UUID")
+                                    local f = tostring(t:GetAttribute("f") or ""):lower()
+                                    if uuid then for _, k in ipairs(kw) do if f:find(k,1,true) then found=tostring(uuid); break end end end
+                                end
+                                if found then break end
+                            end
+                            if found then break end
+                        end
+                        if not found then continue end
+                        targetR = found
+                    end
+                    animDbgPush(r, animStr)
+                    local raw = targetR:gsub("[{}]","")
+                    local raw8 = raw:sub(1,8)
+                    task.spawn(function()
+                        pcall(function()
+                            if anim == "frill" then task.wait(0.2) end
+                            unequipPet(raw)
+                            task.wait(0.03)
+                            equipPet(raw)
+                            local CENTER = anim == "frill" and Vector3.new(11,22,8) or Vector3.new(10,3,12)
+                            local done, spawnPos = false, nil
+                            local conn2 = workspace.DescendantAdded:Connect(function(d)
+                                if done or not d:IsA("Model") then return end
+                                if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
+                                local dn = d.Name; local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
+                                if d8 ~= raw8 then return end
+                                task.defer(function()
+                                    if done then return end
+                                    pcall(function() local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart"); if p then spawnPos=p.Position end end)
+                                    done = true
+                                end)
+                            end)
+                            local t0 = tick()
+                            while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
+                            conn2:Disconnect()
+                            if spawnPos and (spawnPos-CENTER).Magnitude > 2.0 then
+                                unequipPet(raw); task.wait(0.03); equipPet(raw)
+                            end
+                        end)
+                    end)
+                end
+            end
+
+            local function connectDS(ds)
+                local conn = ds.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
+                    if not data then return end
+                    local hits = {}
+                    for _, v in pairs(data) do
+                        if type(v)=="table" then
+                            local v1 = tostring(v[1] or "")
+                            if v1:find("CustomAnimationState",1,true) and v[2] ~= nil then
+                                hits[#hits+1] = {(v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"):gsub("[{}]",""), tostring(v[2])}
+                            end
+                        end
+                    end
+                    processHits(hits)
+                end)
+                ds.AncestryChanged:Connect(function()
+                    if ds.Parent == nil then
+                        ssLog("DS DEAD — reconnect...")
+                        pcall(function() conn:Disconnect() end)
+                        task.spawn(function()
+                            task.wait(1)
+                            local dsNew = ge2 and ge2:WaitForChild("DataStream", 30)
+                            if dsNew then connectDS(dsNew); ssLog("DS reconnect OK")
+                            else ssLog("ERR: DS reconnect FAIL") end
+                        end)
+                    end
+                end)
+                ssLog("DS listener ON")
+                return conn
+            end
+
+            local activeConn = connectDS(ds2)
+            local _lastDsId = ds2
+            ge2.ChildAdded:Connect(function(child)
+                if child.Name ~= "DataStream" or child == _lastDsId then return end
+                ssLog("DS baru via ChildAdded — reconnect")
+                _lastDsId = child
+                pcall(function() activeConn:Disconnect() end)
+                activeConn = connectDS(child)
+            end)
+            -- tidak ada exit condition — jalan terus walau upkg di-stop
+        end)
+    end
 end
 
 -- ============ TEMA ============
