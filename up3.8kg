@@ -2506,14 +2506,14 @@ do
                 task.wait(0.5)
             end
         end)
-        -- v2.19: SUPPORT SWAP via DataStream + CustomAnimationState
+        -- v2.20: SUPPORT SWAP via DataStream + CustomAnimationState
         -- Perubahan dari versi sebelumnya (v1.76–v1.83):
         --   [1] deepFind rekursif → flat loop 1 level (port uplevelnew v8.709)
         --       SEBELUM: deepFind(data, 0) — rekursif depth-first, bisa miss event kalau struktur DS berubah
         --       SESUDAH: for _, v in pairs(data) — satu level langsung, lebih reliable dan cepat
-        --   [2] _debounce[r8] time-based (0.5s) → _swapInFlight[r8] in-flight guard (port uplevelnew v8.758)
-        --       SEBELUM: if _debounce[r8] and (now - _debounce[r8]) < 0.5 then continue end
-        --       SESUDAH: withSwapDebounce(r8, fn) — skip kalau swap untuk UUID ini masih in-flight
+        --   [2] hapus _debounce / _swapInFlight — tidak perlu skip antar trigger
+        --       SEBELUM: _debounce[r8] time-based 0.5s (v1.x) → _swapInFlight in-flight guard (v2.19)
+        --       SESUDAH: tiap animasi trigger langsung swap, tanpa guard apapun (up3.8kg tidak ada healer loop / transisi)
         --   [3] tidak ada filter kepemilikan → tambah isMyPetUUID() (port uplevelnew v8.750)
         --       SEBELUM: semua UUID di DS diproses termasuk pet orang lain di server
         --       SESUDAH: cek _kgContainer / backpack dulu, skip kalau bukan pet sendiri
@@ -2559,20 +2559,9 @@ do
                 return false
             end
 
-            -- v2.19 [2]: _swapInFlight in-flight guard (port uplevelnew v8.758)
-            -- SEBELUM: _debounce[r8] = tick() — time-based 0.5s, bisa double-spawn kalau swap lambat
-            -- SESUDAH: _swapInFlight[r8] = true saat spawn, nil setelah selesai — skip kalau masih in-flight
-            local _swapInFlight = {}
-            local function withSwapDebounce(r8, fn)
-                if _swapInFlight[r8] then return end
-                _swapInFlight[r8] = true
-                task.spawn(function()
-                    local ok, err = pcall(fn)
-                    if not ok then ssLog("swap-err "..r8..": "..tostring(err)) end
-                    _swapInFlight[r8] = nil
-                end)
-            end
-
+            -- v2.20 [2]: hapus _debounce / _swapInFlight — langsung spawn swap tiap trigger
+            -- SEBELUM: _debounce time-based 0.5s (v1.x) → _swapInFlight in-flight guard (v2.19)
+            -- SESUDAH: tidak ada guard skip — up3.8kg tidak punya healer loop / transisi seperti uplevelnew
             local _lastParse = 0
 
             local function processHits(hits)
@@ -2639,8 +2628,9 @@ do
                     animDbgPush(r, animStr)
                     local raw = targetR:gsub("[{}]","")
                     local raw8 = raw:sub(1,8)
-                    -- v2.19 [2]: withSwapDebounce — in-flight guard, bukan time-based
-                    withSwapDebounce(raw8, function()
+                    -- v2.20 [2]: langsung task.spawn swap, tanpa guard skip
+                    task.spawn(function()
+                        pcall(function()
                         -- frill/dilop: delay 200ms sebelum swap
                         if anim == "frill" then task.wait(0.2) end
                         unequipPet(raw)
@@ -2677,11 +2667,12 @@ do
                                 unequipPet(raw); task.wait(0.03); equipPet(raw)
                             end
                         end
-                    end)
+                        end) -- pcall
+                    end) -- task.spawn
                 end
             end
 
-            -- v2.19 [4]: connectDS — bisa dipanggil ulang saat reconnect (port uplevelnew v8.679)
+            -- v2.20 [4]: connectDS — bisa dipanggil ulang saat reconnect (port uplevelnew v8.679)
             -- SEBELUM: conn tunggal di ds2, kalau DS mati listener mati dan swap berhenti selamanya
             -- SESUDAH: AncestryChanged reconnect otomatis + ge2.ChildAdded tangkap DS baru
             local function connectDS(ds)
