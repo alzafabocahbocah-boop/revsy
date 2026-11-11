@@ -648,7 +648,9 @@ local function lisensi_keadaan(cfg)
     local adaKey = nil
     for coba = 1, 3 do
         isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
-        adaKey = isi:match("FREE_%x+") or isi:match("[%w_]-%x%x%x%x%x%x%x%x%x%x")
+        -- fix: validasi key lebih ketat, hanya FREE_<32 hex> atau UUID format, bukan pola longgar
+        adaKey = isi:match("FREE_%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x")
+                 or isi:match("%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x")
         if adaKey and #isi:gsub("%s", "") >= 20 then
             break   -- dapet key valid -> stop retry
         end
@@ -658,6 +660,16 @@ local function lisensi_keadaan(cfg)
         local o = sh("su -c 'stat -c %Y " .. path .. " 2>/dev/null'") or ""
         local ts = tonumber(o:match("%d+"))
         local umur = ts and (os.time() - ts) or nil
+        -- fix: cek umur vs key_jam -> return "basi" kalau sudah lewat batas
+        local batasDetik = (tonumber(cfg and cfg.key_jam) or 24) * 3600
+        local curigaDetik = (tonumber(cfg and cfg.curiga_jam) or 24) * 3600
+        if umur and umur > batasDetik then
+            return "basi", umur
+        end
+        -- curiga: file ada tapi umur hampir habis (dalam 15 menit dari batas)
+        if umur and umur > (batasDetik - 900) then
+            return "curiga", umur
+        end
         return "ada", umur
     end
     return "hilang", nil
@@ -3266,12 +3278,14 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
 
     do
         local kd = lisensi_keadaan(cfg)
-        if kd == "ada" or cfg.auto_key ~= true then lisensiAda = true end
+        -- fix: "basi" dianggap tidak ada -> paksa bypass
+        if (kd == "ada" or kd == "curiga") or cfg.auto_key ~= true then lisensiAda = true end
     end
 
     if not fast and not arceusMode then
         local kead, umur = lisensi_keadaan(cfg)
-        if kead == "ada" or cfg.auto_key ~= true then lisensiAda = true end
+        -- fix: "basi" dianggap tidak ada -> paksa bypass
+        if (kead == "ada" or kead == "curiga") or cfg.auto_key ~= true then lisensiAda = true end
 
         if kead ~= "ada" then
             local ket = (kead == "hilang") and "HILANG"
@@ -6629,12 +6643,16 @@ local function run(cfg)
 
         if cfg.auto_key == true and cfg.executor ~= "arceus" and (now - lastLisensiCek) >= 600 then
             lastLisensiCek = now
-            local kd = lisensi_keadaan(cfg)   -- v7.69: udah retry 3x di dalam
+            local kd, kdUmur = lisensi_keadaan(cfg)   -- v7.69: udah retry 3x di dalam
             if kd == "ada" then
                 ok("Lisensi Delta AKTIF (cek berkala 10 menit)")
                 KICK_DIURUS["lisensi_standby_warned"] = nil   -- v9.50: reset biar info standby muncul lagi kalau hilang lagi
+            elseif kd == "curiga" then
+                warn("Lisensi Delta HAMPIR HABIS (" .. umur_ringkas(kdUmur) .. " dari batas " .. (cfg.key_jam or 24) .. "j) -- siap-siap bypass")
+            elseif kd == "basi" then
+                warn("Lisensi Delta BASI/EXPIRED (" .. umur_ringkas(kdUmur) .. " > batas " .. (cfg.key_jam or 24) .. "j) -- paksa bypass")
             end
-            if kd == "hilang" and (now - (BYPASS_TERAKHIR or 0)) > 300 then
+            if (kd == "hilang" or kd == "basi") and (now - (BYPASS_TERAKHIR or 0)) > 300 then
                 if not MODE_JALAN then
                     if not KICK_DIURUS["lisensi_standby_warned"] then
                         KICK_DIURUS["lisensi_standby_warned"] = true
