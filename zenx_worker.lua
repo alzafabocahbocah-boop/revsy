@@ -13935,7 +13935,7 @@ if PERINTAH == "full" or PERINTAH == "fullscreen" then
 end
 
 -- v9.641: command test scan uiautomator berkala, cari teks key-related di layar Roblox
-if PERINTAH == "cekui" then
+if PERINTAH == "cekui" then do
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
 
@@ -14041,7 +14041,7 @@ if PERINTAH == "cekui" then
         os.execute("sleep 5")
     end
     return
-end
+end end  -- do...end cekui (fix: too many locals in main)
 
 if PERINTAH ~= "" then
     err("Perintah '" .. PERINTAH .. "' gak dikenal di v" .. VERSION)
