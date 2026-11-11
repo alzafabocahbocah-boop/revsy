@@ -13934,8 +13934,8 @@ if PERINTAH == "full" or PERINTAH == "fullscreen" then
     return
 end
 
--- v9.641: command test scan uiautomator berkala, cari teks key-related di layar Roblox
-if PERINTAH == "cekui" then do
+-- v9.642: cekui dipindah ke fungsi terpisah supaya locals tidak overflow main scope (limit 200)
+local function cmd_cekui()
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
 
@@ -13965,11 +13965,9 @@ if PERINTAH == "cekui" then do
     while true do
         putaran = putaran + 1
 
-        -- dump UI, ambil hanya node milik pkg target
         local raw = sh("su -c 'rm -f " .. DUMP .. "; uiautomator dump " .. DUMP ..
                        " >/dev/null 2>&1; cat " .. DUMP .. " 2>/dev/null; rm -f " .. DUMP .. "'") or ""
 
-        -- filter: kumpulkan hanya node dengan package=pkg
         local nodesPkg = {}
         for simpul in raw:gmatch("<node[^>]->") do
             if simpul:find('package="' .. pkg .. '"', 1, true) then
@@ -13977,8 +13975,7 @@ if PERINTAH == "cekui" then do
             end
         end
 
-        -- dari node pkg, cari teks key-related + bounds
-        local ketemu = {}  -- { kata, cx, cy, x1,y1,x2,y2 }
+        local ketemu = {}
         for _, simpul in ipairs(nodesPkg) do
             local teks = (simpul:match('text="([^"]*)"') or ""):lower()
             local desc = (simpul:match('content%-desc="([^"]*)"') or ""):lower()
@@ -13990,7 +13987,7 @@ if PERINTAH == "cekui" then do
                         local cx = math.floor((tonumber(x1)+tonumber(x2))/2)
                         local cy = math.floor((tonumber(y1)+tonumber(y2))/2)
                         ketemu[#ketemu+1] = {
-                            kata = kata, teks = teks ~= "" and teks or desc,
+                            kata=kata, teks=teks~=""and teks or desc,
                             x1=tonumber(x1), y1=tonumber(y1),
                             x2=tonumber(x2), y2=tonumber(y2),
                             cx=cx, cy=cy
@@ -13998,7 +13995,7 @@ if PERINTAH == "cekui" then do
                     else
                         ketemu[#ketemu+1] = { kata=kata, teks=teks~=""and teks or desc }
                     end
-                    break  -- 1 node 1 entry
+                    break
                 end
             end
         end
@@ -14040,8 +14037,8 @@ if PERINTAH == "cekui" then do
 
         os.execute("sleep 5")
     end
-    return
-end end  -- do...end cekui (fix: too many locals in main)
+end
+if PERINTAH == "cekui" then cmd_cekui(); return end
 
 if PERINTAH ~= "" then
     err("Perintah '" .. PERINTAH .. "' gak dikenal di v" .. VERSION)
