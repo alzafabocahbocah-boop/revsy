@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI) | v2.29: log semua DS event ke panel sebelum filter  ║
+-- ║  UP KG — v0.1 (KERANGKA UI) | v2.29: log semua DS event + alasan skip deskriptif  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -2801,13 +2801,23 @@ do
                     -- SEBELUM: kalau anim bukan SWAP_ANIM, langsung skip tanpa log → panel kosong
                     -- SESUDAH: log dulu animStr yg masuk (warna biru), baru filter
                     animDbgPush(r, animStr)   -- log semua event DS masuk
-                    if not SWAP_ANIM[anim] then ssLog("skip anim="..anim.." "..r:sub(1,8)); continue end
-                    if not _G.ZenxSuppSwapOn then ssLog("skip SwapOff "..r:sub(1,8)); continue end
+                    -- v2.29: penjelasan alasan skip yang deskriptif
+                    if not SWAP_ANIM[anim] then
+                        ssLog("skip: anim '"..anim.."' bukan target swap (frill/fan/roar/pee/pew)")
+                        continue
+                    end
+                    if not _G.ZenxSuppSwapOn then
+                        ssLog("skip: SUPP SWAP ANIM toggle OFF (pencet di panel buat nyalain)")
+                        continue
+                    end
                     local r8 = r:sub(1,8)
                     if seen[r8] then continue end
                     seen[r8] = true
-                    if not isMyPetUUID(r) then ssLog("skip bukan milik kita "..r8); continue end
-                    ssLog("DS "..anim.." uuid="..r8)
+                    if not isMyPetUUID(r) then
+                        ssLog("skip: "..r8.." bukan milik kita (pet orang lain di server)")
+                        continue
+                    end
+                    ssLog("→ SWAP "..anim.." uuid="..r8)
                     do
                         local bl = ANIM_BLACKLIST[anim]
                         if bl then
@@ -2818,7 +2828,7 @@ do
                             end)
                             local blocked = false
                             for _, bkw in ipairs(bl) do if pt:find(bkw,1,true) then blocked=true; break end end
-                            if blocked then ssLog("blacklist "..anim.." "..r8); continue end
+                            if blocked then ssLog("skip: "..anim.." "..r8.." blacklist (mis. TRex/Trex di-skip buat roar)"); continue end
                         end
                     end
                     local targetR = r
@@ -2837,7 +2847,10 @@ do
                             end
                             if found then break end
                         end
-                        if not found then continue end
+                        if not found then
+                            ssLog("skip: "..anim.." "..r8.." perlu hotdog di backpack/equip tapi gak ketemu")
+                            continue
+                        end
                         targetR = found
                     end
                     -- animDbgPush sudah dipanggil di awal loop (v2.29), skip duplikat di sini
@@ -2846,7 +2859,10 @@ do
                     -- v2.28: pakai _G wrapper — akses valid walau upkg off (scope luar do-block)
                     local _unequip = _G._ZenxUnequipPet
                     local _equip   = _G._ZenxEquipPet
-                    if not _unequip or not _equip then ssLog("ERR: equip fn nil, skip"); continue end
+                    if not _unequip or not _equip then
+                        ssLog("ERR: fungsi equip nil — coba re-inject script")
+                        continue
+                    end
                     task.spawn(function()
                         pcall(function()
                             if anim == "frill" then task.wait(0.2) end
