@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.37"
+local VERSION = "up38kg-v2.38"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -723,7 +723,7 @@ _G.ZenxAnimDbgLogAll = _G.ZenxAnimDbgLogAll or {}
 -- v2.34: tulis langsung di top-level saat inject — buat verifikasi panel bisa baca
 do
     local ts = os.date("%H:%M:%S")
-    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.37")
+    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.38")
     if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
 end
 -- v2.26: inisialisasi ZenxSuppSwapOn di top-level biar aktif tanpa KG nyala
@@ -2786,41 +2786,51 @@ do
             ssLog("ge2 OK")
             -- v2.35: scan SEMUA RemoteEvent di GameEvents paralel — diagnosa DS mana yang kirim CustomAnimationState
             -- Jalankan di background agar tidak block connectDS ke DataStream biasa
+            -- v2.38: background scanner — cari path lengkap CustomAnimationState di DataStream
             task.spawn(function()
-                local function deepSearch(tbl, depth)
-                    if depth > 4 or type(tbl) ~= "table" then return false end
-                    for _, v in pairs(tbl) do
-                        if type(v) == "string" and v:find("CustomAnimationState", 1, true) then return true end
-                        if type(v) == "table" and deepSearch(v, depth+1) then return true end
+                -- deepSearchPath: return path string saat ketemu "CustomAnimationState" sebagai KEY
+                local function deepSearchPath(tbl, depth, path)
+                    if depth > 5 or type(tbl) ~= "table" then return nil end
+                    for k, v in pairs(tbl) do
+                        local ks = tostring(k)
+                        local curPath = path.."."..ks
+                        if ks:find("CustomAnimationState",1,true) or ks:find("AnimationState",1,true) then
+                            return curPath.."="..tostring(v):sub(1,20)
+                        end
+                        if type(v) == "string" and v:find("CustomAnimationState",1,true) then
+                            return curPath.."(val="..v:sub(1,20)..")"
+                        end
+                        if type(v) == "table" then
+                            local r = deepSearchPath(v, depth+1, curPath)
+                            if r then return r end
+                        end
                     end
-                    return false
+                    return nil
                 end
-                local scanConns = {}
                 local reported = {}
-                for _, re in ipairs(ge2:GetChildren()) do
-                    if re:IsA("RemoteEvent") then
-                        local reName = re.Name
-                        local c = re.OnClientEvent:Connect(function(...)
-                            local args = {...}
-                            local argTypes = {}
-                            local hasCA = false
-                            for i=1,math.min(#args,6) do
-                                local t = type(args[i])
-                                argTypes[i] = t:sub(1,3)
-                                if t=="table" and deepSearch(args[i], 0) then hasCA=true end
-                            end
-                            if hasCA then
-                                if not reported[reName] then
-                                    reported[reName] = true
-                                    ssLog(">>> CustomAnim found di RE: "..reName.." args="..table.concat(argTypes,","))
+                local ds = ge2:WaitForChild("DataStream", 15)
+                if not ds then return end
+                ds.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    local dsKey = type(args[2])=="string" and args[2] or ""
+                    if not dsKey:find("ActivePets",1,true) then return end
+                    local data = type(args[3])=="table" and args[3] or nil
+                    if not data then return end
+                    for _, v in pairs(data) do
+                        if type(v)=="table" then
+                            local path = tostring(v[1] or "?")
+                            local val = v[2]
+                            if type(val)=="table" then
+                                local found = deepSearchPath(val, 0, path)
+                                if found and not reported[found:sub(1,30)] then
+                                    reported[found:sub(1,30)] = true
+                                    ssLog("[BG] path CA: "..found:sub(1,60))
                                 end
                             end
-                        end)
-                        table.insert(scanConns, c)
+                        end
                     end
-                end
-                ssLog("[SCAN] "..#scanConns.." RE dipantau (bg)")
-                -- biarkan scan jalan terus — tidak perlu disconnect
+                end)
+                ssLog("[SCAN] bg CA-path finder ON")
             end)
             local ds2 = ge2:WaitForChild("DataStream", 15)
             if not ds2 then ssLog("ERR: DataStream nil"); _G._ZenxAnimSwapStarted = false; return end
@@ -2853,15 +2863,13 @@ do
                 for _, hit in ipairs(hits) do
                     local r, animStr = hit[1], hit[2]
                     local anim = tostring(animStr):lower()
-                    -- v2.29: log semua event masuk ke panel (animDbgPush raw) sebelum filter
-                    -- SEBELUM: kalau anim bukan SWAP_ANIM, langsung skip tanpa log → panel kosong
-                    -- SESUDAH: log dulu animStr yg masuk (warna biru), baru filter
-                    animDbgPush(r, animStr)   -- log semua event DS masuk
-                    -- v2.29: penjelasan alasan skip yang deskriptif
+                    -- v2.38: hanya log animStr yang masuk SWAP_ANIM atau milik kita (kurangi spam)
+                    -- animDbgPush semua = terlalu banyak noise untuk non-target anim
                     if not SWAP_ANIM[anim] then
-                        ssLog("skip: anim '"..anim.."' bukan target swap (frill/fan/roar/pee/pew)")
+                        -- skip diam-diam untuk anim non-target (terlalu sering: walk, idle, dll)
                         continue
                     end
+                    animDbgPush(r, animStr)   -- log hanya animStr target (frill/fan/roar/pee/pew)
                     if not _G.ZenxSuppSwapOn then
                         ssLog("skip: SUPP SWAP ANIM toggle OFF (pencet di panel buat nyalain)")
                         continue
@@ -2966,58 +2974,57 @@ do
                             argParts[i] = t:sub(1,4)
                         end
                     end
-                    -- v2.37: hanya log DS dari "ActivePetsSe" (tidak spam tiap DS event)
+                    -- v2.38: hanya proses DS dari "ActivePetsSe", skip DS lain (SaveSlots, dll)
                     local dsKey = type(args[2])=="string" and args[2] or ""
-                    local isActivePets = dsKey:find("ActivePets",1,true)
-                    if isActivePets then
-                        ssLog("DS raw["..#args.."]: "..table.concat(argParts,","))
-                    end
+                    if not dsKey:find("ActivePets",1,true) then return end
                     local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
                     if not data then return end
-                    -- v2.37: format DS adalah {v[1]="ROOT/path", v[2]=value}
-                    -- ActivePetStates berisi state animasi per-UUID
-                    -- Scan tiap entry, cari path yang mengandung UUID dan value = animStr
+                    -- v2.38: parse format DS ActivePetStates
+                    -- Format entry: {v[1]="ROOT/ActivePetStates/{uuid}/KEY", v[2]=value}
+                    -- KEY yang relevan:
+                    --   CustomAnimationState → value = animStr langsung (string)
+                    --   PetAction           → value = table {Arguments={CustomAnimationState=animStr,...},...}
+                    --   (top-level tbl)     → value = table {CustomAnimationState=animStr,...}
                     local hits = {}
                     for _, v in pairs(data) do
                         if type(v)=="table" then
                             local path = tostring(v[1] or "")
                             local val  = v[2]
-                            -- v2.37: format path baru: "ROOT/ActivePetStates/{uuid}/CustomAnimationState"
+                            -- Format 1: path langsung berisi CustomAnimationState
                             if path:find("CustomAnimationState",1,true) and val ~= nil then
                                 local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)/")
                                 if uuid then
-                                    uuid = uuid:gsub("[{}]","")
-                                    hits[#hits+1] = {uuid, tostring(val)}
-                                    if isActivePets then ssLog("CA hit: "..uuid:sub(1,8).."="..tostring(val)) end
+                                    hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(val)}
                                 end
-                            -- v2.37: format path alternatif tanpa CustomAnimationState di path
-                            -- path: "ROOT/ActivePetStates/{uuid}" val = table {CustomAnimationState=animStr,...}
                             elseif path:find("ActivePetStates",1,true) and type(val)=="table" then
-                                local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)$")
-                                local animStr = val.CustomAnimationState or val.AnimationState or val.animationState
-                                if uuid and animStr then
+                                local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)$") or path:match("ActivePetStates/([^/]+)/")
+                                if uuid then
                                     uuid = uuid:gsub("[{}]","")
-                                    hits[#hits+1] = {uuid, tostring(animStr)}
-                                    if isActivePets then ssLog("CA tbl: "..uuid:sub(1,8).."="..tostring(animStr)) end
-                                elseif uuid and isActivePets then
-                                    -- dump keys dari val untuk lihat formatnya
-                                    local keys = {}
-                                    for k,_ in pairs(val) do keys[#keys+1]=tostring(k):sub(1,15) end
-                                    ssLog("APS tbl keys: {"..table.concat(keys,","):sub(1,50).."}")
+                                    -- Format 2: val = {CustomAnimationState=animStr,...}
+                                    local animStr = val.CustomAnimationState or val.AnimationState or val.animationState
+                                    if animStr then
+                                        hits[#hits+1] = {uuid, tostring(animStr)}
+                                    end
+                                    -- Format 3: val = {Arguments={CustomAnimationState=animStr,...},...} (PetAction)
+                                    if not animStr and type(val.Arguments)=="table" then
+                                        local a = val.Arguments
+                                        animStr = a.CustomAnimationState or a.AnimationState or a.animationState
+                                        if animStr then
+                                            hits[#hits+1] = {uuid, tostring(animStr)}
+                                        end
+                                    end
+                                    -- Format 4: PetAction nested lebih dalam
+                                    if not animStr and type(val.PetAction)=="table" then
+                                        local pa = val.PetAction
+                                        animStr = pa.CustomAnimationState or pa.AnimationState
+                                        if not animStr and type(pa.Arguments)=="table" then
+                                            animStr = pa.Arguments.CustomAnimationState or pa.Arguments.AnimationState
+                                        end
+                                        if animStr then
+                                            hits[#hits+1] = {uuid, tostring(animStr)}
+                                        end
+                                    end
                                 end
-                            end
-                        end
-                    end
-                    if isActivePets and #hits == 0 then
-                        -- dump sample path untuk lihat format lengkap
-                        local cnt = 0
-                        for _, v in pairs(data) do
-                            cnt = cnt + 1
-                            if cnt <= 4 and type(v)=="table" then
-                                local p = tostring(v[1] or "?")
-                                local vt = type(v[2])
-                                local vs = vt=="table" and "tbl" or tostring(v[2]):sub(1,12)
-                                ssLog("path: "..p:sub(1,35).." ="..vs)
                             end
                         end
                     end
