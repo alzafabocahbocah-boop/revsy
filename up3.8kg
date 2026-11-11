@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.39"
+local VERSION = "up38kg-v2.40"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -723,7 +723,7 @@ _G.ZenxAnimDbgLogAll = _G.ZenxAnimDbgLogAll or {}
 -- v2.34: tulis langsung di top-level saat inject — buat verifikasi panel bisa baca
 do
     local ts = os.date("%H:%M:%S")
-    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.39")
+    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.40")
     if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
 end
 -- v2.26: inisialisasi ZenxSuppSwapOn di top-level biar aktif tanpa KG nyala
@@ -2860,19 +2860,24 @@ do
                 return false
             end
 
-            -- v2.39: cek apakah UUID adalah hotdog milik kita (scan backpack+char cek nama "f" attribute)
+            -- v2.40: isMyHotdog — cek di backpack+char apakah UUID ini adalah hotdog milik kita
             local function isMyHotdog(raw)
-                for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
-                    if not container then continue end
-                    for _, t in ipairs(container:GetChildren()) do
-                        local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
-                        if u and tostring(u):gsub("[{}]","") == raw then
-                            local f = tostring(t:GetAttribute("f") or t.Name or ""):lower()
-                            if f:find("hotdog",1,true) then return true end
+                local ok, result = pcall(function()
+                    local bp = plr:FindFirstChild("Backpack")
+                    local ch = plr.Character
+                    for _, container in ipairs({bp, ch}) do
+                        if not container then continue end
+                        for _, t in ipairs(container:GetChildren()) do
+                            local ok2, u = pcall(function() return t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") end)
+                            if ok2 and u and tostring(u):gsub("[{}]","") == raw then
+                                local f = tostring(t:GetAttribute("f") or t.Name or ""):lower()
+                                if f:find("hotdog",1,true) then return true end
+                            end
                         end
                     end
-                end
-                return false
+                    return false
+                end)
+                return ok and result or false
             end
 
             local function processHits(hits)
@@ -2880,22 +2885,23 @@ do
                 for _, hit in ipairs(hits) do
                     local r, animStr = hit[1], hit[2]
                     local anim = tostring(animStr):lower()
-                    -- v2.39: kalau UUID adalah hotdog milik kita → swap animasi apapun (skill 1+2+dll)
-                    -- kalau bukan hotdog → hanya swap animStr yang ada di SWAP_ANIM
-                    local forceSwap = isMyHotdog(r)
-                    if not forceSwap and not SWAP_ANIM[anim] then
-                        continue
+                    -- filter awal: skip non-SWAP_ANIM dulu (cepat, O(1))
+                    -- hotdog check dilakukan SETELAH isMyPetUUID (tidak perlu scan untuk UUID orang lain)
+                    if not SWAP_ANIM[anim] then
+                        -- nanti cek hotdog setelah konfirmasi UUID milik kita
+                        -- untuk sekarang skip dulu, akan di-override di bawah
                     end
-                    animDbgPush(r, animStr)
-                    if not _G.ZenxSuppSwapOn then
-                        ssLog("skip: SUPP SWAP ANIM toggle OFF (pencet di panel buat nyalain)")
-                        continue
-                    end
+                    if not _G.ZenxSuppSwapOn then continue end
                     local r8 = r:sub(1,8)
                     if seen[r8] then continue end
                     seen[r8] = true
-                    if not isMyPetUUID(r) then
-                        ssLog("skip: "..r8.." bukan milik kita (pet orang lain di server)")
+                    if not isMyPetUUID(r) then continue end
+                    -- v2.40: UUID milik kita — cek apakah hotdog (bypass SWAP_ANIM filter)
+                    local hotdog = isMyHotdog(r)
+                    if not hotdog and not SWAP_ANIM[anim] then continue end
+                    animDbgPush(r, animStr)
+                    if not _G.ZenxSuppSwapOn then
+                        ssLog("skip: SUPP SWAP ANIM toggle OFF")
                         continue
                     end
                     ssLog("→ SWAP "..anim.." uuid="..r8)
