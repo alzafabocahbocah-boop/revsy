@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.36"
+local VERSION = "up38kg-v2.37"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -723,7 +723,7 @@ _G.ZenxAnimDbgLogAll = _G.ZenxAnimDbgLogAll or {}
 -- v2.34: tulis langsung di top-level saat inject — buat verifikasi panel bisa baca
 do
     local ts = os.date("%H:%M:%S")
-    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.36")
+    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.37")
     if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
 end
 -- v2.26: inisialisasi ZenxSuppSwapOn di top-level biar aktif tanpa KG nyala
@@ -2966,55 +2966,60 @@ do
                             argParts[i] = t:sub(1,4)
                         end
                     end
-                    ssLog("DS raw["..#args.."]: "..table.concat(argParts,","))
-                    -- v2.35: coba SEMUA index table (bukan hanya args[3]/args[4])
-                    local data = nil
-                    for i=1,#args do
-                        if type(args[i])=="table" and #args[i] > 0 then
-                            data = args[i]; break
-                        end
+                    -- v2.37: hanya log DS dari "ActivePetsSe" (tidak spam tiap DS event)
+                    local dsKey = type(args[2])=="string" and args[2] or ""
+                    local isActivePets = dsKey:find("ActivePets",1,true)
+                    if isActivePets then
+                        ssLog("DS raw["..#args.."]: "..table.concat(argParts,","))
                     end
-                    if not data then
-                        -- coba cari nested table di dalam table
-                        for i=1,#args do
-                            if type(args[i])=="table" then
-                                for _, sv in pairs(args[i]) do
-                                    if type(sv)=="table" and #sv > 0 then data = sv; break end
-                                end
-                                if data then break end
-                            end
-                        end
-                    end
-                    if not data then ssLog("DS skip: gak ada table berisi data"); return end
+                    local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
+                    if not data then return end
+                    -- v2.37: format DS adalah {v[1]="ROOT/path", v[2]=value}
+                    -- ActivePetStates berisi state animasi per-UUID
+                    -- Scan tiap entry, cari path yang mengandung UUID dan value = animStr
                     local hits = {}
-                    local caCount = 0
                     for _, v in pairs(data) do
                         if type(v)=="table" then
-                            local v1 = tostring(v[1] or "")
-                            if v1:find("CustomAnimationState",1,true) and v[2] ~= nil then
-                                caCount = caCount + 1
-                                hits[#hits+1] = {(v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"):gsub("[{}]",""), tostring(v[2])}
+                            local path = tostring(v[1] or "")
+                            local val  = v[2]
+                            -- v2.37: format path baru: "ROOT/ActivePetStates/{uuid}/CustomAnimationState"
+                            if path:find("CustomAnimationState",1,true) and val ~= nil then
+                                local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)/")
+                                if uuid then
+                                    uuid = uuid:gsub("[{}]","")
+                                    hits[#hits+1] = {uuid, tostring(val)}
+                                    if isActivePets then ssLog("CA hit: "..uuid:sub(1,8).."="..tostring(val)) end
+                                end
+                            -- v2.37: format path alternatif tanpa CustomAnimationState di path
+                            -- path: "ROOT/ActivePetStates/{uuid}" val = table {CustomAnimationState=animStr,...}
+                            elseif path:find("ActivePetStates",1,true) and type(val)=="table" then
+                                local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)$")
+                                local animStr = val.CustomAnimationState or val.AnimationState or val.animationState
+                                if uuid and animStr then
+                                    uuid = uuid:gsub("[{}]","")
+                                    hits[#hits+1] = {uuid, tostring(animStr)}
+                                    if isActivePets then ssLog("CA tbl: "..uuid:sub(1,8).."="..tostring(animStr)) end
+                                elseif uuid and isActivePets then
+                                    -- dump keys dari val untuk lihat formatnya
+                                    local keys = {}
+                                    for k,_ in pairs(val) do keys[#keys+1]=tostring(k):sub(1,15) end
+                                    ssLog("APS tbl keys: {"..table.concat(keys,","):sub(1,50).."}")
+                                end
                             end
-                        elseif type(v)=="string" and v:find("CustomAnimationState",1,true) then
-                            caCount = caCount + 1
-                            ssLog("DS: CA str entry: "..v:sub(1,40))
                         end
                     end
-                    if #hits == 0 then
-                        -- log sample dari data untuk diagnosa format
-                        local sample = {}
+                    if isActivePets and #hits == 0 then
+                        -- dump sample path untuk lihat format lengkap
                         local cnt = 0
                         for _, v in pairs(data) do
                             cnt = cnt + 1
-                            if cnt <= 3 then
-                                if type(v)=="table" then
-                                    sample[#sample+1] = "tbl["..tostring(v[1] or "?"):sub(1,20).."]"
-                                else
-                                    sample[#sample+1] = type(v):sub(1,3)..":"..tostring(v):sub(1,15)
-                                end
+                            if cnt <= 4 and type(v)=="table" then
+                                local p = tostring(v[1] or "?")
+                                local vt = type(v[2])
+                                local vs = vt=="table" and "tbl" or tostring(v[2]):sub(1,12)
+                                ssLog("path: "..p:sub(1,35).." ="..vs)
                             end
                         end
-                        ssLog("DS: #data="..cnt.." CA="..caCount.." sample={"..table.concat(sample,"|").."}")
                     end
                     processHits(hits)
                 end)
