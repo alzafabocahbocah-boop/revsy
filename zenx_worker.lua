@@ -13953,7 +13953,8 @@ if PERINTAH == "cekui" then
         "getting key", "claim key",
     }
 
-    info("Scan uiautomator tiap 5 detik untuk: " .. pkg:gsub("com%.roblox%.",""))
+    info("Scan uiautomator tiap 5 detik untuk client: " .. pkg:gsub("com%.roblox%.",""))
+    info("Hanya node milik pkg itu yang dicek (filter package=).")
     info("Tekan Ctrl+C untuk berhenti.")
     print()
 
@@ -13963,53 +13964,80 @@ if PERINTAH == "cekui" then
 
     while true do
         putaran = putaran + 1
-        -- dump UI
-        local out = sh("su -c 'uiautomator dump " .. DUMP .. " 2>&1 && cat " .. DUMP .. " 2>/dev/null'") or ""
 
-        -- cari teks yang relevan
-        local ketemu = {}
-        local isiLower = out:lower()
-        for _, kata in ipairs(KEY_WORDS) do
-            if isiLower:find(kata, 1, true) then
-                ketemu[#ketemu+1] = kata
+        -- dump UI, ambil hanya node milik pkg target
+        local raw = sh("su -c 'rm -f " .. DUMP .. "; uiautomator dump " .. DUMP ..
+                       " >/dev/null 2>&1; cat " .. DUMP .. " 2>/dev/null; rm -f " .. DUMP .. "'") or ""
+
+        -- filter: kumpulkan hanya node dengan package=pkg
+        local nodesPkg = {}
+        for simpul in raw:gmatch("<node[^>]->") do
+            if simpul:find('package="' .. pkg .. '"', 1, true) then
+                nodesPkg[#nodesPkg+1] = simpul
             end
         end
 
-        -- cari bounds dari node yang cocok (ambil koordinat tengahnya)
-        local koordinatInfo = ""
-        for _, kata in ipairs(ketemu) do
-            -- cari node dengan text/content-desc yang mengandung kata ini
-            local pattern = 'text="([^"]*' .. kata:gsub("([%(%)%.%+%-%*%?%[%^%$%%])", "%%%1") .. '[^"]*)"[^/]*bounds="%[(%d+),(%d+)%]%[(%d+),(%d+)%]"'
-            local txt, x1, y1, x2, y2 = out:lower():match(pattern)
-            if x1 then
-                local cx = math.floor((tonumber(x1) + tonumber(x2)) / 2)
-                local cy = math.floor((tonumber(y1) + tonumber(y2)) / 2)
-                koordinatInfo = koordinatInfo .. (" [bounds: %s,%s -> %s,%s | tengah: %d,%d]"):format(x1,y1,x2,y2,cx,cy)
+        -- dari node pkg, cari teks key-related + bounds
+        local ketemu = {}  -- { kata, cx, cy, x1,y1,x2,y2 }
+        for _, simpul in ipairs(nodesPkg) do
+            local teks = (simpul:match('text="([^"]*)"') or ""):lower()
+            local desc = (simpul:match('content%-desc="([^"]*)"') or ""):lower()
+            local gabung = teks .. " " .. desc
+            for _, kata in ipairs(KEY_WORDS) do
+                if gabung:find(kata, 1, true) then
+                    local x1, y1, x2, y2 = simpul:match('bounds="%[(%d+),(%d+)%]%[(%d+),(%d+)%]"')
+                    if x1 then
+                        local cx = math.floor((tonumber(x1)+tonumber(x2))/2)
+                        local cy = math.floor((tonumber(y1)+tonumber(y2))/2)
+                        ketemu[#ketemu+1] = {
+                            kata = kata, teks = teks ~= "" and teks or desc,
+                            x1=tonumber(x1), y1=tonumber(y1),
+                            x2=tonumber(x2), y2=tonumber(y2),
+                            cx=cx, cy=cy
+                        }
+                    else
+                        ketemu[#ketemu+1] = { kata=kata, teks=teks~=""and teks or desc }
+                    end
+                    break  -- 1 node 1 entry
+                end
             end
         end
 
         local status
         if #ketemu > 0 then
-            status = "KETEMU: " .. table.concat(ketemu, ", ") .. koordinatInfo
+            local bagian = {}
+            for _, h in ipairs(ketemu) do
+                if h.cx then
+                    bagian[#bagian+1] = ("%q bounds[%d,%d->%d,%d] tengah(%d,%d)"):format(
+                        h.teks, h.x1,h.y1,h.x2,h.y2, h.cx,h.cy)
+                else
+                    bagian[#bagian+1] = ("%q (bounds tak terbaca)"):format(h.teks)
+                end
+            end
+            status = table.concat(bagian, " | ")
+            ok(("[cekui #%d] KETEMU %d node KEY di %s:"):format(putaran, #ketemu, pkg:gsub("com%.roblox%.","")))
+            for _, b in ipairs(bagian) do ok("  " .. b) end
+            terakhirStatus = status
+        elseif #nodesPkg == 0 then
+            status = "pkg tidak ada di UI dump (native GL / belum di depan)"
             if status ~= terakhirStatus then
-                ok("[cekui #" .. putaran .. "] " .. status)
+                warn("[cekui #" .. putaran .. "] " .. status)
                 terakhirStatus = status
             else
-                ok("[cekui #" .. putaran .. "] (sama) " .. status)
+                io.write(("\r[cekui #%d] %s...     "):format(putaran, status))
+                io.flush()
             end
         else
-            status = "tidak ada tanda key"
+            status = ("tidak ada tanda key (%d node pkg kebaca)"):format(#nodesPkg)
             if status ~= terakhirStatus then
                 info("[cekui #" .. putaran .. "] " .. status)
                 terakhirStatus = status
             else
-                io.write("\r[cekui #" .. putaran .. "] tunggu...     ")
+                io.write(("\r[cekui #%d] %d node, tunggu...     "):format(putaran, #nodesPkg))
                 io.flush()
             end
         end
 
-        -- cleanup
-        sh("su -c 'rm -f " .. DUMP .. "' 2>/dev/null")
         os.execute("sleep 5")
     end
     return
