@@ -13934,6 +13934,87 @@ if PERINTAH == "full" or PERINTAH == "fullscreen" then
     return
 end
 
+-- v9.641: command test scan uiautomator berkala, cari teks key-related di layar Roblox
+if PERINTAH == "cekui" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada."); return end
+
+    local pkg = arg and arg[2] or ""
+    if pkg == "" then
+        local list = split(cfg.pkgs)
+        pkg = list[1] or ""
+    end
+    if pkg == "" then err("Pakai: zenx cekui <pkg>  atau isi pkgs di config"); return end
+
+    local KEY_WORDS = {
+        "get key", "getkey", "key system", "keysystem", "get a key",
+        "copy key", "enter key", "paste key", "checkpoint", "key expired",
+        "delta key", "verify key", "continue", "platorelay",
+        "getting key", "claim key",
+    }
+
+    info("Scan uiautomator tiap 5 detik untuk: " .. pkg:gsub("com%.roblox%.",""))
+    info("Tekan Ctrl+C untuk berhenti.")
+    print()
+
+    local DUMP = "/sdcard/zenx_ui_dump.xml"
+    local terakhirStatus = ""
+    local putaran = 0
+
+    while true do
+        putaran = putaran + 1
+        -- dump UI
+        local out = sh("su -c 'uiautomator dump " .. DUMP .. " 2>&1 && cat " .. DUMP .. " 2>/dev/null'") or ""
+
+        -- cari teks yang relevan
+        local ketemu = {}
+        local isiLower = out:lower()
+        for _, kata in ipairs(KEY_WORDS) do
+            if isiLower:find(kata, 1, true) then
+                ketemu[#ketemu+1] = kata
+            end
+        end
+
+        -- cari bounds dari node yang cocok (ambil koordinat tengahnya)
+        local koordinatInfo = ""
+        for _, kata in ipairs(ketemu) do
+            -- cari node dengan text/content-desc yang mengandung kata ini
+            local pattern = 'text="([^"]*' .. kata:gsub("([%(%)%.%+%-%*%?%[%^%$%%])", "%%%1") .. '[^"]*)"[^/]*bounds="%[(%d+),(%d+)%]%[(%d+),(%d+)%]"'
+            local txt, x1, y1, x2, y2 = out:lower():match(pattern)
+            if x1 then
+                local cx = math.floor((tonumber(x1) + tonumber(x2)) / 2)
+                local cy = math.floor((tonumber(y1) + tonumber(y2)) / 2)
+                koordinatInfo = koordinatInfo .. (" [bounds: %s,%s -> %s,%s | tengah: %d,%d]"):format(x1,y1,x2,y2,cx,cy)
+            end
+        end
+
+        local status
+        if #ketemu > 0 then
+            status = "KETEMU: " .. table.concat(ketemu, ", ") .. koordinatInfo
+            if status ~= terakhirStatus then
+                ok("[cekui #" .. putaran .. "] " .. status)
+                terakhirStatus = status
+            else
+                ok("[cekui #" .. putaran .. "] (sama) " .. status)
+            end
+        else
+            status = "tidak ada tanda key"
+            if status ~= terakhirStatus then
+                info("[cekui #" .. putaran .. "] " .. status)
+                terakhirStatus = status
+            else
+                io.write("\r[cekui #" .. putaran .. "] tunggu...     ")
+                io.flush()
+            end
+        end
+
+        -- cleanup
+        sh("su -c 'rm -f " .. DUMP .. "' 2>/dev/null")
+        os.execute("sleep 5")
+    end
+    return
+end
+
 if PERINTAH ~= "" then
     err("Perintah '" .. PERINTAH .. "' gak dikenal di v" .. VERSION)
     print()
