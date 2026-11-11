@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI) | v2.29: log semua DS event + alasan skip deskriptif  ║
+-- ║  UP KG — v0.1 (KERANGKA UI) | v2.30: fix panel kosong — animDbgPush forward ke panel  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.29"
+local VERSION = "up38kg-v2.30"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -749,6 +749,10 @@ local function animDbgPush(r, animStr, marker)
     table.insert(_G.ZenxAnimDbgLog, 1, line)
     if #_G.ZenxAnimDbgLog > 30 then table.remove(_G.ZenxAnimDbgLog) end
     _G.ZenxAnimDbgLogAll[#_G.ZenxAnimDbgLogAll+1] = line
+    -- v2.30: forward ke panel (ZenxSuppDebug) biar kelihatan
+    -- SEBELUM: animDbgPush nulis ke _G.ZenxAnimDbgLog, panel baca _dbgLog (local) → gak sinkron → panel kosong
+    -- SESUDAH: animDbgPush juga panggil ZenxSuppDebug → masuk ke panel lewat dbgPush
+    if _G.ZenxSuppDebug then _G.ZenxSuppDebug(line) end
 end
 _G.ZenxAnimDbgPush = animDbgPush
 
@@ -3017,14 +3021,18 @@ do
         local col = Color3.fromRGB(220,220,220)
         if m:find("SKIP") or m:find("skip") or m:find("bukan") or m:find("blacklist") then
             col = Color3.fromRGB(255,100,100)   -- merah = skip/alasan gak diproses
-        elseif m:find("DS ") then
-            col = Color3.fromRGB(100,220,255)   -- biru = trigger masuk
-        elseif m:find("UNQ") or m:find("unequip") or m:find("Unequip") then
-            col = Color3.fromRGB(255,200,80)    -- kuning = unequip
-        elseif m:find("EQP") or m:find("equip") or m:find("Equip") then
-            col = Color3.fromRGB(100,255,140)   -- hijau = equip
-        elseif m:find("reconnect") or m:find("DEAD") or m:find("ERR") then
-            col = Color3.fromRGB(255,140,60)    -- oranye = DS event
+        elseif m:find("→ SWAP") then
+            col = Color3.fromRGB(100,255,140)   -- hijau terang = lolos filter, siap swap
+        elseif m:find(">> UNQ") or m:find(">> EQP") or m:find(">> SPAWN") then
+            col = Color3.fromRGB(255,200,80)    -- kuning = UNQ/EQP/SPAWN marker
+        elseif m:find("ERR") then
+            col = Color3.fromRGB(255,140,60)    -- oranye = error
+        elseif m:find("reconnect") or m:find("DEAD") then
+            col = Color3.fromRGB(255,140,60)    -- oranye = DS reconnect
+        elseif m:find("ds2 OK") or m:find("DS listener") then
+            col = Color3.fromRGB(100,220,255)   -- biru = DS connected
+        else
+            col = Color3.fromRGB(160,160,160)   -- abu = raw DS event (animDbgPush forward)
         end
         dbgPush(m, col)
     end
