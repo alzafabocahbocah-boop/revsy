@@ -1042,7 +1042,24 @@ local function cari_tombol_key(cfg, pkg)
     local urut = {}
     local tebakX, tebakY = nil, nil   -- v5.47: tebakan dari jumlah baris grid
     local adaKalibrasi = false
-    local inget = tap_muat()[kunci]
+
+    -- fix: baca key_tap dari config -> prioritas tertinggi, langsung pakai tanpa sapu
+    local cfgTap = cfg and cfg.key_tap or ""
+    if cfgTap and cfgTap ~= "" then
+        local fx, fy = cfgTap:match("([%d%.]+)[,%s]+([%d%.]+)")
+        fx, fy = tonumber(fx), tonumber(fy)
+        if fx and fy then
+            info(("    key_tap dari config: fx=%.3f fy=%.3f -> langsung dipakai (skip sapu)"):format(fx, fy))
+            for _ = 1, 10 do
+                urut[#urut+1] = { fx, fy, dari_config = true }
+            end
+            adaKalibrasi = true
+        else
+            info("    key_tap di config ada tapi format salah (harusnya 'x,y') -> diabaikan")
+        end
+    end
+
+    local inget = not adaKalibrasi and tap_muat()[kunci]
     if not inget then
         local tabel = tap_muat()
         local beda_terkecil = 9
@@ -1145,9 +1162,9 @@ local function cari_tombol_key(cfg, pkg)
 
         local link = klip_link_key(baca_klip())
         if link then
-            tap_simpan(kunci, t[1], t[2])
+            if not t.dari_config then tap_simpan(kunci, t[1], t[2]) end  -- fix: kalau dari config, gak perlu overwrite kalibrasi
             return link, t[1], t[2],
-                   (t.ingetan and "pakai ingatan" or ("ketemu di percobaan ke-" .. i))
+                   (t.dari_config and "pakai key_tap config" or t.ingetan and "pakai ingatan" or ("ketemu di percobaan ke-" .. i))
                    .. " (" .. kunci .. ")"
         end
     end
