@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI) | v2.31: fix panel kosong — hapus sync loop duplikat  ║
+-- ║  UP KG — v0.1 (KERANGKA UI) | v2.32: log tiap DS event raw biar tau DS aktif  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.31"
+local VERSION = "up38kg-v2.32"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2900,8 +2900,12 @@ do
             local function connectDS(ds)
                 local conn = ds.OnClientEvent:Connect(function(...)
                     local args = {...}
+                    -- v2.32: log tiap DS event masuk terlepas dari isi — biar tau DS aktif
+                    local argTypes = {}
+                    for i=1,math.min(#args,5) do argTypes[i] = type(args[i]):sub(1,3) end
+                    ssLog("DS raw: "..table.concat(argTypes,","))
                     local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
-                    if not data then return end
+                    if not data then ssLog("DS skip: data nil (args[3]/[4] bukan table)"); return end
                     local hits = {}
                     for _, v in pairs(data) do
                         if type(v)=="table" then
@@ -2911,6 +2915,7 @@ do
                             end
                         end
                     end
+                    if #hits == 0 then ssLog("DS: "..#data.." entry, 0 CustomAnim") end
                     processHits(hits)
                 end)
                 ds.AncestryChanged:Connect(function()
