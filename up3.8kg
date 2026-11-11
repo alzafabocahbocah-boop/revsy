@@ -2860,18 +2860,33 @@ do
                 return false
             end
 
+            -- v2.39: cek apakah UUID adalah hotdog milik kita (scan backpack+char cek nama "f" attribute)
+            local function isMyHotdog(raw)
+                for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
+                    if not container then continue end
+                    for _, t in ipairs(container:GetChildren()) do
+                        local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                        if u and tostring(u):gsub("[{}]","") == raw then
+                            local f = tostring(t:GetAttribute("f") or t.Name or ""):lower()
+                            if f:find("hotdog",1,true) then return true end
+                        end
+                    end
+                end
+                return false
+            end
+
             local function processHits(hits)
                 local seen = {}
                 for _, hit in ipairs(hits) do
                     local r, animStr = hit[1], hit[2]
                     local anim = tostring(animStr):lower()
-                    -- v2.38: hanya log animStr yang masuk SWAP_ANIM atau milik kita (kurangi spam)
-                    -- animDbgPush semua = terlalu banyak noise untuk non-target anim
-                    if not SWAP_ANIM[anim] then
-                        -- skip diam-diam untuk anim non-target (terlalu sering: walk, idle, dll)
+                    -- v2.39: kalau UUID adalah hotdog milik kita → swap animasi apapun (skill 1+2+dll)
+                    -- kalau bukan hotdog → hanya swap animStr yang ada di SWAP_ANIM
+                    local forceSwap = isMyHotdog(r)
+                    if not forceSwap and not SWAP_ANIM[anim] then
                         continue
                     end
-                    animDbgPush(r, animStr)   -- log hanya animStr target (frill/fan/roar/pee/pew)
+                    animDbgPush(r, animStr)
                     if not _G.ZenxSuppSwapOn then
                         ssLog("skip: SUPP SWAP ANIM toggle OFF (pencet di panel buat nyalain)")
                         continue
