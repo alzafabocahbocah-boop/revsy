@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.661"
+local VERSION = "9.662"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -981,28 +981,18 @@ local function rekam_realtime(kotak, maks)
             for a in prop:gmatch("0036%s*:%s*value %d+, min %d+, max (%d+)") do maxY = tonumber(a) end
             if not maxX or maxX <= 0 then maxX = (fW > 0) and fW or W end
             if not maxY or maxY <= 0 then maxY = (fH > 0) and fH or H end
-            for j = 1, math.min(#xs, #ys) do
-                local snx, sny = xs[j]/maxX, ys[j]/maxY
-                for _, c in ipairs({
-                    { x=snx,   y=sny   },
-                    { x=1-sny, y=snx   },
-                    { x=sny,   y=1-snx },
-                    { x=1-snx, y=1-sny },
-                }) do
-                    local X, Y = c.x*W, c.y*H
-                    if X >= kotak.L and X <= kotak.R and Y >= kotak.T and Y <= kotak.B then
-                        hasil = { fx=(X-kotak.L)/(kotak.R-kotak.L),
-                                  fy=(Y-kotak.T)/(kotak.B-kotak.T),
-                                  X=math.floor(X), Y=math.floor(Y) }
-                        break
-                    end
-                end
-                if hasil then break end
+            local rawX = xs[1]/maxX * W
+            local rawY = ys[1]/maxY * H
+            local X = math.floor(rawX)
+            local Y = math.floor(rawY)
+            local fx, fy = 0, 0
+            if kotak and (kotak.R - kotak.L) > 0 and (kotak.B - kotak.T) > 0 then
+                fx = (X - kotak.L) / (kotak.R - kotak.L)
+                fy = (Y - kotak.T) / (kotak.B - kotak.T)
             end
-            if hasil then
-                sh_silent("su -c 'killall getevent 2>/dev/null'")
-                break
-            end
+            hasil = { fx=fx, fy=fy, X=X, Y=Y }
+            sh_silent("su -c 'killall getevent 2>/dev/null'")
+            break
         end
         io.write(("\r   nunggu tap... %ds"):format(i))
         io.flush()
