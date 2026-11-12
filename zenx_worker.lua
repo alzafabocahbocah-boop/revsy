@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.651"
+local VERSION = "9.652"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10436,6 +10436,65 @@ if PERINTAH == "key" then
             end
             os.execute("sleep 2")
         end
+        return
+    end
+
+    -- v9.652: zenx key clienu -- manual full flow: buka clienu -> tap key -> kirim PC -> tulis lisensi -> buka ulang
+    if a2:lower() == "clienu" then
+        local cfg2 = load_config()
+        if not cfg2 then err("Config belum ada. Jalanin `zenx` dulu."); return end
+        local PKG = "com.roblox.clienu"
+        local mapLink2 = {}
+
+        ok("=== KEY CLIENU: flow manual ===")
+        info("1. Tutup clienu dulu...")
+        sh_silent("su -c 'am force-stop " .. PKG .. "'")
+        os.execute("sleep 2")
+
+        info("2. Buka clienu...")
+        open_one(cfg2, PKG, nil, "key-clienu")
+        local msk, lama, sbb = tunggu_masuk_game(PKG, 150, nil)
+        if msk then
+            ok(("   masuk game setelah %ds"):format(lama))
+        else
+            warn("   gak kedeteksi masuk game (" .. tostring(sbb) .. ") -- lanjut tetap")
+        end
+
+        info("3. Tunggu dialog key nongol (~18s)...")
+        os.execute("sleep 18")
+
+        info("4. Cari & tap tombol key...")
+        local link, fx, fy, ketLink = cari_tombol_key(cfg2, PKG)
+        if not link then
+            warn("   gagal nemu tombol key: " .. tostring(ketLink))
+            warn("   Pastikan dialog key sudah muncul, lalu coba lagi.")
+            return
+        end
+        ok(("   link ketemu: %s"):format(link:sub(1,70)))
+
+        info("5. Kirim link ke PC via worker...")
+        local kunci, sebab = delta_kirim_pc(cfg2, link)
+        if not kunci then
+            warn("   gagal dapat key dari PC: " .. tostring(sebab))
+            return
+        end
+        ok("   KEY DAPAT: " .. kunci)
+
+        info("6. Tulis lisensi Delta...")
+        local wok, wket = tulis_lisensi(cfg2, kunci)
+        if wok then
+            ok("   lisensi ketulis: " .. tostring(wket))
+        else
+            warn("   gagal tulis lisensi: " .. tostring(wket))
+            warn("   Key (salin manual): " .. kunci)
+            return
+        end
+
+        info("7. Tutup & buka ulang clienu...")
+        sh_silent("su -c 'am force-stop " .. PKG .. "'")
+        os.execute("sleep 2")
+        open_one(cfg2, PKG, nil, "key-clienu-reopen")
+        ok("=== SELESAI -- clienu dibuka ulang dengan lisensi baru ===")
         return
     end
 
