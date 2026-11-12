@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.643"
+local VERSION = "9.644"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -13999,10 +13999,7 @@ local function cmd_cekui()
     if pkg == "" then err("Pakai: zenx cekui <pkg>  atau isi pkgs di config"); return end
 
     local KEY_WORDS = {
-        "get key", "getkey", "key system", "keysystem", "get a key",
-        "copy key", "enter key", "paste key", "checkpoint", "key expired",
-        "delta key", "verify key", "continue", "platorelay",
-        "getting key", "claim key",
+        "get key", "getkey", "receive key",
     }
 
     info("Scan uiautomator tiap 5 detik untuk client: " .. pkg:gsub("com%.roblox%.",""))
