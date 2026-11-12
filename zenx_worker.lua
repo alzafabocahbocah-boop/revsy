@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.671"
+local VERSION = "9.672"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10526,40 +10526,13 @@ if PERINTAH == "key" then
             sh_silent("su -c 'am force-stop " .. PKG .. "'")
             os.execute("sleep 2")
 
-            info("2. Atur grid bypass (2x2) & buka clienu...")
-            local kotakBypass
-            do
-                local enam = { PKG }
-                for _, p in ipairs(split(cfg2.pkgs)) do
-                    if p ~= PKG and #enam < 4 then enam[#enam+1] = p end
-                end
-                local DUMMY_PKGS = {
-                    "com.roblox.clienv","com.roblox.clienw","com.roblox.clienx",
-                }
-                for _, dp in ipairs(DUMMY_PKGS) do
-                    if #enam >= 4 then break end
-                    local ada = false
-                    for _, ep in ipairs(enam) do if ep == dp then ada = true break end end
-                    if not ada then enam[#enam+1] = dp end
-                end
-                info(("   basis grid: %d client (pad ke 4, 2x2)"):format(#enam))
-                local kolAsli = cfg2.grid_kolom
-                cfg2.grid_kolom = 2
-                local petaP, errP = grid_hitung(cfg2, enam)
-                cfg2.grid_kolom = kolAsli
-                if petaP and petaP[PKG] then
-                    local k = petaP[PKG]
-                    info(("   kotak bypass: [%d,%d]-[%d,%d] %dx%d"):format(
-                        k.L, k.T, k.R, k.B, k.R-k.L, k.B-k.T))
-                    tata_satu(PKG, k, true)
-                    kotakBypass = k
-                else
-                    warn("   grid_hitung gagal: " .. tostring(errP) .. " -- skip tata_satu")
-                end
-            end
+            info("2. Buka clienu (freeform RF)...")
+            local kotakBypass = { L=RF_GRID[1].l, T=RF_GRID[1].t, R=RF_GRID[1].r, B=RF_GRID[1].b }
             open_one(cfg2, PKG, nil, "start-bypass")
             info("   tunggu load + dialog key (~45s)...")
             os.execute("sleep 45")
+            info("   fix posisi freeform RF...")
+            pcall(function() grid_rf_delta({PKG}, true) end)
 
             info("3. Fokuskan & cari tombol key...")
             pastikan_depan(PKG, 5)
