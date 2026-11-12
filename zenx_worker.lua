@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.662"
+local VERSION = "9.663"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -961,43 +961,56 @@ local function rekam_realtime(kotak, maks)
     local berkas = "/sdcard/zenx_ev2.txt"
     sh_silent("su -c 'rm -f " .. berkas .. "'")
     sh_silent("su -c 'timeout " .. maks .. " getevent -l > " .. berkas .. " &'")
+    os.execute("sleep 0.3")  -- tunggu getevent siap
     local W, H = layar_ukuran()
     local fW, fH = layar_fisik()
+    local prop = sh("su -c 'getevent -p 2>&1'") or ""
+    local maxX, maxY
+    for a in prop:gmatch("0035%s*:%s*value %d+, min %d+, max (%d+)") do maxX = tonumber(a) end
+    for a in prop:gmatch("0036%s*:%s*value %d+, min %d+, max (%d+)") do maxY = tonumber(a) end
+    if not maxX or maxX <= 0 then maxX = (fW > 0) and fW or W end
+    if not maxY or maxY <= 0 then maxY = (fH > 0) and fH or H end
     local hasil = nil
+    local terakhirBaris = 0
     for i = 1, maks do
-        os.execute("sleep 1")
-        local isi = sh("su -c 'cat " .. berkas .. " 2>/dev/null'") or ""
-        local xs, ys = {}, {}
-        for v in isi:gmatch("ABS_MT_POSITION_X%s+(%x+)") do xs[#xs+1] = tonumber(v,16) end
-        for v in isi:gmatch("ABS_MT_POSITION_Y%s+(%x+)") do ys[#ys+1] = tonumber(v,16) end
-        if #xs == 0 then
-            for v in isi:gmatch("ABS_X%s+(%x+)") do xs[#xs+1] = tonumber(v,16) end
-            for v in isi:gmatch("ABS_Y%s+(%x+)") do ys[#ys+1] = tonumber(v,16) end
-        end
-        if #xs > 0 and #ys > 0 then
-            local prop = sh("su -c 'getevent -p 2>&1'") or ""
-            local maxX, maxY
-            for a in prop:gmatch("0035%s*:%s*value %d+, min %d+, max (%d+)") do maxX = tonumber(a) end
-            for a in prop:gmatch("0036%s*:%s*value %d+, min %d+, max (%d+)") do maxY = tonumber(a) end
-            if not maxX or maxX <= 0 then maxX = (fW > 0) and fW or W end
-            if not maxY or maxY <= 0 then maxY = (fH > 0) and fH or H end
-            local rawX = xs[1]/maxX * W
-            local rawY = ys[1]/maxY * H
-            local X = math.floor(rawX)
-            local Y = math.floor(rawY)
-            local fx, fy = 0, 0
-            if kotak and (kotak.R - kotak.L) > 0 and (kotak.B - kotak.T) > 0 then
-                fx = (X - kotak.L) / (kotak.R - kotak.L)
-                fy = (Y - kotak.T) / (kotak.B - kotak.T)
-            end
-            hasil = { fx=fx, fy=fy, X=X, Y=Y }
-            sh_silent("su -c 'killall getevent 2>/dev/null'")
-            break
-        end
         io.write(("\r   nunggu tap... %ds"):format(i))
         io.flush()
+        os.execute("sleep 1")
+        local isi = sh("su -c 'cat " .. berkas .. " 2>/dev/null'") or ""
+        -- hitung baris baru
+        local barisBaru = 0
+        for _ in isi:gmatch("\n") do barisBaru = barisBaru + 1 end
+        if barisBaru > terakhirBaris then
+            terakhirBaris = barisBaru
+            local xs, ys = {}, {}
+            for v in isi:gmatch("ABS_MT_POSITION_X%s+(%x+)") do xs[#xs+1] = tonumber(v,16) end
+            for v in isi:gmatch("ABS_MT_POSITION_Y%s+(%x+)") do ys[#ys+1] = tonumber(v,16) end
+            if #xs == 0 then
+                for v in isi:gmatch("ABS_X%s+(%x+)") do xs[#xs+1] = tonumber(v,16) end
+                for v in isi:gmatch("ABS_Y%s+(%x+)") do ys[#ys+1] = tonumber(v,16) end
+            end
+            if #xs > 0 and #ys > 0 then
+                local X = math.floor(xs[1]/maxX * W)
+                local Y = math.floor(ys[1]/maxY * H)
+                local fx, fy = 0, 0
+                if kotak and (kotak.R - kotak.L) > 0 and (kotak.B - kotak.T) > 0 then
+                    fx = (X - kotak.L) / (kotak.R - kotak.L)
+                    fy = (Y - kotak.T) / (kotak.B - kotak.T)
+                end
+                hasil = { fx=fx, fy=fy, X=X, Y=Y }
+                sh_silent("su -c 'killall getevent 2>/dev/null'")
+                break
+            else
+                -- ada konten baru tapi gak ada koordinat -- debug 1 baris
+                local contoh = isi:match("[^\n]+ABS[^\n]+") or isi:match("[^\n]+")
+                if contoh then
+                    io.write("\r   [ev] " .. contoh:sub(1,60) .. "\n")
+                    io.flush()
+                end
+            end
+        end
     end
-    io.write("\r" .. string.rep(" ", 40) .. "\r"); io.flush()
+    io.write("\r" .. string.rep(" ", 50) .. "\r"); io.flush()
     sh_silent("su -c 'rm -f " .. berkas .. "'")
     if not hasil then return nil, "timeout " .. maks .. " detik" end
     return hasil
