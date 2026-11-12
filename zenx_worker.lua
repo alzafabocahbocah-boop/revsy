@@ -1,6 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
+-- zenx_worker v9.676 — key clienu: loop resize freeform sampai confirmed + fix cfg.pkgs sementara
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
 local VERSION = "9.673"
@@ -778,22 +778,24 @@ local function jendela_kotak(pkg)
 end
 
 local function tap_jendela(cfg, pkg, fx, fy, kali, kotak)
-    local ukur = jendela_kotak(pkg)
-    if not ukur then
-        local ppath = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
-        local isiP = sh("su -c 'cat " .. ppath .. " 2>/dev/null'") or ""
-        local L = tonumber(isiP:match('<int name="app_cloner_current_window_left" value="(%-?%d+)"'))
-        local T = tonumber(isiP:match('<int name="app_cloner_current_window_top" value="(%-?%d+)"'))
-        local R = tonumber(isiP:match('<int name="app_cloner_current_window_right" value="(%-?%d+)"'))
-        local B = tonumber(isiP:match('<int name="app_cloner_current_window_bottom" value="(%-?%d+)"'))
-        if L and T and R and B and (R - L) > 50 then
-            ukur = { L = L, T = T, R = R, B = B }
-            info(("   ukur jendela dari prefs App Cloner (%dx%d) -- uiautomator gagal"):format(R-L, B-T))
-        else
-            return nil, "gagal ukur jendela sebelum tap -- tap dibatalin (gak nebak koordinat)"
+    if not kotak then
+        local ukur = jendela_kotak(pkg)
+        if not ukur then
+            local ppath = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
+            local isiP = sh("su -c 'cat " .. ppath .. " 2>/dev/null'") or ""
+            local L = tonumber(isiP:match('<int name="app_cloner_current_window_left" value="(%-?%d+)"'))
+            local T = tonumber(isiP:match('<int name="app_cloner_current_window_top" value="(%-?%d+)"'))
+            local R = tonumber(isiP:match('<int name="app_cloner_current_window_right" value="(%-?%d+)"'))
+            local B = tonumber(isiP:match('<int name="app_cloner_current_window_bottom" value="(%-?%d+)"'))
+            if L and T and R and B and (R - L) > 50 then
+                ukur = { L = L, T = T, R = R, B = B }
+                info(("   ukur jendela dari prefs App Cloner (%dx%d) -- uiautomator gagal"):format(R-L, B-T))
+            else
+                return nil, "gagal ukur jendela sebelum tap -- tap dibatalin (gak nebak koordinat)"
+            end
         end
+        kotak = ukur
     end
-    kotak = ukur
     local lebarK = kotak.R - kotak.L
     if lebarK > 1000 then
         return nil, ("jendela masih fullscreen (%d) -- tap DITOLAK biar gak nyasar ke app lain"):format(lebarK)
@@ -1217,7 +1219,7 @@ local function cari_tombol_key(cfg, pkg, kotakOverride)
             if ada_stop() then return nil, nil, nil, "dihentikan (zenx stop)" end
             os.execute("sleep 1")
         end
-        local tok, tsebab = tap_jendela(cfg, pkg, t[1], t[2], 2)   -- ukur fresh sendiri
+        local tok, tsebab = tap_jendela(cfg, pkg, t[1], t[2], 2, kotak)   -- teruskan kotak override
         if not tok then
             io.write("\n")
             info("  tap batal: " .. tostring(tsebab))
@@ -10529,17 +10531,46 @@ if PERINTAH == "key" then
             info("2. Buka clienu (freeform RF)...")
             local kotakBypass = { L=RF_GRID[1].l, T=RF_GRID[1].t, R=RF_GRID[1].r, B=RF_GRID[1].b }
             local dsAsli = cfg2.delta_split
+            local pkgsAsli = cfg2.pkgs
             cfg2.delta_split = true  -- paksa windowingMode 5
+            cfg2.pkgs = PKG          -- biar grid_rf_delta di open_one cuma resize clienu
             open_one(cfg2, PKG, nil, "start-bypass")
             cfg2.delta_split = dsAsli
+            cfg2.pkgs = pkgsAsli
             info("   tunggu load + dialog key (~45s)...")
             os.execute("sleep 45")
-            info("   fix posisi freeform RF...")
-            pcall(function() grid_rf_delta({PKG}, true) end)
 
-            info("3. Fokuskan & cari tombol key...")
+            info("3. Fokuskan & fix posisi freeform RF...")
             pastikan_depan(PKG, 5)
-            os.execute("sleep 1")
+            os.execute("sleep 2")  -- tunggu Roblox selesai load penuh
+            -- paksa freeform: resize loop sampai ukuran window confirm 640x720
+            info("   paksa freeform (loop resize sampai confirmed)...")
+            do
+                local confirmed = false
+                for ri = 1, 10 do
+                    pcall(function() grid_rf_delta({PKG}, true) end)
+                    os.execute("sleep 1")
+                    -- cek ukuran window sekarang
+                    local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
+                    local wmap = parse_window_rf(dump)
+                    local inf = wmap[PKG]
+                    if inf then
+                        local w = (inf.r or 0) - (inf.l or 0)
+                        local h = (inf.b or 0) - (inf.t or 0)
+                        info(("   [freeform-cek %d/10] window %dx%d"):format(ri, w, h))
+                        if w >= 600 and w <= 680 and h >= 680 and h <= 760 then
+                            ok("   freeform confirmed: " .. w .. "x" .. h)
+                            confirmed = true
+                            break
+                        end
+                    else
+                        info(("   [freeform-cek %d/10] window belum kedeteksi"):format(ri))
+                    end
+                end
+                if not confirmed then
+                    warn("   freeform gak confirmed setelah 10x -- lanjut coba tap")
+                end
+            end
             local link, _, _, ketLink = cari_tombol_key(cfg2, PKG, kotakBypass)
             if not link then
                 warn("   gagal nemu tombol key: " .. tostring(ketLink) .. " -- ulang dari awal")
