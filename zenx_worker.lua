@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.667"
+local VERSION = "9.668"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1091,15 +1091,13 @@ local function klip_link_key(isi)
 end
 
 local function cari_tombol_key(cfg, pkg, kotakOverride)
-    local kotak, sebab = jendela_kotak(pkg)
-    if not kotak then
-        if kotakOverride then
-            kotak = kotakOverride
-            info("    jendela_kotak gagal, pakai kotak override: " ..
-                 ("[%d,%d]-[%d,%d]"):format(kotakOverride.L,kotakOverride.T,kotakOverride.R,kotakOverride.B))
-        else
-            return nil, nil, nil, "gagal baca kotak jendela: " .. tostring(sebab)
-        end
+    local kotak
+    if kotakOverride then
+        kotak = kotakOverride
+    else
+        local sebab
+        kotak, sebab = jendela_kotak(pkg)
+        if not kotak then return nil, nil, nil, "gagal baca kotak jendela: " .. tostring(sebab) end
     end
     local lebar  = kotak.R - kotak.L
     local tinggi = kotak.B - kotak.T
