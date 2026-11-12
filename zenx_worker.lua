@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.650"
+local VERSION = "9.651"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -3440,32 +3440,11 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
 
                 if link then
                     local kunci, sebab
-                    -- v9.567: kalau auto_key_pc=true, kirim ke PC via worker
-                    if cfg.auto_key_pc == true then
-                        info("  [delta-pc] auto_key_pc=true -> kirim ke PC via worker...")
-                        kunci, sebab = delta_kirim_pc(cfg, link)
-                        if not kunci then
-                            warn("  [delta-pc] gagal: " .. tostring(sebab) .. " -- fallback bypass lokal")
-                            for percobaan = 1, 5 do
-                                kunci, sebab = bypass_kunci(cfg, link, percobaan > 1)
-                                if kunci then break end
-                                warn(("  API bypass gagal (percobaan %d/5): %s"):format(percobaan, tostring(sebab)))
-                                if percobaan < 5 then os.execute("sleep 8") end
-                            end
-                        end
-                    else
-                        for percobaan = 1, 5 do
-                            kunci, sebab = bypass_kunci(cfg, link, percobaan > 1)  -- retry pakai refresh
-                            if kunci then
-                                if percobaan > 1 then ok("  BYPASS sukses di percobaan ke-" .. percobaan) end
-                                break
-                            end
-                            warn(("  API bypass gagal (percobaan %d/5): %s"):format(percobaan, tostring(sebab)))
-                            if percobaan < 5 then
-                                info("  tunggu 8s -> tembak bypass lagi...")
-                                os.execute("sleep 8")
-                            end
-                        end
+                    -- v9.651: selalu kirim ke PC via worker (wajib auto_key_pc)
+                    info("  [delta-pc] kirim ke PC via worker...")
+                    kunci, sebab = delta_kirim_pc(cfg, link)
+                    if not kunci then
+                        warn("  [delta-pc] gagal: " .. tostring(sebab))
                     end
                     if kunci then
                         local wok, wket = tulis_lisensi(cfg, kunci)
