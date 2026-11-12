@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.666"
+local VERSION = "9.667"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1090,9 +1090,17 @@ local function klip_link_key(isi)
     return nil
 end
 
-local function cari_tombol_key(cfg, pkg)
+local function cari_tombol_key(cfg, pkg, kotakOverride)
     local kotak, sebab = jendela_kotak(pkg)
-    if not kotak then return nil, nil, nil, "gagal baca kotak jendela: " .. tostring(sebab) end
+    if not kotak then
+        if kotakOverride then
+            kotak = kotakOverride
+            info("    jendela_kotak gagal, pakai kotak override: " ..
+                 ("[%d,%d]-[%d,%d]"):format(kotakOverride.L,kotakOverride.T,kotakOverride.R,kotakOverride.B))
+        else
+            return nil, nil, nil, "gagal baca kotak jendela: " .. tostring(sebab)
+        end
+    end
     local lebar  = kotak.R - kotak.L
     local tinggi = kotak.B - kotak.T
     local kunci  = ("%dx%d"):format(lebar, tinggi)
@@ -10521,12 +10529,12 @@ if PERINTAH == "key" then
             os.execute("sleep 2")
 
             info("2. Atur grid bypass (3x2) & buka clienu...")
+            local kotakBypass
             do
                 local enam = { PKG }
                 for _, p in ipairs(split(cfg2.pkgs)) do
                     if p ~= PKG and #enam < 6 then enam[#enam+1] = p end
                 end
-                -- pad sampai 6 pakai dummy supaya grid_hitung bikin 3x2
                 local DUMMY_PKGS = {
                     "com.roblox.clienv","com.roblox.clienw","com.roblox.clienx",
                     "com.roblox.clieny","com.roblox.clienz",
@@ -10547,6 +10555,7 @@ if PERINTAH == "key" then
                     info(("   kotak bypass: [%d,%d]-[%d,%d] %dx%d"):format(
                         k.L, k.T, k.R, k.B, k.R-k.L, k.B-k.T))
                     tata_satu(PKG, k, true)
+                    kotakBypass = k
                 else
                     warn("   grid_hitung gagal: " .. tostring(errP) .. " -- skip tata_satu")
                 end
@@ -10558,7 +10567,7 @@ if PERINTAH == "key" then
             info("3. Fokuskan & cari tombol key...")
             pastikan_depan(PKG, 5)
             os.execute("sleep 1")
-            local link, _, _, ketLink = cari_tombol_key(cfg2, PKG)
+            local link, _, _, ketLink = cari_tombol_key(cfg2, PKG, kotakBypass)
             if not link then
                 warn("   gagal nemu tombol key: " .. tostring(ketLink) .. " -- ulang dari awal")
                 goto continue
