@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.660"
+local VERSION = "9.661"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -13856,6 +13856,7 @@ if PERINTAH == "script" or PERINTAH == "sc" then
 end
 
 if PERINTAH == "layar" then
+    local function cmd_layar()
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
 
@@ -14000,6 +14001,8 @@ if PERINTAH == "layar" then
     print("")
     print(C.D .. "  Tempel bagian 'YANG BEDA' ini -- itu udah cukup." .. C.N)
     print("")
+    end -- cmd_layar
+    cmd_layar()
     return
 end
 
