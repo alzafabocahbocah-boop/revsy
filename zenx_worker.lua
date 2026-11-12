@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.655"
+local VERSION = "9.656"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10505,7 +10505,17 @@ if PERINTAH == "key" then
                 end
                 ok("   lisensi ketulis: " .. tostring(wket))
 
-                info("7. Tutup & buka ulang clienu...")
+                info("7. Reset grid balik ke normal...")
+                do
+                    local semua = split(cfg2.pkgs)
+                    local petaNormal = grid_hitung(cfg2, semua)
+                    if petaNormal and petaNormal[PKG] then
+                        tata_satu(PKG, petaNormal[PKG], true)
+                        info(("   grid normal: basis %d client"):format(#semua))
+                    end
+                end
+
+                info("8. Tutup & buka ulang clienu...")
                 sh_silent("su -c 'am force-stop " .. PKG .. "'")
                 os.execute("sleep 2")
                 open_one(cfg2, PKG, nil, "key-clienu-reopen")
