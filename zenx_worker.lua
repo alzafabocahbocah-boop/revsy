@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.654"
+local VERSION = "9.655"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10457,8 +10457,21 @@ if PERINTAH == "key" then
             sh_silent("su -c 'am force-stop " .. PKG .. "'")
             os.execute("sleep 2")
 
-            info("2. Buka clienu...")
-            open_one(cfg2, PKG, nil, "key-clienu")
+            info("2. Atur grid bypass (3x2) & buka clienu...")
+            do
+                local enam = { PKG }
+                for _, p in ipairs(split(cfg2.pkgs)) do
+                    if p ~= PKG and #enam < 6 then enam[#enam+1] = p end
+                end
+                local kolAsli = cfg2.grid_kolom
+                cfg2.grid_kolom = 2
+                local petaP = grid_hitung(cfg2, enam)
+                cfg2.grid_kolom = kolAsli
+                if petaP and petaP[PKG] then
+                    tata_satu(PKG, petaP[PKG], true)
+                end
+            end
+            open_one(cfg2, PKG, nil, "start-bypass")
             info("   tunggu load (~30s)...")
             os.execute("sleep 30")
 
