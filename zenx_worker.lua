@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.664"
+local VERSION = "9.665"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10541,13 +10541,10 @@ if PERINTAH == "key" then
                 end
             end
             open_one(cfg2, PKG, nil, "start-bypass")
-            info("   tunggu load (~30s)...")
-            os.execute("sleep 30")
+            info("   tunggu load + dialog key (~45s)...")
+            os.execute("sleep 45")
 
-            info("3. Tunggu dialog key (~18s)...")
-            os.execute("sleep 18")
-
-            info("4. Fokuskan & cari tombol key...")
+            info("3. Fokuskan & cari tombol key...")
             pastikan_depan(PKG, 5)
             os.execute("sleep 1")
             local link, _, _, ketLink = cari_tombol_key(cfg2, PKG)
@@ -10557,7 +10554,7 @@ if PERINTAH == "key" then
             end
             ok(("   link: %s"):format(link:sub(1,70)))
 
-            info("5. Kirim ke PC...")
+            info("4. Kirim ke PC...")
             do
                 local kunci, sebab = delta_kirim_pc(cfg2, link)
                 if not kunci then
@@ -10566,7 +10563,7 @@ if PERINTAH == "key" then
                 end
                 ok("   KEY DAPAT: " .. kunci)
 
-                info("6. Tulis lisensi...")
+                info("5. Tulis lisensi...")
                 local wok, wket = tulis_lisensi(cfg2, kunci)
                 if not wok then
                     warn("   gagal tulis: " .. tostring(wket) .. " -- Key: " .. kunci)
@@ -10574,7 +10571,7 @@ if PERINTAH == "key" then
                 end
                 ok("   lisensi ketulis: " .. tostring(wket))
 
-                info("7. Reset grid balik ke normal...")
+                info("6. Reset grid balik ke normal...")
                 do
                     local semua = split(cfg2.pkgs)
                     local petaNormal = grid_hitung(cfg2, semua)
@@ -10584,7 +10581,7 @@ if PERINTAH == "key" then
                     end
                 end
 
-                info("8. Tutup & buka ulang clienu...")
+                info("7. Tutup & buka ulang clienu...")
                 sh_silent("su -c 'am force-stop " .. PKG .. "'")
                 os.execute("sleep 2")
                 open_one(cfg2, PKG, nil, "key-clienu-reopen")
