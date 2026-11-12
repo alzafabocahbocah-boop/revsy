@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.668"
+local VERSION = "9.669"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10526,24 +10526,23 @@ if PERINTAH == "key" then
             sh_silent("su -c 'am force-stop " .. PKG .. "'")
             os.execute("sleep 2")
 
-            info("2. Atur grid bypass (3x2) & buka clienu...")
+            info("2. Atur grid bypass (2x2) & buka clienu...")
             local kotakBypass
             do
                 local enam = { PKG }
                 for _, p in ipairs(split(cfg2.pkgs)) do
-                    if p ~= PKG and #enam < 6 then enam[#enam+1] = p end
+                    if p ~= PKG and #enam < 4 then enam[#enam+1] = p end
                 end
                 local DUMMY_PKGS = {
                     "com.roblox.clienv","com.roblox.clienw","com.roblox.clienx",
-                    "com.roblox.clieny","com.roblox.clienz",
                 }
                 for _, dp in ipairs(DUMMY_PKGS) do
-                    if #enam >= 6 then break end
+                    if #enam >= 4 then break end
                     local ada = false
                     for _, ep in ipairs(enam) do if ep == dp then ada = true break end end
                     if not ada then enam[#enam+1] = dp end
                 end
-                info(("   basis grid: %d client (pad ke 6)"):format(#enam))
+                info(("   basis grid: %d client (pad ke 4, 2x2)"):format(#enam))
                 local kolAsli = cfg2.grid_kolom
                 cfg2.grid_kolom = 2
                 local petaP, errP = grid_hitung(cfg2, enam)
