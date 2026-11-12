@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.658"
+local VERSION = "9.659"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -8868,20 +8868,67 @@ if PERINTAH == "ukur" then
         return
     end
 
-    info("Siap-siap TAP tombol GET KEY...")
-    for sisa = 5, 1, -1 do
-        io.write(("\r   mulai rekam dalam %d detik... (lihat layar client)"):format(sisa))
-        io.flush()
-        os.execute("sleep 1")
-    end
-    io.write("\r" .. string.rep(" ", 60) .. "\r"); io.flush()
-    print(C.BOLD..C.Y.."   >>> REKAM AKTIF -- PENCET TOMBOL GET KEY SEKARANG <<<"..C.N)
-    print(C.D.."   direkam 60 detik."..C.N)
+    print(C.BOLD..C.Y.."   >>> PENCET TOMBOL GET KEY SEKARANG (max 60 detik) <<<"..C.N)
     print()
 
-    local hasil, sebabR = rekam_sentuh(pkg, kotak2, 60)
+    -- jalankan getevent di background, polling tiap 1s sampai ada koordinat
+    local berkas = "/sdcard/zenx_ev2.txt"
+    sh_silent("su -c 'rm -f " .. berkas .. "'")
+    sh_silent("su -c 'timeout 60 getevent -l > " .. berkas .. " &'")
+
+    local hasil, sebabR = nil, "timeout 60 detik"
+    local W, H = layar_ukuran()
+    local fW, fH = layar_fisik()
+    for detik = 1, 60 do
+        os.execute("sleep 1")
+        local isi = sh("su -c 'cat " .. berkas .. " 2>/dev/null'") or ""
+        local xs, ys = {}, {}
+        for v in isi:gmatch("ABS_MT_POSITION_X%s+(%x+)") do xs[#xs+1] = tonumber(v,16) end
+        for v in isi:gmatch("ABS_MT_POSITION_Y%s+(%x+)") do ys[#ys+1] = tonumber(v,16) end
+        if #xs == 0 then
+            for v in isi:gmatch("ABS_X%s+(%x+)") do xs[#xs+1] = tonumber(v,16) end
+            for v in isi:gmatch("ABS_Y%s+(%x+)") do ys[#ys+1] = tonumber(v,16) end
+        end
+        if #xs > 0 and #ys > 0 then
+            local prop = sh("su -c 'getevent -p 2>&1'") or ""
+            local maxX, maxY
+            for a in prop:gmatch("0035%s*:%s*value %d+, min %d+, max (%d+)") do maxX = tonumber(a) end
+            for a in prop:gmatch("0036%s*:%s*value %d+, min %d+, max (%d+)") do maxY = tonumber(a) end
+            if not maxX or maxX <= 0 then maxX = (fW > 0) and fW or W end
+            if not maxY or maxY <= 0 then maxY = (fH > 0) and fH or H end
+            for i = 1, math.min(#xs, #ys) do
+                local snx, sny = xs[i]/maxX, ys[i]/maxY
+                local arah = {
+                    { x=snx,     y=sny },
+                    { x=1-sny,   y=snx },
+                    { x=sny,     y=1-snx },
+                    { x=1-snx,   y=1-sny },
+                }
+                for _, c in ipairs(arah) do
+                    local X, Y = c.x*W, c.y*H
+                    if X >= kotak2.L and X <= kotak2.R and Y >= kotak2.T and Y <= kotak2.B then
+                        hasil = { fx=(X-kotak2.L)/(kotak2.R-kotak2.L),
+                                  fy=(Y-kotak2.T)/(kotak2.B-kotak2.T),
+                                  X=math.floor(X), Y=math.floor(Y) }
+                        break
+                    end
+                end
+                if hasil then break end
+            end
+            if hasil then
+                sh_silent("su -c 'killall getevent 2>/dev/null'")
+                break
+            end
+        end
+        io.write(("\r   nunggu tap... %ds"):format(detik))
+        io.flush()
+    end
+    io.write("\r" .. string.rep(" ", 40) .. "\r"); io.flush()
+    sh_silent("su -c 'rm -f " .. berkas .. "'")
+
+    local sebabR2 = sebabR
     if not hasil then
-        err("Gagal rekam: " .. tostring(sebabR))
+        err("Gagal rekam: " .. tostring(sebabR2))
         info("Pastiin layar key sudah muncul, coba lagi.")
         return
     end
