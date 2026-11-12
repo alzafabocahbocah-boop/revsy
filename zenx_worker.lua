@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.648"
+local VERSION = "9.649"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -14106,19 +14106,11 @@ local function cmd_cekui()
             end
             local nodeInfoStr = #semuaTeks > 0 and table.concat(semuaTeks, " | ") or "(semua kosong)"
             status = ("tidak ada tanda key (%d node)"):format(#nodesPkg)
-            if nodeInfoStr ~= terakhirNodeInfo then
-                -- node berubah, print ulang
-                info("[cekui #" .. putaran .. "] " .. status)
-                info("  node info: " .. nodeInfoStr)
-                terakhirStatus = status
-                terakhirNodeInfo = nodeInfoStr
-            elseif status ~= terakhirStatus then
-                info("[cekui #" .. putaran .. "] " .. status)
-                terakhirStatus = status
-            else
-                io.write(("\r[cekui #%d] %d node, tunggu...     "):format(putaran, #nodesPkg))
-                io.flush()
-            end
+            -- selalu print full info tiap putaran
+            info("[cekui #" .. putaran .. "] " .. status)
+            info("  node info: " .. nodeInfoStr)
+            terakhirStatus = status
+            terakhirNodeInfo = nodeInfoStr
         end
 
         os.execute("sleep 5")
