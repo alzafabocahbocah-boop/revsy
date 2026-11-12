@@ -1,9 +1,9 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.676 — key clienu: loop resize freeform sampai confirmed + fix cfg.pkgs sementara
+-- zenx_worker v9.677 — key clienu: hapus freeform, buka fullscreen langsung
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.676"
+local VERSION = "9.677"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10528,50 +10528,15 @@ if PERINTAH == "key" then
             sh_silent("su -c 'am force-stop " .. PKG .. "'")
             os.execute("sleep 2")
 
-            info("2. Buka clienu (freeform RF)...")
-            local kotakBypass = { L=RF_GRID[1].l, T=RF_GRID[1].t, R=RF_GRID[1].r, B=RF_GRID[1].b }
-            local dsAsli = cfg2.delta_split
-            local pkgsAsli = cfg2.pkgs
-            cfg2.delta_split = true  -- paksa windowingMode 5
-            cfg2.pkgs = PKG          -- biar grid_rf_delta di open_one cuma resize clienu
+            info("2. Buka clienu (fullscreen)...")
             open_one(cfg2, PKG, nil, "start-bypass")
-            cfg2.delta_split = dsAsli
-            cfg2.pkgs = pkgsAsli
             info("   tunggu load + dialog key (~45s)...")
             os.execute("sleep 45")
 
-            info("3. Fokuskan & fix posisi freeform RF...")
+            info("3. Fokuskan & cari tombol key...")
             pastikan_depan(PKG, 5)
-            os.execute("sleep 2")  -- tunggu Roblox selesai load penuh
-            -- paksa freeform: resize loop sampai ukuran window confirm 640x720
-            info("   paksa freeform (loop resize sampai confirmed)...")
-            do
-                local confirmed = false
-                for ri = 1, 10 do
-                    pcall(function() grid_rf_delta({PKG}, true) end)
-                    os.execute("sleep 1")
-                    -- cek ukuran window sekarang
-                    local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
-                    local wmap = parse_window_rf(dump)
-                    local inf = wmap[PKG]
-                    if inf then
-                        local w = (inf.r or 0) - (inf.l or 0)
-                        local h = (inf.b or 0) - (inf.t or 0)
-                        info(("   [freeform-cek %d/10] window %dx%d"):format(ri, w, h))
-                        if w >= 600 and w <= 680 and h >= 680 and h <= 760 then
-                            ok("   freeform confirmed: " .. w .. "x" .. h)
-                            confirmed = true
-                            break
-                        end
-                    else
-                        info(("   [freeform-cek %d/10] window belum kedeteksi"):format(ri))
-                    end
-                end
-                if not confirmed then
-                    warn("   freeform gak confirmed setelah 10x -- lanjut coba tap")
-                end
-            end
-            local link, _, _, ketLink = cari_tombol_key(cfg2, PKG, kotakBypass)
+            os.execute("sleep 1")
+            local link, _, _, ketLink = cari_tombol_key(cfg2, PKG)
             if not link then
                 warn("   gagal nemu tombol key: " .. tostring(ketLink) .. " -- ulang dari awal")
                 goto continue
