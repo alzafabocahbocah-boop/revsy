@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.644"
+local VERSION = "9.645"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -14063,6 +14063,25 @@ local function cmd_cekui()
             status = table.concat(bagian, " | ")
             ok(("[cekui #%d] KETEMU %d node KEY di %s:"):format(putaran, #ketemu, pkg:gsub("com%.roblox%.","")))
             for _, b in ipairs(bagian) do ok("  " .. b) end
+
+            -- auto-tap: cari node pertama yang punya koordinat, tap dalam 5 detik
+            local tapTarget = nil
+            for _, h in ipairs(ketemu) do
+                if h.cx and h.cy then tapTarget = h; break end
+            end
+            if tapTarget then
+                info(("  >> sentuh (%d,%d) dalam 5 detik..."):format(tapTarget.cx, tapTarget.cy))
+                os.execute("sleep 5")
+                local tapRes = sh(("su -c 'input tap %d %d' 2>&1"):format(tapTarget.cx, tapTarget.cy)) or ""
+                if tapRes == "" then
+                    ok(("  >> TAP OK (%d,%d)"):format(tapTarget.cx, tapTarget.cy))
+                else
+                    warn(("  >> TAP gagal: %s"):format(tapRes:sub(1,80)))
+                end
+            else
+                warn("  >> bounds tidak terbaca, skip tap")
+            end
+
             terakhirStatus = status
         elseif #nodesPkg == 0 then
             status = "pkg tidak ada di UI dump (native GL / belum di depan)"
