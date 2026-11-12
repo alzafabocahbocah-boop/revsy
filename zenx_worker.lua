@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.642"
+local VERSION = "9.643"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10911,6 +10911,58 @@ if PERINTAH == "arceus" then
         end
     end
     print("== SELESAI arceus ==")
+    return
+end
+
+-- v9.643: zenx new lite 1 / new lite 1-4 -- ZETSU.DELTA.LITE.NN-version.apk
+if PERINTAH == "new" and (arg[2] or ""):lower() == "lite" then
+    local rentang = arg[3] or ""
+    local nums = {}
+    local lo, hi = rentang:match("^(%d+)%s*%-%s*(%d+)$")
+    if lo then for i = tonumber(lo), tonumber(hi) do nums[#nums + 1] = i end
+    else for n in rentang:gmatch("%d+") do nums[#nums + 1] = tonumber(n) end end
+    if #nums == 0 then
+        print("Pakai: zenx new lite 1      -- install slot 1")
+        print("       zenx new lite 1-4    -- install slot 1 sampai 4")
+        print("       zenx new lite 2 4    -- install slot 2 dan 4")
+        return
+    end
+    for _, n in ipairs(nums) do
+        if n < 1 or n > 4 then
+            print("Slot " .. n .. " gak ada (hanya slot 1-4)."); return
+        end
+    end
+
+    print("== DOWNLOAD ZETSU DELTA LITE: slot " .. rentang .. " ==")
+    print("ambil daftar rilis GitHub...")
+    local rel = sh_tmo("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null", 30) or ""
+    if rel == "" or not rel:find("assets") then
+        print("GAGAL ambil daftar rilis. Cek koneksi."); return
+    end
+
+    for _, n in ipairs(nums) do
+        local nn = string.format("%02d", n)
+        local label = "delta-lite-" .. nn
+        local outApk = "/sdcard/deltalite" .. nn .. ".apk"
+        local url = rel:match('"(https://[^"]*ZETSU%.DELTA%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        if not url then
+            print("[" .. label .. "] URL gak ketemu di rilis (skip).")
+        else
+            print("[" .. label .. "] download (~100MB, sabar)...")
+            os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 30 '" .. url .. "' -o '" .. outApk .. "' 2>/dev/null")
+            local szRaw = sh("su -c 'stat -c%s \"" .. outApk .. "\" 2>/dev/null' 2>/dev/null") or "0"
+            local sz = tonumber((szRaw:gsub("%s", ""))) or 0
+            if sz < 50000000 then
+                print("[" .. label .. "] download GAGAL/partial (" .. math.floor(sz/1048576) .. "MB) -> SKIP")
+            else
+                print("[" .. label .. "] " .. math.floor(sz/1048576) .. "MB, install...")
+                local r = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -S " .. sz .. "' 2>&1") or ""
+                print("[" .. label .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
+            end
+            sh("rm -f '" .. outApk .. "' 2>/dev/null")
+        end
+    end
+    print("== SELESAI new lite ==")
     return
 end
 
