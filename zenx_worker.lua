@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.649"
+local VERSION = "9.650"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -3326,41 +3326,8 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     end
                 end
 
-                local pilih = nil
-                do
-                    local function cookie_pkg(pkg)
-                        local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
-                        local cmd = ("su -c %s 2>/dev/null"):format(shq(
-                            "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
-                            " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\""))
-                        local h = io.popen(cmd)
-                        local c = h and h:read("*all") or ""
-                        if h then h:close() end
-                        return cookie_terpanjang(c or "")
-                    end
-                    local listBypass = list
-                    if only and type(only) == "table" then
-                        listBypass = {}
-                        for _, p in ipairs(list) do if only[p] then listBypass[#listBypass+1] = p end end
-                        if #listBypass == 0 then listBypass = list end
-                    elseif PKGS_AKTIF and #PKGS_AKTIF > 0 then
-                        listBypass = PKGS_AKTIF
-                    end
-                    -- v9.588: cek_cookie_roblox dimatiin di sini (curl ke Roblox API bisa trigger captcha)
-                    -- pakai client pertama yang punya cookie valid (_|WARNING ada), gak cek ke server Roblox
-                    for _, pkg in ipairs(listBypass) do
-                        local ck = cookie_pkg(pkg)
-                        if ck and ck ~= "" and ck:find("_|WARNING") then
-                            pilih = pkg
-                            info("  pakai " .. pkg:gsub("com%.roblox%.","") .. " buat ambil key (cookie ada)")
-                            break
-                        end
-                    end
-                    if not pilih then
-                        pilih = listBypass[1]
-                        info("  gak ada cookie valid -> pakai " .. pilih:gsub("com%.roblox%.","") .. " (fallback)")
-                    end
-                end
+                local pilih = "com.roblox.clienu"
+                info("  pakai clienu buat ambil key (fixed)")
 
                 pcall(function()
                     sh_silent("su -c 'am force-stop " .. pilih .. "'")
