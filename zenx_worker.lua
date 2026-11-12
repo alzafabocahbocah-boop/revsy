@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.669"
+local VERSION = "9.670"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1116,7 +1116,7 @@ local function cari_tombol_key(cfg, pkg, kotakOverride)
         fx, fy = tonumber(fx), tonumber(fy)
         if fx and fy then
             info(("    key_tap dari config: fx=%.3f fy=%.3f -> langsung dipakai (skip sapu)"):format(fx, fy))
-            for _ = 1, 10 do
+            for _ = 1, 2 do
                 urut[#urut+1] = { fx, fy, dari_config = true }
             end
             adaKalibrasi = true
