@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.656"
+local VERSION = "9.657"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -8862,30 +8862,34 @@ if PERINTAH == "ukur" then
     end
 
     print()
-    info("Sekarang cari tombol key-nya...")
-    local link, fx, fy, ket = cari_tombol_key(cfg, pkg)
-    if not link then
-        err("Gagal: " .. tostring(ket))
-        info("Pastiin client-nya emang lagi minta key (lisensi udah dihapus?).")
+    info("Sekarang TAP tombol key-nya sendiri...")
+    print(C.BOLD..C.Y.."   >>> PENCET TOMBOL GET KEY SEKARANG <<<"..C.N)
+    print(C.D.."   direkam 60 detik. Pastiin layar key udah muncul."..C.N)
+    print()
+
+    local kotak2 = jendela_kotak(pkg)
+    if not kotak2 then
+        err("Gagal baca kotak jendela untuk rekam.")
         return
     end
-    ok(("Ketemu!  %s"):format(ket))
-    ok(("Titik tombol: %.3f , %.3f  -- kesimpen di %s"):format(fx, fy, TAP_FILE))
+    local hasil, sebabR = rekam_sentuh(pkg, kotak2, 60)
+    if not hasil then
+        err("Gagal rekam: " .. tostring(sebabR))
+        info("Pastiin layar key sudah muncul, coba lagi.")
+        return
+    end
+    local fx, fy = hasil.fx, hasil.fy
+    ok(("Kerekam di layar (%d,%d) -> pecahan %.3f , %.3f"):format(hasil.X, hasil.Y, fx, fy))
+
+    local kunci_grid = ("%dx%d"):format(lebar, tinggi)
+    if tap_simpan(kunci_grid, fx, fy) then
+        ok(("Kesimpen: %s -> %.3f , %.3f  (di %s)"):format(kunci_grid, fx, fy, TAP_FILE))
+    else
+        warn("Gagal nyimpen ke " .. TAP_FILE)
+    end
     print()
     info("Ulangi buat ukuran lain:  zenx ukur " .. target .. " 6")
     info("Liat semua yang udah kesimpen:  cat ~/" .. TAP_FILE)
-    print()
-
-    info("Sekalian diproses jadi kunci...")
-    local kunci, sebab = bypass_kunci(cfg, link, false)
-    if kunci then
-        ok("KUNCI: " .. kunci)
-        local wok, wket = tulis_lisensi(cfg, kunci)
-        if wok then ok("Ditulis ke Delta: " .. wket)
-        else warn("Gagal nulis lisensi: " .. tostring(wket)) end
-    else
-        warn("Bypass gagal: " .. tostring(sebab))
-    end
     print()
     return
 end
