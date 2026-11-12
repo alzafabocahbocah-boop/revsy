@@ -1,9 +1,9 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.677 — key clienu: hapus freeform, buka fullscreen langsung
+-- zenx_worker v9.678 — key clienu: pakai tata_satu (App Cloner prefs) buat atur grid 2x2
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.677"
+local VERSION = "9.678"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10528,7 +10528,27 @@ if PERINTAH == "key" then
             sh_silent("su -c 'am force-stop " .. PKG .. "'")
             os.execute("sleep 2")
 
-            info("2. Buka clienu (fullscreen)...")
+            info("2. Atur grid 2x2 & buka clienu...")
+            local kotakBypass
+            do
+                local basis = { PKG }
+                for _, p in ipairs(split(cfg2.pkgs)) do
+                    if p ~= PKG and #basis < 4 then basis[#basis+1] = p end
+                end
+                local DUMMY = { "com.roblox.clienv","com.roblox.clienw","com.roblox.clienx" }
+                for _, dp in ipairs(DUMMY) do
+                    if #basis >= 4 then break end
+                    basis[#basis+1] = dp
+                end
+                local peta = grid_hitung(cfg2, basis)
+                if peta and peta[PKG] then
+                    kotakBypass = peta[PKG]
+                    tata_satu(PKG, kotakBypass, true)
+                    info(("   grid 2x2: kotak [%d,%d]-[%d,%d] %dx%d"):format(
+                        kotakBypass.L, kotakBypass.T, kotakBypass.R, kotakBypass.B,
+                        kotakBypass.R - kotakBypass.L, kotakBypass.B - kotakBypass.T))
+                end
+            end
             open_one(cfg2, PKG, nil, "start-bypass")
             info("   tunggu load + dialog key (~45s)...")
             os.execute("sleep 45")
@@ -10536,7 +10556,7 @@ if PERINTAH == "key" then
             info("3. Fokuskan & cari tombol key...")
             pastikan_depan(PKG, 5)
             os.execute("sleep 1")
-            local link, _, _, ketLink = cari_tombol_key(cfg2, PKG)
+            local link, _, _, ketLink = cari_tombol_key(cfg2, PKG, kotakBypass)
             if not link then
                 warn("   gagal nemu tombol key: " .. tostring(ketLink) .. " -- ulang dari awal")
                 goto continue
