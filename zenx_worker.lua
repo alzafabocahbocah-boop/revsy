@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.652"
+local VERSION = "9.653"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10453,17 +10453,15 @@ if PERINTAH == "key" then
 
         info("2. Buka clienu...")
         open_one(cfg2, PKG, nil, "key-clienu")
-        local msk, lama, sbb = tunggu_masuk_game(PKG, 150, nil)
-        if msk then
-            ok(("   masuk game setelah %ds"):format(lama))
-        else
-            warn("   gak kedeteksi masuk game (" .. tostring(sbb) .. ") -- lanjut tetap")
-        end
+        info("   tunggu clienu load (~30s)...")
+        os.execute("sleep 30")
 
         info("3. Tunggu dialog key nongol (~18s)...")
         os.execute("sleep 18")
 
-        info("4. Cari & tap tombol key...")
+        info("4. Fokuskan clienu ke depan & cari tombol key...")
+        pastikan_depan(PKG, 5)
+        os.execute("sleep 1")
         local link, fx, fy, ketLink = cari_tombol_key(cfg2, PKG)
         if not link then
             warn("   gagal nemu tombol key: " .. tostring(ketLink))
