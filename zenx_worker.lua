@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.672"
+local VERSION = "9.673"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10528,7 +10528,10 @@ if PERINTAH == "key" then
 
             info("2. Buka clienu (freeform RF)...")
             local kotakBypass = { L=RF_GRID[1].l, T=RF_GRID[1].t, R=RF_GRID[1].r, B=RF_GRID[1].b }
+            local dsAsli = cfg2.delta_split
+            cfg2.delta_split = true  -- paksa windowingMode 5
             open_one(cfg2, PKG, nil, "start-bypass")
+            cfg2.delta_split = dsAsli
             info("   tunggu load + dialog key (~45s)...")
             os.execute("sleep 45")
             info("   fix posisi freeform RF...")
