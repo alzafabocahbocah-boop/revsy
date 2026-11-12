@@ -3,7 +3,7 @@
 -- zenx_worker v9.640 — scan upkgstat di Workspace/Workspace (subfolder double Arceus X)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.657"
+local VERSION = "9.658"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -8862,16 +8862,23 @@ if PERINTAH == "ukur" then
     end
 
     print()
-    info("Sekarang TAP tombol key-nya sendiri...")
-    print(C.BOLD..C.Y.."   >>> PENCET TOMBOL GET KEY SEKARANG <<<"..C.N)
-    print(C.D.."   direkam 60 detik. Pastiin layar key udah muncul."..C.N)
-    print()
-
     local kotak2 = jendela_kotak(pkg)
     if not kotak2 then
         err("Gagal baca kotak jendela untuk rekam.")
         return
     end
+
+    info("Siap-siap TAP tombol GET KEY...")
+    for sisa = 5, 1, -1 do
+        io.write(("\r   mulai rekam dalam %d detik... (lihat layar client)"):format(sisa))
+        io.flush()
+        os.execute("sleep 1")
+    end
+    io.write("\r" .. string.rep(" ", 60) .. "\r"); io.flush()
+    print(C.BOLD..C.Y.."   >>> REKAM AKTIF -- PENCET TOMBOL GET KEY SEKARANG <<<"..C.N)
+    print(C.D.."   direkam 60 detik."..C.N)
+    print()
+
     local hasil, sebabR = rekam_sentuh(pkg, kotak2, 60)
     if not hasil then
         err("Gagal rekam: " .. tostring(sebabR))
