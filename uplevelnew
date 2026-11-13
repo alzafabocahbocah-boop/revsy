@@ -4005,19 +4005,36 @@ do
     -- guard ini justru bikin swap tidak connect ulang. Tiap inject selalu connect fresh.
     _G._ZenxDSSwapConnected = true
     task.spawn(function()
-        -- v8.776: pisah log — swap biasa ke addLog, DS-DBG (jalur/shape) ke panel kanan saja
+        -- v8.776: pisah log — DS status/debug ke panel kanan, swap biasa ke addLog
         local function tsLog(msg)
             local s = tostring(msg)
-            if s:find("DS%-DBG",1,true) then
-                dbgLog(s)  -- DS debug jalur → panel kanan saja
+            if s:find("DS%-DBG",1,true) or s:find("DS ",1,true) or s:find("ERR:",1,true) or s:find("ds2",1,true) then
+                dbgLog("[DS] "..s)  -- DS status + debug → panel kanan
+                addLog("[swap] "..s)  -- tetap di addLog juga biar gak hilang
             else
-                addLog("[swap] "..s)  -- swap biasa → addLog saja
+                addLog("[swap] "..s)
             end
         end
         if not ge2 then tsLog("ERR: ge2 nil"); _G._ZenxDSSwapConnected = false; return end
+        -- v8.776: log semua child ge2 untuk diagnosa (mungkin nama beda di server baru)
+        pcall(function()
+            local names = {}
+            for _, c in ipairs(ge2:GetChildren()) do names[#names+1] = c.Name end
+            tsLog("DS-DBG ge2 children: "..table.concat(names, ", "):sub(1,120))
+        end)
         local ds2 = ge2:WaitForChild("DataStream", 15)
-        if not ds2 then tsLog("ERR: DataStream nil"); _G._ZenxDSSwapConnected = false; return end
-        tsLog("ds2 ON")
+        if not ds2 then
+            tsLog("ERR: DataStream nil (timeout 15s)")
+            -- v8.776: coba nama alternatif
+            pcall(function()
+                for _, c in ipairs(ge2:GetChildren()) do
+                    tsLog("DS-DBG ge2 child: "..c.Name.." ["..c.ClassName.."]")
+                end
+            end)
+            _G._ZenxDSSwapConnected = false
+            return
+        end
+        tsLog("ds2 ON — class="..ds2.ClassName)
 
         -- animStr trigger: T-Rex=roar, Peacock=fan, Spider=weave
         local SWAP_ANIM = { fan=true, roar=true, weave=true }
