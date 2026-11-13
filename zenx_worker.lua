@@ -1,9 +1,9 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.684 — semua varian Arceus baru (v5/Neo/NEO) di-cover lewat ARCEUS_NEW_NAMES
+-- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.684"
+local VERSION = "9.685"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -8509,13 +8509,15 @@ function jalankan_home(cfg, pkgMau)
 end
 
 local PERINTAH = (arg and arg[1] or ""):lower()
-if PERINTAH == "seed" or PERINTAH == "market" or PERINTAH == "farm" or PERINTAH == "gag1" then
+_CMD.seed = function()  -- v9.685
     if not arg then arg = {} end
     arg[2] = PERINTAH   -- preset -> arg[2] (dibaca PRESET_ARG di handler pasang)
     PERINTAH = "pasang"
 end
+if PERINTAH == "seed" or PERINTAH == "market" or PERINTAH == "farm" or PERINTAH == "gag1" then _CMD.seed(); return end
 
-if PERINTAH == "daftar-cek" then
+
+_CMD.daftar_cek = function()  -- v9.685
     local function jalankan_daftar_cek()
         local cfg = load_config()
         if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
@@ -8563,8 +8565,10 @@ if PERINTAH == "daftar-cek" then
     jalankan_daftar_cek()
     return
 end
+if PERINTAH == "daftar-cek" then _CMD.daftar_cek(); return end
 
-if PERINTAH == "masuk" then
+
+_CMD.masuk = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
     local BROOKHAVEN = "4924922222"
@@ -8598,8 +8602,11 @@ if PERINTAH == "masuk" then
     end
     return
 end
+if PERINTAH == "masuk" then _CMD.masuk(); return end
 
-if PERINTAH == "game" then
+
+local _CMD = {}  -- v9.685: dispatch table (fix 200-local limit)
+_CMD.game = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
     local rng = arg and arg[2] or ""
@@ -8611,10 +8618,10 @@ if PERINTAH == "game" then
     local pkgMau, total = pkg_dari_range(cfg, rng)
     if #pkgMau == 0 then err("Gak ada client di range '" .. rng .. "'. Total: " .. total); return end
     jalankan_game_muter(pkgMau)
-    return
 end
+if PERINTAH == "game" then _CMD.game(); return end
 
-if PERINTAH == "home" then
+_CMD.home = function()  -- v9.685
     local cfg = load_config()
     if not cfg then
         err("Config belum ada. Path dicoba: " .. _config_paths_dicoba)
@@ -8632,10 +8639,10 @@ if PERINTAH == "home" then
     local pkgMau, total = pkg_dari_range(cfg, rng)
     if #pkgMau == 0 then err("Gak ada client di range '" .. rng .. "'. Total: " .. total); return end
     jalankan_home(cfg, pkgMau)
-    return
 end
+if PERINTAH == "home" then _CMD.home(); return end
 
-if PERINTAH == "set" then
+_CMD.set = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
     local target = arg and arg[2] or ""
@@ -8691,10 +8698,10 @@ if PERINTAH == "set" then
     info("   zenx tap " .. target .. " 0.823 0.723 2 5")
     info("Terus cek papan klipnya:  zenx key")
     print()
-    return
 end
+if PERINTAH == "set" then _CMD.set(); return end
 
-local function cmd_catat()
+_CMD.catat = function()
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
     local target = arg and arg[2] or ""
@@ -8876,9 +8883,9 @@ local function cmd_catat()
     return
 end
 
-if PERINTAH == "catat" then cmd_catat() end
+if PERINTAH == "catat" then _CMD.catat() end
 
-if PERINTAH == "uji" then
+_CMD.uji = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
     local target = arg and arg[2] or ""
@@ -8925,10 +8932,10 @@ if PERINTAH == "uji" then
     info("ADA reaksi (apa pun)  -> pencetan NYAMPE, lanjut:  zenx cari " .. target)
     info("NOL reaksi semua      -> pencetan gak nyampe, kabarin gua")
     print()
-    return
 end
+if PERINTAH == "uji" then _CMD.uji(); return end
 
-if PERINTAH == "ukur" then
+_CMD.ukur = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
 
@@ -9027,10 +9034,10 @@ if PERINTAH == "ukur" then
     info("Ulangi buat ukuran lain:  zenx ukur " .. target .. " 6")
     info("Liat semua yang udah kesimpen:  cat ~/" .. TAP_FILE)
     print()
-    return
 end
+if PERINTAH == "ukur" then _CMD.ukur(); return end
 
-if PERINTAH == "cari" then
+_CMD.cari = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
 
@@ -9094,10 +9101,10 @@ if PERINTAH == "cari" then
         warn("Gagal nulis ke Delta: " .. tostring(wket))
     end
     print()
-    return
 end
+if PERINTAH == "cari" then _CMD.cari(); return end
 
-if PERINTAH == "pantau" then
+_CMD.pantau = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
 
@@ -9189,10 +9196,10 @@ if PERINTAH == "pantau" then
         info("Uji dulu:  zenx tap " .. target .. " <x> <y> 2 5")
     end
     print()
-    return
 end
+if PERINTAH == "pantau" then _CMD.pantau(); return end
 
-if PERINTAH == "rekam" then
+_CMD.rekam = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
 
@@ -9247,10 +9254,10 @@ if PERINTAH == "rekam" then
     info("Kalau bener, simpen di zenx_worker_config.lua:")
     info(('   key_tap="%.3f,%.3f",'):format(hasil.fx, hasil.fy))
     print()
-    return
 end
+if PERINTAH == "rekam" then _CMD.rekam(); return end
 
-if PERINTAH == "dpi" then
+_CMD.dpi = function()  -- v9.685
     if not shell_nyalakan() then
         err("Shell root gak nyala. Cek RF udah rooted + izin su.") return
     end
@@ -9288,11 +9295,11 @@ if PERINTAH == "dpi" then
         print("  " .. out:gsub("\n", "\n  "))
         print("")
         print("  (kalau tampilan aneh, `zenx dpi reset` buat balikin)")
-        return
     end
 end
+if PERINTAH == "dpi" then _CMD.dpi(); return end
 
-if PERINTAH == "grid" then
+_CMD.grid = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
     if cfg.auto_grid ~= true then
@@ -9386,10 +9393,10 @@ if PERINTAH == "grid" then
     end
     print("")
     info("Selesai. Cek ulang: `zenx grid` (tunggu ~30s biar client kebuka penuh).")
-    return
 end
+if PERINTAH == "grid" then _CMD.grid(); return end
 
-if PERINTAH == "grafis" then
+_CMD.grafis = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
     local pkgs = split(cfg.pkgs or "")
@@ -9424,10 +9431,10 @@ if PERINTAH == "grafis" then
     end
     print("")
     info(("Total: %d di game, %d out/home (dari %d client)"):format(diGame, out, #pkgs))
-    return
 end
+if PERINTAH == "grafis" then _CMD.grafis(); return end
 
-if PERINTAH == "buka" and not tonumber(arg and arg[2] or "") then
+_CMD.buka = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
     local target = arg and arg[2] or ""
@@ -9574,10 +9581,10 @@ if PERINTAH == "buka" and not tonumber(arg and arg[2] or "") then
     end
     print("")
     info("Semua cara udah dicoba. Cara mana yang MASUK + gak ganggu client lain?")
-    return
 end
+if PERINTAH == "buka" and not tonumber(arg and arg[2] or "") then _CMD.buka(); return end
 
-if PERINTAH == "tap" then
+_CMD.tap = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
 
@@ -9641,10 +9648,10 @@ if PERINTAH == "tap" then
     info("Kalau PAS: cek papan klip udah keisi link key belum, terus simpen di config:")
     info(('   key_tap="%.2f,%.2f"'):format(fx, fy))
     print()
-    return
 end
+if PERINTAH == "tap" then _CMD.tap(); return end
 
-if PERINTAH == "lisensi" or PERINTAH == "license" then
+_CMD.lisensi = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
 
@@ -9881,8 +9888,9 @@ function cek_ck_getps(cookie)
     if kode == "401" then return "dead", nil end
     return "error", ("kode=%s"):format(kode or "?")
 end
+if PERINTAH == "lisensi" or PERINTAH == "license" then _CMD.lisensi(); return end
 
-if PERINTAH == "cekplace" then
+_CMD.cekplace = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config gak ada."); return end
     print(C.BOLD .. C.C .. "\n=== CEK PLACE (id game -> nama dunia) ===\n" .. C.N)
@@ -9922,10 +9930,10 @@ if PERINTAH == "cekplace" then
     end
     os.remove(tmp)
     print()
-    return
 end
+if PERINTAH == "cekplace" then _CMD.cekplace(); return end
 
-if PERINTAH == "getps" then
+_CMD.getps = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config gak ada."); return end
     print(C.BOLD .. C.C .. "\n=== ZENX GETPS (ambil PS link per akun) ===\n" .. C.N)
@@ -10126,10 +10134,10 @@ if PERINTAH == "getps" then
     print()
     ok(("Selesai: %d dapet PS, %d gagal."):format(dapet, gagal))
     info("Worker bakal masuk PS masing-masing akun (kalau ps_link kesimpen).")
-    return
 end
+if PERINTAH == "getps" then _CMD.getps(); return end
 
-if PERINTAH == "rejoin-log" then
+_CMD.rejoin_log = function()  -- v9.685
     local sub = arg and arg[2] or ""
     local RJ = "/sdcard/zenx_rejoin.log"
     if sub == "clear" or sub == "hapus" then
@@ -10172,10 +10180,10 @@ if PERINTAH == "rejoin-log" then
     print()
     info("Tempel ini ke chat -- biar tau baris mana yang bikin rejoin bareng.")
     info("Hapus: zenx rejoin-log clear")
-    return
 end
+if PERINTAH == "rejoin-log" then _CMD.rejoin_log(); return end
 
-if PERINTAH == "denyut" then
+_CMD.denyut = function()  -- v9.685
     print(C.BOLD .. C.C .. "\n=== ZENX DENYUT (kapan terakhir tiap akun) ===\n" .. C.N)
     local sekarang = os.time()
     local jamNow = os.date("%H:%M:%S")
@@ -10220,10 +10228,10 @@ if PERINTAH == "denyut" then
     info("isi = umur dari timestamp DALAM file (yg script tulis)")
     info("mtime = umur dari kapan file terakhir DIUBAH (metadata OS)")
     info("FRESH = <2 menit (script jalan) | MATI = >2 menit (disconnect)")
-    return
 end
+if PERINTAH == "denyut" then _CMD.denyut(); return end
 
-if PERINTAH == "logcat" then
+_CMD.logcat = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
     print(C.BOLD .. C.C .. "\n=== ZENX LOGCAT (history disconnect) ===\n" .. C.N)
@@ -10282,10 +10290,10 @@ if PERINTAH == "logcat" then
     info("267/save data = kick (rejoin). 285 = keluar sendiri (normal).")
     info("Hapus history:  zenx logcat clear")
     info("Tempel hasil ini ke chat biar tau pola disconnect-nya.")
-    return
 end
+if PERINTAH == "logcat" then _CMD.logcat(); return end
 
-if PERINTAH == "logcat-live" then
+_CMD.logcat_live = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
     local daftar = split(cfg.pkgs)
@@ -10375,10 +10383,10 @@ if PERINTAH == "logcat-live" then
     print()
     info("Kode 267 = kena KICK (rejoin). Kode 285 = keluar sendiri (normal, gak usah rejoin).")
     info("Tempel hasil ini ke chat biar tau pola disconnect-nya.")
-    return
 end
+if PERINTAH == "logcat-live" then _CMD.logcat_live(); return end
 
-if PERINTAH == "intip" then
+_CMD.intip = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
 
@@ -10454,16 +10462,18 @@ if PERINTAH == "intip" then
     info("Kalau penilaiannya SALAH, kirim daftar teks di atas ke Claude.")
     info("Atau tambah sendiri:  key_tanda=\"Kata A,Kata B\"  di config")
     print()
-    return
 end
+if PERINTAH == "intip" then _CMD.intip(); return end
 
 -- v9.568: alias "zenx auto key" = "zenx key watch"
-if PERINTAH == "auto" and (arg and arg[2] or ""):lower() == "key" then
+_CMD.auto = function()  -- v9.685
     PERINTAH = "key"
     if arg then arg[2] = "watch" end
 end
+if PERINTAH == "auto" and (arg and arg[2] or ""):lower() == "key" then _CMD.auto(); return end
 
-if PERINTAH == "key" then
+
+_CMD.key = function()  -- v9.685
     local a2 = arg and arg[2] or ""
 
     if a2:lower() == "set" then
@@ -10816,10 +10826,10 @@ if PERINTAH == "key" then
         end
     end
     print()
-    return
 end
+if PERINTAH == "key" then _CMD.key(); return end
 
-if PERINTAH == "status" then
+_CMD.status = function()  -- v9.685
     local pid = baca_pid()
     if pid_hidup(pid) then
         ok("Jalan (pid " .. pid .. ")")
@@ -10828,10 +10838,10 @@ if PERINTAH == "status" then
         warn("Gak jalan.")
         if pid then info("PID file basi (" .. pid .. ") -> dihapus"); hapus(PID_FILE) end
     end
-    return
 end
+if PERINTAH == "status" then _CMD.status(); return end
 
-if PERINTAH == "cek" and arg and arg[2] == "clien" then
+_CMD.cek_clien = function()  -- v9.685
     print(C.BOLD..C.C.."\n=== ZENX CEK CLIEN (no mercy <-> akun) ===\n"..C.N)
     local pkgs = pindai_pkgs()
     if #pkgs == 0 then warn("Gak ada client Roblox kepasang."); return end
@@ -10862,10 +10872,10 @@ if PERINTAH == "cek" and arg and arg[2] == "clien" then
             C.C, akun, C.N, st))
     end
     print("")
-    return
 end
+if PERINTAH == "cek" and arg and arg[2] == "clien" then _CMD.cek_clien(); return end
 
-if PERINTAH == "cek" then
+_CMD.cek = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
     print(C.BOLD..C.C.."\n=== DIAGNOSA DETEKSI CLIENT ===\n"..C.N)
@@ -10887,10 +10897,10 @@ if PERINTAH == "cek" then
     end
     print(C.D.."Kalau 'proses idup: YA' tapi 'dibaca worker: OFF', kirim baris"..C.N)
     print(C.D.."ActivityRecord di atas -- dari situ ketauan penanda yang bener."..C.N)
-    return
 end
+if PERINTAH == "cek" then _CMD.cek(); return end
 
-if PERINTAH == "hapus" then
+_CMD.hapus = function()  -- v9.685
     print(C.BOLD .. C.C .. ">>> ZENX HAPUS -- uninstall semua client <<<" .. C.N)
     local pkgs = pindai_pkgs()
     if #pkgs == 0 then
@@ -10930,10 +10940,10 @@ if PERINTAH == "hapus" then
     print("")
     ok(("SELESAI: %d client kehapus%s"):format(
         ok_n, gagal_n > 0 and (", " .. gagal_n .. " gagal") or ""))
-    return
 end
+if PERINTAH == "hapus" then _CMD.hapus(); return end
 
-if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
+_CMD.download_arceus = function()  -- v9.685
     local rentang = arg[3] or ""
     local nums = {}
     local lo, hi = rentang:match("^(%d+)%s*%-%s*(%d+)$")
@@ -10970,26 +10980,24 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
         end
     end
     print("== SELESAI download arceus ==")
-    return
 end
+if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then _CMD.download_arceus(); return end
 
 -- v9.601: zenx arceus 1 / arceus 2 / arceus 1-2
 -- v9.617: fix zenx arceus -- hapus $ anchor (bukan valid Lua pattern), pakai gmatch candidate loop biar slot1 gak match _clone
 -- v9.618: zenx arceus pm install pakai -d (allow downgrade)
 -- v9.628: zenx fixup -- regenerasi script up ke versi terbaru
-if PERINTAH == "fixup" then
-    tulis_skrip_up(false)
-    return
-end
+_CMD.fixup = function() tulis_skrip_up(false) end  -- v9.685
+if PERINTAH == "fixup" then _CMD.fixup(); return end
 
 -- v9.619: zenx uld -- shortcut jalanin uplevelnew-delta langsung
 -- v9.620: zenx level <delta> / zenx up3.8kg <delta> -- jalanin script dengan nilai delta
-if PERINTAH == "uld" then
+_CMD.uld = function()  -- v9.685
     local lua = os.getenv("PREFIX") and (os.getenv("PREFIX") .. "/bin/lua5.4") or "lua5.4"
     print("Jalanin uplevelnew-delta...")
     os.execute(lua .. " " .. (arg and arg[0] or "zenx_worker.lua") .. " pasang uplevelnew-delta")
-    return
 end
+if PERINTAH == "uld" then _CMD.uld(); return end
 
 -- v9.624: shortcut script lengkap (10=arceus, 15=delta)
 local function zenx_script_shortcut(perintah, sub)
@@ -11015,17 +11023,21 @@ local function zenx_script_shortcut(perintah, sub)
     return true
 end
 
-if PERINTAH == "level" then
+_CMD.level = function()  -- v9.685
     zenx_script_shortcut("level", arg and arg[2] or "")
     return
 end
+if PERINTAH == "level" then _CMD.level(); return end
 
-if PERINTAH == "up3.8kg" or PERINTAH == "telur" or PERINTAH == "up6kg" or PERINTAH == "market" then
+
+_CMD.up3_8kg = function()  -- v9.685
     zenx_script_shortcut(PERINTAH, arg and arg[2] or "")
     return
 end
+if PERINTAH == "up3.8kg" or PERINTAH == "telur" or PERINTAH == "up6kg" or PERINTAH == "market" then _CMD.up3_8kg(); return end
 
-if PERINTAH == "arceus" then
+
+_CMD.arceus = function()  -- v9.685
     local rentang = arg[2] or ""
     local nums = {}
     local lo, hi = rentang:match("^(%d+)%s*%-%s*(%d+)$")
@@ -11099,11 +11111,11 @@ if PERINTAH == "arceus" then
         end
     end
     print("== SELESAI arceus ==")
-    return
 end
+if PERINTAH == "arceus" then _CMD.arceus(); return end
 
 -- v9.643: zenx new lite 1 / new lite 1-4 -- ZETSU.DELTA.LITE.NN-version.apk
-if PERINTAH == "new" and (arg[2] or ""):lower() == "lite" then
+_CMD.new = function()  -- v9.685
     local rentang = arg[3] or ""
     local nums = {}
     local lo, hi = rentang:match("^(%d+)%s*%-%s*(%d+)$")
@@ -11153,9 +11165,11 @@ if PERINTAH == "new" and (arg[2] or ""):lower() == "lite" then
     print("== SELESAI new lite ==")
     return
 end
+if PERINTAH == "new" and (arg[2] or ""):lower() == "lite" then _CMD.new(); return end
+
 
 -- v9.602: zenx lite 1 / lite 1-4 -- ZETSU.ARCEUS.LITE.NN-version.apk
-if PERINTAH == "lite" then
+_CMD.lite = function()  -- v9.685
     local rentang = arg[2] or ""
     local nums = {}
     local lo, hi = rentang:match("^(%d+)%s*%-%s*(%d+)$")
@@ -11206,8 +11220,10 @@ if PERINTAH == "lite" then
     print("== SELESAI lite ==")
     return
 end
+if PERINTAH == "lite" then _CMD.lite(); return end
 
-if PERINTAH == "delta" then
+
+_CMD.delta = function()  -- v9.685
     local rentang = arg[2] or ""
     local nums = {}
     local lo, hi = rentang:match("^(%d+)%s*%-%s*(%d+)$")
@@ -11259,8 +11275,10 @@ if PERINTAH == "delta" then
     print("== SELESAI download delta ==")
     return
 end
+if PERINTAH == "delta" then _CMD.delta(); return end
 
-if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then
+
+_CMD.update_3 = function()  -- v9.685
     print("== UPDATE ARCEUS (yg udah ada doang) ==")
     local cntRaw = sh("su -c 'pm list packages 2>/dev/null' 2>/dev/null | grep -c 'com.roblox.clien'") or "0"
     local cnt = tonumber((cntRaw:gsub("%s", ""))) or 0
@@ -11296,8 +11314,10 @@ if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then
     print("== SELESAI update arceus ==")
     return
 end
+if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then _CMD.update_3(); return end
 
-if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then
+
+_CMD.refresh = function()  -- v9.685
     print("== REFRESH ARCEUS (hapus lama + install ulang fresh) ==")
     local list = sh("su -c 'pm list packages 2>/dev/null' 2>/dev/null | grep 'com.roblox.clien'") or ""
     local items = {}
@@ -11356,8 +11376,10 @@ if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then
     print("Kalau ada yg gak ke-login: 'zenx login <akun> <client>' manual.")
     return
 end
+if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then _CMD.refresh(); return end
 
-if PERINTAH == "tembak" and arg and (arg[2] or ""):lower() == "arceus" then
+
+_CMD.tembak = function()  -- v9.685
     print("== TEMBAK COOKIE ARCEUS (dari backup lokal, gak lewat panel) ==")
     local list = sh("su -c 'pm list packages 2>/dev/null' 2>/dev/null | grep 'com.roblox.clien'") or ""
     local pkgs = {}
@@ -11389,8 +11411,10 @@ if PERINTAH == "tembak" and arg and (arg[2] or ""):lower() == "arceus" then
     print(("== SELESAI: %d di-tembak, %d gagal =="):format(ok_n, gagal_n))
     return
 end
+if PERINTAH == "tembak" and arg and (arg[2] or ""):lower() == "arceus" then _CMD.tembak(); return end
 
-if PERINTAH == "loginsemua" and arg and (arg[2] or ""):lower() == "arceus" then
+
+_CMD.loginsemua = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config gak ada. `pasang <preset>` dulu."); return end
     print("== LOGIN SEMUA (minta cookie ke panel + inject) ==")
@@ -11459,8 +11483,10 @@ if PERINTAH == "loginsemua" and arg and (arg[2] or ""):lower() == "arceus" then
     print("== SELESAI. Jalanin 'zenx' buat buka client (udah ke-login). ==")
     return
 end
+if PERINTAH == "loginsemua" and arg and (arg[2] or ""):lower() == "arceus" then _CMD.loginsemua(); return end
 
-if PERINTAH == "stop" then
+
+_CMD.stop = function()  -- v9.685
     local pid = baca_pid()
     if not pid_hidup(pid) then
         warn("Gak ada yang jalan.")
@@ -11506,8 +11532,10 @@ if PERINTAH == "stop" then
     ok("Dimatiin paksa.")
     return
 end
+if PERINTAH == "stop" then _CMD.stop(); return end
 
-if PERINTAH == "pasang" then
+
+_CMD.pasang_2 = function()  -- v9.685
     local REPO = REPO_WORKER
     local RUMAH = os.getenv("HOME") or "."
     local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
@@ -11685,8 +11713,10 @@ if PERINTAH == "pasang" then
 
     PERINTAH = ""
 end
+if PERINTAH == "pasang" then _CMD.pasang_2(); return end
 
-if PERINTAH == "riwayat" then
+
+_CMD.riwayat = function()  -- v9.685
     local f = io.open(RIW.file, "r")
     if not f then
         err("Belum ada catatan: " .. RIW.file)
@@ -11796,8 +11826,10 @@ if PERINTAH == "riwayat" then
     info("Berkas mentahnya: " .. RIW.file)
     return
 end
+if PERINTAH == "riwayat" then _CMD.riwayat(); return end
 
-if PERINTAH == "update" and arg and arg[2] == "clien" then
+
+_CMD.update_2 = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config gak ada. Jalanin `pasang <preset>` dulu."); return end
     local target = arg[3]
@@ -11811,6 +11843,8 @@ if PERINTAH == "update" and arg and arg[2] == "clien" then
     update_delta_ke(cfg, target, true)
     return
 end
+if PERINTAH == "update" and arg and arg[2] == "clien" then _CMD.update_2(); return end
+
 
 if (PERINTAH == "update" or PERINTAH == "scan") and not (arg and (arg[2] == "mercy" or arg[2] == "clien")) then
     print(C.BOLD .. C.C .. "\n=== ZENX UPDATE -- scan client kepasang ===\n" .. C.N)
@@ -12339,7 +12373,7 @@ function cek_delta_versi(cfg)
     return v
 end
 
-if PERINTAH == "update" and (arg and arg[2] == "mercy") then
+_CMD.update = function()  -- v9.685
     local versiBaru = arg and arg[3]
     if not versiBaru or versiBaru == "" then
         err("Kasih versi: zenx update mercy <versi>\n" ..
@@ -12351,8 +12385,10 @@ if PERINTAH == "update" and (arg and arg[2] == "mercy") then
     update_delta_ke(cfg, versiBaru, true)
     return
 end
+if PERINTAH == "update" and (arg and arg[2] == "mercy") then _CMD.update(); return end
 
-if PERINTAH == "download" and (arg and arg[2] == "mercy") then
+
+_CMD.download_3 = function()  -- v9.685
     local BASE = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/"
     local HOME = os.getenv("HOME") or "."
     print(C.BOLD .. C.C .. "\n=== DOWNLOAD MERCY (GitHub Releases worker_64) ===\n" .. C.N)
@@ -12442,6 +12478,8 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     ok(("Selesai: %d pasang, %d gagal, %d dilewat (udah keinstall)"):format(sukses, gagal, dilewat))
     return
 end
+if PERINTAH == "download" and (arg and arg[2] == "mercy") then _CMD.download_3(); return end
+
 
 function download_apk_url(cfg, namaFile, label)
     if not namaFile or namaFile == "" then err("[apk] nama file kosong"); return false end
@@ -12478,7 +12516,7 @@ function download_apk_url(cfg, namaFile, label)
     end
 end
 
-if PERINTAH == "download" and (arg and arg[2] == "vpn") then
+_CMD.download_2 = function()  -- v9.685
     local BASE = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/"
     local NAMA = "com-cloudflare-onedotonedotonedotone-3837-66752135-ef8b2f5f382404189163d4d14c3128a8.apk"
     local HOME = os.getenv("HOME") or "."
@@ -12519,8 +12557,10 @@ if PERINTAH == "download" and (arg and arg[2] == "vpn") then
     end
     return
 end
+if PERINTAH == "download" and (arg and arg[2] == "vpn") then _CMD.download_2(); return end
 
-if PERINTAH == "pasang" and (arg and arg[2] == "mercy") or (PERINTAH == "mercy") then
+
+_CMD.pasang = function()  -- v9.685
     local dir = (arg and arg[3]) or (arg and arg[2] ~= "mercy" and arg[2]) or "/sdcard/Download"
     print(C.BOLD .. C.C .. "\n=== ZENX PASANG MERCY (dari " .. dir .. ") ===\n" .. C.N)
 
@@ -12573,8 +12613,10 @@ if PERINTAH == "pasang" and (arg and arg[2] == "mercy") or (PERINTAH == "mercy")
     ok(("Selesai: %d pasang, %d gagal"):format(sukses, gagal))
     return
 end
+if PERINTAH == "pasang" and (arg and arg[2] == "mercy") or (PERINTAH == "mercy") then _CMD.pasang(); return end
 
-local function cmd_download()
+
+_CMD.download = function()
     local NX = "https://node-x.my.id"
     local cfg = load_config()
     local adaCfg = (cfg ~= nil)
@@ -12819,7 +12861,7 @@ local function cmd_download()
     return
 end
 
-if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then cmd_download() end
+if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then _CMD.download() end
 
 function cek_cookie_roblox(cookie)
     if not cookie or cookie == "" then
@@ -12890,8 +12932,7 @@ function uname_dari_cookie(ck)
     return raw:match("uname..([a-zA-Z0-9_]+)")
 end
 
-if PERINTAH == "login" and arg and arg[2] and
-   (arg[2] == "atas" or arg[2] == "bawah" or arg[2] == "random") then
+_CMD.login_2 = function()  -- v9.685
     local arah = arg[2]
     local cfg = load_config()
     if not cfg then err("Config gak ada. `pasang <preset>` dulu."); return end
@@ -12950,8 +12991,10 @@ if PERINTAH == "login" and arg and arg[2] and
     ok(("Selesai: %d client keisi%s"):format(terisi, poolHabis and " (pool habis)" or ""))
     return
 end
+if PERINTAH == "login" and arg and arg[2] and (arg[2] == "atas" or arg[2] == "bawah" or arg[2] == "random") then _CMD.login_2(); return end
 
-if PERINTAH == "ganti" then
+
+_CMD.ganti = function()  -- v9.685
     local arah = (arg and arg[2]) or "atas"
     if arah ~= "atas" and arah ~= "bawah" and arah ~= "random" then arah = "atas" end
     local cfg = load_config()
@@ -13018,8 +13061,10 @@ if PERINTAH == "ganti" then
     ok(("Selesai: %d client diganti%s"):format(ganti, poolHabis and " (pool habis)" or ""))
     return
 end
+if PERINTAH == "ganti" then _CMD.ganti(); return end
 
-if PERINTAH == "login" then
+
+_CMD.login = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config gak ada. `pasang <preset>` dulu."); return end
 
@@ -13203,8 +13248,10 @@ if PERINTAH == "login" then
     ok("Login " .. akun .. " -> " .. pkg:gsub("com%.roblox%.", "") .. ". Tunggu masuk game.")
     return
 end
+if PERINTAH == "login" then _CMD.login(); return end
 
-if PERINTAH == "buka" and tonumber(arg and arg[2] or "") then
+
+_CMD.buka_2 = function()  -- v9.685
     local n = math.max(1, math.min(20, math.floor(tonumber(arg[2]))))
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
@@ -13219,8 +13266,10 @@ if PERINTAH == "buka" and tonumber(arg and arg[2] or "") then
     ok(("Selesai -- %d client kebuka. Cek device kuat/RAM/lag. Tutup manual atau matiin app Termux."):format(#pkgs))
     return
 end
+if PERINTAH == "buka" and tonumber(arg and arg[2] or "") then _CMD.buka_2(); return end
 
-if PERINTAH == "pantaucookie" or PERINTAH == "catatakun" then
+
+_CMD.pantaucookie = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `pasang <preset>` dulu."); return end
     local SQ = "/data/data/com.termux/files/usr/bin/sqlite3"
@@ -13264,8 +13313,10 @@ if PERINTAH == "pantaucookie" or PERINTAH == "catatakun" then
     end
     return
 end
+if PERINTAH == "pantaucookie" or PERINTAH == "catatakun" then _CMD.pantaucookie(); return end
 
-if PERINTAH == "cekcookie" then
+
+_CMD.cekcookie = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
     local SQ = "/data/data/com.termux/files/usr/bin/sqlite3"
@@ -13307,8 +13358,10 @@ if PERINTAH == "cekcookie" then
     info("Status kesetor ke panel -- cek tab Cookie.")
     return
 end
+if PERINTAH == "cekcookie" then _CMD.cekcookie(); return end
 
-if PERINTAH == "cookie" then
+
+_CMD.cookie = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
 
@@ -13462,8 +13515,10 @@ if PERINTAH == "cookie" then
     end
     return
 end
+if PERINTAH == "cookie" then _CMD.cookie(); return end
 
-if PERINTAH == "captcha" then
+
+_CMD.captcha = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
     local client = arg and arg[2]
@@ -13507,8 +13562,10 @@ if PERINTAH == "captcha" then
     end
     return
 end
+if PERINTAH == "captcha" then _CMD.captcha(); return end
 
-if PERINTAH == "ceklayar" or PERINTAH == "cekcaptcha" then
+
+_CMD.ceklayar = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
     local client = arg and arg[2]
@@ -13596,8 +13653,10 @@ if PERINTAH == "ceklayar" or PERINTAH == "cekcaptcha" then
     ok("Diagnostik selesai. Tempel hasil ini ke Claude biar tau apa yg bisa dideteksi.")
     return
 end
+if PERINTAH == "ceklayar" or PERINTAH == "cekcaptcha" then _CMD.ceklayar(); return end
 
-if PERINTAH == "verif" or PERINTAH == "cekverif" then
+
+_CMD.verif = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
 
@@ -13712,8 +13771,10 @@ if PERINTAH == "verif" or PERINTAH == "cekverif" then
     print(C.D .. "  tebakan dari POLA, bukan bacaan captcha. Keputusan tetap di lo." .. C.N)
     return
 end
+if PERINTAH == "verif" or PERINTAH == "cekverif" then _CMD.verif(); return end
 
-if PERINTAH == "panel" or PERINTAH == "uji" then
+
+_CMD.panel = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
 
@@ -13885,8 +13946,10 @@ if PERINTAH == "panel" or PERINTAH == "uji" then
     print("")
     return
 end
+if PERINTAH == "panel" or PERINTAH == "uji" then _CMD.panel(); return end
 
-if PERINTAH == "script" or PERINTAH == "sc" then
+
+_CMD.script = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
 
@@ -13945,9 +14008,10 @@ if PERINTAH == "script" or PERINTAH == "sc" then
     print("")
     return
 end
+if PERINTAH == "script" or PERINTAH == "sc" then _CMD.script(); return end
 
-if PERINTAH == "layar" then
-    local function cmd_layar()
+
+_CMD.layar = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
 
@@ -14092,13 +14156,12 @@ if PERINTAH == "layar" then
     print("")
     print(C.D .. "  Tempel bagian 'YANG BEDA' ini -- itu udah cukup." .. C.N)
     print("")
-    end -- cmd_layar
-    cmd_layar()
-    return
 end
+if PERINTAH == "layar" then _CMD.layar(); return end
+
 
 -- v9.562: zenx full -- pindah Roblox dari stack freeform ke stack fullscreen
-if PERINTAH == "full" or PERINTAH == "fullscreen" then
+_CMD.full = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
 
@@ -14176,9 +14239,11 @@ if PERINTAH == "full" or PERINTAH == "fullscreen" then
     end
     return
 end
+if PERINTAH == "full" or PERINTAH == "fullscreen" then _CMD.full(); return end
+
 
 -- v9.642: cekui dipindah ke fungsi terpisah supaya locals tidak overflow main scope (limit 200)
-local function cmd_cekui()
+_CMD.cekui = function()
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
 
@@ -14307,9 +14372,9 @@ local function cmd_cekui()
         os.execute("sleep 5")
     end
 end
-if PERINTAH == "cekui" then cmd_cekui(); return end
+if PERINTAH == "cekui" then _CMD.cekui(); return end
 
-if PERINTAH ~= "" then
+_CMD.unknown_cmd = function()  -- v9.685
     err("Perintah '" .. PERINTAH .. "' gak dikenal di v" .. VERSION)
     print()
     info("Yang ada:")
@@ -14347,6 +14412,8 @@ if PERINTAH ~= "" then
     info("   curl -fsSL <repo>/zenx_worker.lua -o ~/zenx_worker.lua")
     return
 end
+if PERINTAH ~= "" then _CMD.unknown_cmd(); return end
+
 
 print(C.BOLD..C.C.."ZenX Worker v"..VERSION.." (Termux)\n"..C.N)
 
