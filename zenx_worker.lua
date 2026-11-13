@@ -469,6 +469,14 @@ local function arceus_new_path(sub)
             return p, nm
         end
     end
+    -- v9.687: fallback — cek folder root Arceus baru meski sub-folder belum ada
+    -- (Roblox belum pernah join jadi Workspace belum terbuat)
+    for _, nm in ipairs(ARCEUS_NEW_NAMES) do
+        local root = "/sdcard/" .. nm
+        if (sh("su -c '[ -d \"" .. root .. "\" ] && echo Y' 2>/dev/null") or ""):match("Y") then
+            return "/sdcard/" .. nm .. "/" .. sub, nm
+        end
+    end
     return nil, nil
 end
 
