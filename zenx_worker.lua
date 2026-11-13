@@ -8508,6 +8508,7 @@ function jalankan_home(cfg, pkgMau)
     ok(("HOME selesai: %d client ditembak Brookhaven + grid ukuran 6. Out manual kalau mau."):format(#pkgMau))
 end
 
+local _CMD = {}  -- v9.685: dispatch table (fix 200-local limit)
 local PERINTAH = (arg and arg[1] or ""):lower()
 _CMD.seed = function()  -- v9.685
     if not arg then arg = {} end
@@ -8605,7 +8606,6 @@ end
 if PERINTAH == "masuk" then _CMD.masuk(); return end
 
 
-local _CMD = {}  -- v9.685: dispatch table (fix 200-local limit)
 _CMD.game = function()  -- v9.685
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
