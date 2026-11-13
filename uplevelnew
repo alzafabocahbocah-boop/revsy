@@ -1,4 +1,5 @@
--- uplevelnew v8.777
+-- uplevelnew v8.779
+-- v8.779: debug panel — STATUS tiap 5s: T-Rex equip di ws vs fire count per UUID, Peacock fire count
 -- v8.777: fix Bahan ke-equip saat nobaku/nm0 — equipOneBahan di outer newloop hanya jalan saat timAktif=main
 -- v8.776: debug DS event — log args shape + jalur hit (flat vs deep) untuk diagnosa exe baru
 -- v8.775: panel GUI mengambang kanan — list pet milik per tipe, count + jumlah di workspace
@@ -4150,6 +4151,9 @@ do
                 seen[r8] = true
                 -- v8.750: cek apakah UUID milik kita — kalau bukan skip (pet akun lain di server)
                 local mine = isMyPetUUID(raw)
+                -- v8.779: track fire count per uuid (mine+asing)
+                _dsFireCnt[r8]  = (_dsFireCnt[r8] or 0) + 1
+                _dsFireLast[r8] = tick()
                 -- v8.751: log semua event masuk — mine/asing, supaya bisa verifikasi DS dari siapa
                 tsLog("DS "..anim.." uuid="..r8.." mine="..tostring(mine))
                 if not mine then
@@ -4258,6 +4262,76 @@ do
                     end)
                 end
             end
+        end
+
+        -- v8.779: per-UUID fire counter + equip status monitor
+        local _dsFireCnt  = {}  -- [r8] = jumlah kali fire DS event
+        local _dsFireLast = {}  -- [r8] = tick() terakhir fire
+        -- loop tiap 5s: log berapa T-Rex equip di ws vs berapa yang fire event
+        task.spawn(function()
+            while true do
+                task.wait(5)
+                -- kumpulkan T-Rex mine dari sesiPool
+                local myTrex = {}
+                for s = 1, 5 do
+                    local pool = sesiPool[s] or {}
+                    local slots = pool["T-Rex"] or {}
+                    for _, p in pairs(slots) do
+                        if p and p.uuid then
+                            local r8 = tostring(p.uuid):gsub("[{}%-]",""):sub(1,8)
+                            myTrex[r8] = true
+                        end
+                    end
+                end
+                local myPeacock = {}
+                for s = 1, 5 do
+                    local pool = sesiPool[s] or {}
+                    local slots = pool["Peacock"] or {}
+                    for _, p in pairs(slots) do
+                        if p and p.uuid then
+                            local r8 = tostring(p.uuid):gsub("[{}%-]",""):sub(1,8)
+                            myPeacock[r8] = true
+                        end
+                    end
+                end
+                -- cek yang ada di workspace (modelByUuid)
+                local now = tick()
+                local trexInWs, trexNoWs, trexNoFire = {}, {}, {}
+                for r8 in pairs(myTrex) do
+                    local inWs = modelByUuid and (modelByUuid[r8] or modelByUuid["{"..r8] or modelByUuid[r8.."-"])
+                    local fireN = _dsFireCnt[r8] or 0
+                    local lastF = _dsFireLast[r8]
+                    local agoBuf = lastF and string.format("%.0fs ago", now-lastF) or "never"
+                    if inWs then
+                        trexInWs[#trexInWs+1] = r8:sub(1,6).."(fire="..fireN.." last="..agoBuf..")"
+                    else
+                        trexNoWs[#trexNoWs+1] = r8:sub(1,6).."(fire="..fireN..")"
+                    end
+                    if fireN == 0 then trexNoFire[#trexNoFire+1] = r8:sub(1,6) end
+                end
+                local pcInWs = {}
+                for r8 in pairs(myPeacock) do
+                    local inWs = modelByUuid and (modelByUuid[r8] or modelByUuid["{"..r8])
+                    local fireN = _dsFireCnt[r8] or 0
+                    pcInWs[#pcInWs+1] = r8:sub(1,6).."(fire="..fireN..")"
+                end
+                local nMyTrex = 0; for _ in pairs(myTrex) do nMyTrex = nMyTrex + 1 end
+                dbgLog("[DS] [STATUS] T-Rex ws="..#trexInWs.."/"..nMyTrex.." noWs="..(#trexNoWs > 0 and table.concat(trexNoWs,",") or "ok").." noFire="..(#trexNoFire > 0 and table.concat(trexNoFire,",") or "ok"))
+                dbgLog("[DS] [STATUS] Peacock: "..table.concat(pcInWs,","))
+                if #trexInWs > 0 then
+                    dbgLog("[DS] [STATUS] ws: "..table.concat(trexInWs," | "))
+                end
+            end
+        end)
+
+        -- v8.779: hitung jumlah T-Rex di sesiPool
+        local function countPool(tipe)
+            local n = 0
+            for s = 1, 5 do
+                local slots = (sesiPool[s] or {})[tipe] or {}
+                for _, p in pairs(slots) do if p and p.uuid then n = n + 1 end end
+            end
+            return n
         end
 
         -- v8.679: connectDS — bisa dipanggil ulang saat reconnect
