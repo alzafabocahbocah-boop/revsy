@@ -11108,8 +11108,8 @@ if PERINTAH == "lite" then
         local nn = string.format("%02d", n)
         local label = "lite-" .. nn
         local outApk = "/sdcard/lite" .. nn .. ".apk"
-        -- pattern: ZETSU.ARCEUS.LITE.NN-versi.apk (double .apk di nama file)
-        local url = rel:match('"(https://[^"]*ZETSU%.ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        -- pattern: ZETSU.ARCEUS.LITE.VIP.NN-versi.apk
+        local url = rel:match('"(https://[^"]*ZETSU%.ARCEUS%.LITE%.VIP%.' .. nn .. '[^"]*%.apk)"')
         if not url then
             print("[" .. label .. "] URL gak ketemu di rilis (skip).")
         else
