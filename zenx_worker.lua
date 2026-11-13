@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.687 — fix crash "attempt to concatenate a nil value (local 'ak')" saat FORCE (fallback ak ke pkg)
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
@@ -3980,6 +3981,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             ckC = cookie_terpanjang(ckC or "")
             local ak = (ckC ~= "" and ckC:find("_|WARNING")) and uname_dari_cookie(ckC) or nil
             if not ak or ak == "" then ak = (mapAkun and mapAkun[pkg]) or baca_username(pkg) end
+            if not ak or ak == "" then ak = pkg end  -- v9.687: fallback ke pkg agar ak tdk nil
             local ckTerakhir = KICK_DIURUS["ck:" .. ak]
             local perluSetor = (type(ckTerakhir) ~= "number") or (os.time() - ckTerakhir >= 600)
             if ak and ak ~= "" and ak ~= "?" and perluSetor then
