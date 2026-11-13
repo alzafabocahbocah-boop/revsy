@@ -1,9 +1,9 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.683 — Arceus X v5 full support: semua path hardcode sudah cover Neo
+-- zenx_worker v9.684 — semua varian Arceus baru (v5/Neo/NEO) di-cover lewat ARCEUS_NEW_NAMES
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.683"
+local VERSION = "9.684"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -184,23 +184,18 @@ local function load_config()
                         cfg.pkgs = table.concat(arr, ",")
                     end
                     if not cfg.workspace_dir or cfg.workspace_dir == "" then
+                        local newPath = arceus_new_path("Workspace")
                         if cfg.executor == "arceus" then
-                            -- cek v5 (Neo) dulu, fallback v4
-                            local phN = io.popen("su -c '[ -d \"/sdcard/Arceus X v5/Workspace\" ] && echo Y' 2>/dev/null")
-                            local rN = phN and phN:read("*all") or ""; if phN then phN:close() end
-                            cfg.workspace_dir = rN:match("Y") and "/sdcard/Arceus X v5/Workspace" or "/sdcard/Arceus X/Workspace"
+                            cfg.workspace_dir = newPath or "/sdcard/Arceus X/Workspace"
                         else
-                            local ph = io.popen("su -c '[ -d \"/sdcard/Arceus X v5/Workspace\" ] && echo NEO || ([ -d \"/sdcard/Arceus X/Workspace\" ] && echo V4)' 2>/dev/null")
-                            local r = ph and ph:read("*all") or ""
-                            if ph then ph:close() end
-                            if r:match("NEO") then
+                            if newPath then
                                 cfg.executor      = "arceus"
-                                cfg.workspace_dir = "/sdcard/Arceus X v5/Workspace"
-                            elseif r:match("V4") then
+                                cfg.workspace_dir = newPath
+                            elseif (sh("su -c '[ -d \"/sdcard/Arceus X/Workspace\" ] && echo Y' 2>/dev/null") or ""):match("Y") then
                                 cfg.executor      = "arceus"
                                 cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
                             else
-                                                        cfg.executor      = cfg.executor or "delta"
+                                cfg.executor      = cfg.executor or "delta"
                                 cfg.workspace_dir = "/sdcard/Delta/Workspace"
                             end
                         end
@@ -464,9 +459,28 @@ function denyut_fresh_sec(cfg)
     if sl:find("HACT") then return 60 end   -- hact: denyut fresh 60s
     return 300
 end
+-- v9.684: varian nama folder Arceus versi baru (v5/Neo/NEO) — beda device beda nama
+local ARCEUS_NEW_NAMES = { "Arceus X v5", "Arceus X Neo", "Arceus X NEO" }
+-- kembalikan path folder Arceus versi baru yang ada di device (Workspace/Autoexec)
+local function arceus_new_path(sub)
+    for _, nm in ipairs(ARCEUS_NEW_NAMES) do
+        local p = "/sdcard/" .. nm .. "/" .. sub
+        if (sh("su -c '[ -d \"" .. p .. "\" ] && echo Y' 2>/dev/null") or ""):match("Y") then
+            return p, nm
+        end
+    end
+    return nil, nil
+end
+
 function denyut_dirs(cfg)
     local seen, dirs = {}, {}
-    local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace", "/sdcard/Arceus X v5/Workspace", "/storage/emulated/0/Delta/Workspace", "/storage/emulated/0/Arceus X/Workspace", "/storage/emulated/0/Arceus X v5/Workspace" }
+    -- kandidat dasar: Delta + Arceus v4 + semua varian Arceus baru
+    local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace",
+        "/storage/emulated/0/Delta/Workspace", "/storage/emulated/0/Arceus X/Workspace" }
+    for _, nm in ipairs(ARCEUS_NEW_NAMES) do
+        kandidat[#kandidat+1] = "/sdcard/" .. nm .. "/Workspace"
+        kandidat[#kandidat+1] = "/storage/emulated/0/" .. nm .. "/Workspace"
+    end
     -- v9.640: beberapa executor tulis file ke Workspace/Workspace (subfolder double) — tambah variant
     local extra = {}
     for _, d in ipairs(kandidat) do
@@ -485,7 +499,13 @@ function denyut_dirs(cfg)
     end
     -- v9.545: fallback manual glob kalau find gak nemu (find -L lambat/blocked di beberapa device)
     if #dirs <= 5 then
-        local globOut = sh("su -c 'for d in /sdcard/RobloxClone*/\"Arceus X\"/Workspace /sdcard/RobloxClone*/\"Arceus X v5\"/Workspace /sdcard/RobloxClone*/Delta/Workspace /storage/emulated/0/RobloxClone*/\"Arceus X\"/Workspace /storage/emulated/0/RobloxClone*/\"Arceus X v5\"/Workspace /storage/emulated/0/RobloxClone*/Delta/Workspace; do [ -d \"$d\" ] && echo \"$d\"; done 2>/dev/null'") or ""
+        -- bangun glob untuk semua varian Arceus baru
+        local arcGlobs = ""
+        for _, nm in ipairs(ARCEUS_NEW_NAMES) do
+            arcGlobs = arcGlobs .. " /sdcard/RobloxClone*/\"" .. nm .. "\"/Workspace"
+            arcGlobs = arcGlobs .. " /storage/emulated/0/RobloxClone*/\"" .. nm .. "\"/Workspace"
+        end
+        local globOut = sh("su -c 'for d in /sdcard/RobloxClone*/\"Arceus X\"/Workspace" .. arcGlobs .. " /sdcard/RobloxClone*/Delta/Workspace /storage/emulated/0/RobloxClone*/\"Arceus X\"/Workspace /storage/emulated/0/RobloxClone*/Delta/Workspace; do [ -d \"$d\" ] && echo \"$d\"; done 2>/dev/null'") or ""
         for line in globOut:gmatch("[^\n]+") do
             line = line:match("^%s*(.-)%s*$")
             if line ~= "" and not seen[line] then seen[line] = true; dirs[#dirs + 1] = line end
@@ -1469,14 +1489,23 @@ function sync_autoexec_clones(cfg)
     local LS = cfg and cfg.script_label or ""
     -- ambil loadstring yang sesuai label (MARKET/HACT/UPLEVEL/dll)
     -- default: pakai yang ada di clone001 sebagai referensi
-    -- coba referensi dari clone001 Arceus X v5 dulu, fallback v4
-    local refContent = sh("su -c 'cat \"/sdcard/RobloxClone001/Arceus X v5/autoexec/zenx.lua\" 2>/dev/null'") or ""
+    -- coba referensi dari clone001: semua varian Arceus baru dulu, lalu v4
+    local refContent = ""
+    for _, nm in ipairs(ARCEUS_NEW_NAMES) do
+        if refContent == "" then
+            refContent = sh("su -c 'cat \"/sdcard/RobloxClone001/" .. nm .. "/autoexec/zenx.lua\" 2>/dev/null'") or ""
+        end
+    end
     if refContent == "" then
         refContent = sh("su -c 'cat \"/sdcard/RobloxClone001/Arceus X/autoexec/zenx.lua\" 2>/dev/null'") or ""
     end
     if refContent == "" then
-        -- fallback: scan semua clone Arceus X v5 + v4, ambil yang ada isinya
-        local cloneOut = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec \\( -path \"*/RobloxClone*/Arceus X v5/*\" -o -path \"*/RobloxClone*/Arceus X/*\" \\) 2>/dev/null | sort'") or ""
+        -- fallback: scan semua clone semua varian, ambil yang ada isinya
+        local varPaths = "-path \"*/RobloxClone*/Arceus X/*\""
+        for _, nm in ipairs(ARCEUS_NEW_NAMES) do
+            varPaths = varPaths .. " -o -path \"*/RobloxClone*/" .. nm .. "/*\""
+        end
+        local cloneOut = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec \\( " .. varPaths .. " \\) 2>/dev/null | sort'") or ""
         for dir in cloneOut:gmatch("[^\n]+") do
             local c = sh("su -c 'cat \"" .. dir .. "/zenx.lua\" 2>/dev/null'") or ""
             if c ~= "" then refContent = c; break end
@@ -1486,8 +1515,12 @@ function sync_autoexec_clones(cfg)
         info("[autoexec-sync] referensi kosong, skip")
         return
     end
-    -- tulis ke semua clone yang autoexec-nya kosong (Neo + v4)
-    local cloneDirs = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec \\( -path \"*/RobloxClone*/Arceus X v5/*\" -o -path \"*/RobloxClone*/Arceus X/*\" \\) 2>/dev/null | sort'") or ""
+    -- tulis ke semua clone: semua varian Arceus baru + v4
+    local varPaths2 = "-path \"*/RobloxClone*/Arceus X/*\""
+    for _, nm in ipairs(ARCEUS_NEW_NAMES) do
+        varPaths2 = varPaths2 .. " -o -path \"*/RobloxClone*/" .. nm .. "/*\""
+    end
+    local cloneDirs = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec \\( " .. varPaths2 .. " \\) 2>/dev/null | sort'") or ""
     local filled, skipped = 0, 0
     local tmp = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/.zautoexec.tmp"
     local f = io.open(tmp, "w"); if f then f:write(refContent); f:close() end
@@ -2371,21 +2404,28 @@ local function tulis_autoexec(cfg, urlPanel)
         if not ft then warn("gagal bikin file tmp arceus"); return false end
         ft:write(loader); ft:close()
 
-        -- ambil semua folder RobloxClone*/Arceus X/Autoexec + Arceus X v5
-        local lsOut = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Autoexec /sdcard/RobloxClone*/\"Arceus X v5\"/Autoexec 2>/dev/null'")
-        local folders = {}
-        for line in lsOut:gmatch("[^\r\n]+") do
-            if line ~= "" then folders[#folders+1] = line end
+        -- ambil semua folder RobloxClone*/Arceus X/Autoexec + semua varian baru
+        local lsGlobs = "'/sdcard/RobloxClone*/\"Arceus X\"/Autoexec'"
+        for _, nm in ipairs(ARCEUS_NEW_NAMES) do
+            lsGlobs = lsGlobs .. " '/sdcard/RobloxClone*/\"" .. nm .. "\"/Autoexec'"
         end
-        -- tambah base path (non-clone)
-        for _, bp in ipairs({"/sdcard/Arceus X/Autoexec", "/sdcard/Arceus X v5/Autoexec"}) do
+        local lsOut = sh("su -c 'ls -d " .. lsGlobs .. " 2>/dev/null'")
+        local folders = {}
+        local seenF = {}
+        for line in lsOut:gmatch("[^\r\n]+") do
+            if line ~= "" and not seenF[line] then seenF[line]=true; folders[#folders+1] = line end
+        end
+        -- tambah base path (non-clone): v4 + semua varian baru
+        local basePaths = {"/sdcard/Arceus X/Autoexec"}
+        for _, nm in ipairs(ARCEUS_NEW_NAMES) do basePaths[#basePaths+1] = "/sdcard/" .. nm .. "/Autoexec" end
+        for _, bp in ipairs(basePaths) do
             local ex = sh("su -c '[ -d \"" .. bp .. "\" ] && echo Y' 2>/dev/null") or ""
-            if ex:find("Y") then folders[#folders+1] = bp end
+            if ex:find("Y") and not seenF[bp] then seenF[bp]=true; folders[#folders+1] = bp end
         end
         if #folders == 0 then
-            -- fallback: pilih Neo kalau ada, kalau gak v4
-            local isNeo = (sh("su -c '[ -d \"/sdcard/Arceus X v5/Autoexec\" ] && echo Y' 2>/dev/null") or ""):match("Y")
-            folders[1] = isNeo and "/sdcard/Arceus X v5/Autoexec" or "/sdcard/Arceus X/Autoexec"
+            -- fallback: pakai varian baru kalau ada, kalau gak v4
+            local fallback = arceus_new_path("Autoexec") or "/sdcard/Arceus X/Autoexec"
+            folders[1] = fallback
             warn("RobloxClone gak ketemu, fallback ke " .. folders[1])
         end
 
@@ -4239,12 +4279,12 @@ local function setup_otomatis(namaPreset)
     ok("Script: " .. cfg.script_label .. "  (" .. pre.url .. ")")
     if paksaArceus then
         cfg.executor = "arceus"
-        -- cek Neo dulu, fallback v4
-        local isNeo = (sh("su -c '[ -d \"/sdcard/Arceus X v5/Workspace\" ] && echo Y' 2>/dev/null") or ""):match("Y")
-        if isNeo then
-            cfg.workspace_dir = "/sdcard/Arceus X v5/Workspace"
-            cfg.autoexec_dir  = "/sdcard/Arceus X v5/Autoexec"
-            ok("Executor: ARCEUS X NEO/v5 (dipaksa via preset -arceus)")
+        -- cek semua varian Arceus baru dulu, fallback v4
+        local newWs, newNm = arceus_new_path("Workspace")
+        if newWs then
+            cfg.workspace_dir = newWs
+            cfg.autoexec_dir  = "/sdcard/" .. newNm .. "/Autoexec"
+            ok("Executor: " .. newNm .. " (dipaksa via preset -arceus)")
         else
             cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
             cfg.autoexec_dir  = "/sdcard/Arceus X/Autoexec"
@@ -4306,11 +4346,11 @@ local function setup_otomatis(namaPreset)
     cfg.disconnect_menit  = cfg.disconnect_menit or 3
     cfg.autoexec_dir      = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
     if not cfg.workspace_dir then
-        local adaNeo = (sh("su -c '[ -d \"/sdcard/Arceus X v5/Workspace\" ] && echo Y'") or ""):match("Y")
+        local newWs2 = arceus_new_path("Workspace")
         local adaV4  = (sh("su -c '[ -d \"/sdcard/Arceus X/Workspace\" ] && echo Y'") or ""):match("Y")
-        if adaNeo then
+        if newWs2 then
             cfg.executor      = "arceus"
-            cfg.workspace_dir = "/sdcard/Arceus X v5/Workspace"
+            cfg.workspace_dir = newWs2
         elseif adaV4 then
             cfg.executor      = "arceus"
             cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
@@ -10142,11 +10182,18 @@ if PERINTAH == "denyut" then
     info("Jam device sekarang: " .. jamNow .. "  (epoch " .. sekarang .. ")")
     print()
     local raw = ""
-    local ph = io.popen("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt \"/sdcard/Arceus X/Workspace/\"zenx_denyut_*.txt \"/sdcard/Arceus X v5/Workspace/\"zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null")
+    -- bangun daftar path denyut: Delta + Arceus v4 + semua varian baru
+    local denyutPaths = "/sdcard/Delta/Workspace/zenx_denyut_*.txt \"/sdcard/Arceus X/Workspace/\"zenx_denyut_*.txt"
+    local denyutInfo  = "/sdcard/Delta/Workspace/ + /sdcard/Arceus X/Workspace/"
+    for _, nm in ipairs(ARCEUS_NEW_NAMES) do
+        denyutPaths = denyutPaths .. " \"/sdcard/" .. nm .. "/Workspace/\"zenx_denyut_*.txt"
+        denyutInfo  = denyutInfo  .. " + /sdcard/" .. nm .. "/Workspace/"
+    end
+    local ph = io.popen("su -c 'for f in " .. denyutPaths .. "; do [ -f \"$f\" ] && echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null")
     if ph then raw = ph:read("*all") or ""; ph:close() end
     if raw == "" then
         warn("Gak ada file denyut (script belum nulis / path beda).")
-        info("Path dicek: /sdcard/Delta/Workspace/ + /sdcard/Arceus X/Workspace/ + /sdcard/Arceus X v5/Workspace/ zenx_denyut_*.txt")
+        info("Path dicek: " .. denyutInfo .. " zenx_denyut_*.txt")
         return
     end
     local ada = 0
