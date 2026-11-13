@@ -204,7 +204,13 @@ ok "Worker keunduh: ${VER:-?}"
 case "$PRESET" in
     *arceus*)
         printf "\n${B}[+] Tulis loader Arceus (auto-exe script)${N}\n"
-        AX_DIR="/sdcard/Arceus X/Autoexec"
+        # v9.686: cover semua varian path Arceus X (v4, v5, Neo, NEO)
+        AX_DIR=""
+        for _D in "/sdcard/Arceus X/Autoexec" "/sdcard/Arceus X v5/Autoexec" "/sdcard/Arceus X Neo/Autoexec" "/sdcard/Arceus X NEO/Autoexec" "/sdcard/ArcaeusX/Autoexec"; do
+            if su -c "[ -d \"$_D\" ]" 2>/dev/null; then AX_DIR="$_D"; break; fi
+        done
+        # kalau belum ada, default ke v4 (akan dibuat)
+        [ -z "$AX_DIR" ] && AX_DIR="/sdcard/Arceus X/Autoexec"
         AX_LOADER="$AX_DIR/zenx.lua"
         # v9.291: pilih script ronihub sesuai preset. hact-arceus -> hact,
         # panen-arceus -> panen, sisanya -> market.
