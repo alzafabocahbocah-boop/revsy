@@ -1,9 +1,9 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.679 — lite: pattern APK ganti ke ZETSU.ARCEUS.LITE.VIP.NN
+-- zenx_worker v9.680 — tambah support path Arceus X Neo (v5) di workspace & autoexec
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.679"
+local VERSION = "9.680"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -460,7 +460,7 @@ function denyut_fresh_sec(cfg)
 end
 function denyut_dirs(cfg)
     local seen, dirs = {}, {}
-    local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace", "/storage/emulated/0/Delta/Workspace", "/storage/emulated/0/Arceus X/Workspace" }
+    local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace", "/sdcard/Arceus X Neo/Workspace", "/storage/emulated/0/Delta/Workspace", "/storage/emulated/0/Arceus X/Workspace", "/storage/emulated/0/Arceus X Neo/Workspace" }
     -- v9.640: beberapa executor tulis file ke Workspace/Workspace (subfolder double) — tambah variant
     local extra = {}
     for _, d in ipairs(kandidat) do
@@ -479,7 +479,7 @@ function denyut_dirs(cfg)
     end
     -- v9.545: fallback manual glob kalau find gak nemu (find -L lambat/blocked di beberapa device)
     if #dirs <= 5 then
-        local globOut = sh("su -c 'for d in /sdcard/RobloxClone*/\"Arceus X\"/Workspace /sdcard/RobloxClone*/Delta/Workspace /storage/emulated/0/RobloxClone*/\"Arceus X\"/Workspace /storage/emulated/0/RobloxClone*/Delta/Workspace; do [ -d \"$d\" ] && echo \"$d\"; done 2>/dev/null'") or ""
+        local globOut = sh("su -c 'for d in /sdcard/RobloxClone*/\"Arceus X\"/Workspace /sdcard/RobloxClone*/\"Arceus X Neo\"/Workspace /sdcard/RobloxClone*/Delta/Workspace /storage/emulated/0/RobloxClone*/\"Arceus X\"/Workspace /storage/emulated/0/RobloxClone*/\"Arceus X Neo\"/Workspace /storage/emulated/0/RobloxClone*/Delta/Workspace; do [ -d \"$d\" ] && echo \"$d\"; done 2>/dev/null'") or ""
         for line in globOut:gmatch("[^\n]+") do
             line = line:match("^%s*(.-)%s*$")
             if line ~= "" and not seen[line] then seen[line] = true; dirs[#dirs + 1] = line end
@@ -2361,11 +2361,16 @@ local function tulis_autoexec(cfg, urlPanel)
         if not ft then warn("gagal bikin file tmp arceus"); return false end
         ft:write(loader); ft:close()
 
-        -- ambil semua folder RobloxClone*/Arceus X/Autoexec
-        local lsOut = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Autoexec 2>/dev/null'")
+        -- ambil semua folder RobloxClone*/Arceus X/Autoexec + Arceus X Neo
+        local lsOut = sh("su -c 'ls -d /sdcard/RobloxClone*/\"Arceus X\"/Autoexec /sdcard/RobloxClone*/\"Arceus X Neo\"/Autoexec 2>/dev/null'")
         local folders = {}
         for line in lsOut:gmatch("[^\r\n]+") do
             if line ~= "" then folders[#folders+1] = line end
+        end
+        -- tambah base path (non-clone)
+        for _, bp in ipairs({"/sdcard/Arceus X/Autoexec", "/sdcard/Arceus X Neo/Autoexec"}) do
+            local ex = sh("su -c '[ -d \"" .. bp .. "\" ] && echo Y' 2>/dev/null") or ""
+            if ex:find("Y") then folders[#folders+1] = bp end
         end
         if #folders == 0 then
             folders[1] = "/sdcard/Arceus X/Autoexec"
