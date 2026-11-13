@@ -2880,8 +2880,10 @@ do
                 return ok and result or false
             end
 
-            local function processHits(hits)
+local function processHits(hits)
                 local seen = {}
+                -- v2.41: kumpulin dulu semua job valid, baru jalanin sequential (1 pet selesai baru next)
+                local jobs = {}
                 for _, hit in ipairs(hits) do
                     local r, animStr = hit[1], hit[2]
                     local anim = tostring(animStr):lower()
@@ -2950,21 +2952,24 @@ do
                         ssLog("ERR: fungsi equip nil — coba re-inject script")
                         continue
                     end
-                    task.spawn(function()
+                    -- v2.41: simpan job, bukan langsung spawn
+                    local capturedRaw, capturedRaw8, capturedAnim = raw, raw8, anim
+                    local capturedUnequip, capturedEquip = _unequip, _equip
+                    local jobFn; jobFn = function()
                         pcall(function()
                             -- semua animasi: langsung unequip 1x → equip
-                            _unequip(raw)
+                            capturedUnequip(capturedRaw)
                             task.wait(0.03)
-                            _equip(raw)
+                            capturedEquip(capturedRaw)
                             -- position check: hanya untuk fan
-                            if anim == "fan" then
+                            if capturedAnim == "fan" then
                                 local CENTER = Vector3.new(10,3,12)
                                 local done, spawnPos = false, nil
                                 local conn2 = workspace.DescendantAdded:Connect(function(d)
                                     if done or not d:IsA("Model") then return end
                                     if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
                                     local dn = d.Name; local d8 = dn:sub(1,1)=="{" and dn:sub(2,9) or dn:sub(1,8)
-                                    if d8 ~= raw8 then return end
+                                    if d8 ~= capturedRaw8 then return end
                                     task.defer(function()
                                         if done then return end
                                         pcall(function() local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart"); if p then spawnPos=p.Position end end)
@@ -2975,10 +2980,24 @@ do
                                 while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
                                 conn2:Disconnect()
                                 if spawnPos and (spawnPos-CENTER).Magnitude > 2.0 then
-                                    _unequip(raw); task.wait(0.03); _equip(raw)
+                                    capturedUnequip(capturedRaw); task.wait(0.03); capturedEquip(capturedRaw)
                                 end
                             end
                         end)
+                    end
+                    jobs[#jobs+1] = { fn = jobFn, anim = capturedAnim }
+                end
+                -- v2.42: sort jobs — frill selalu duluan
+                table.sort(jobs, function(a, b)
+                    return a.anim == "frill" and b.anim ~= "frill"
+                end)
+                -- v2.41: jalanin semua job sequential dalam 1 task.spawn
+                if #jobs > 0 then
+                    task.spawn(function()
+                        for i, job in ipairs(jobs) do
+                            job.fn()
+                            if i < #jobs then task.wait(0.1) end
+                        end
                     end)
                 end
             end
