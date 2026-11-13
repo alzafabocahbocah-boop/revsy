@@ -1,9 +1,9 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.681 — Arceus X Neo (v5) full support: auto-detect, workspace, autoexec, denyut, sync-clone
+-- zenx_worker v9.682 — Arceus X Neo (v5) full support: semua path hardcode sudah cover Neo
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.681"
+local VERSION = "9.682"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -200,7 +200,7 @@ local function load_config()
                                 cfg.executor      = "arceus"
                                 cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
                             else
-                                cfg.executor      = cfg.executor or "delta"
+                                                        cfg.executor      = cfg.executor or "delta"
                                 cfg.workspace_dir = "/sdcard/Delta/Workspace"
                             end
                         end
@@ -2383,7 +2383,9 @@ local function tulis_autoexec(cfg, urlPanel)
             if ex:find("Y") then folders[#folders+1] = bp end
         end
         if #folders == 0 then
-            folders[1] = "/sdcard/Arceus X/Autoexec"
+            -- fallback: pilih Neo kalau ada, kalau gak v4
+            local isNeo = (sh("su -c '[ -d \"/sdcard/Arceus X Neo/Autoexec\" ] && echo Y' 2>/dev/null") or ""):match("Y")
+            folders[1] = isNeo and "/sdcard/Arceus X Neo/Autoexec" or "/sdcard/Arceus X/Autoexec"
             warn("RobloxClone gak ketemu, fallback ke " .. folders[1])
         end
 
@@ -4304,8 +4306,12 @@ local function setup_otomatis(namaPreset)
     cfg.disconnect_menit  = cfg.disconnect_menit or 3
     cfg.autoexec_dir      = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
     if not cfg.workspace_dir then
-        local adaArceus = (sh("su -c '[ -d \"/sdcard/Arceus X/Workspace\" ] && echo Y'") or ""):match("Y")
-        if adaArceus then
+        local adaNeo = (sh("su -c '[ -d \"/sdcard/Arceus X Neo/Workspace\" ] && echo Y'") or ""):match("Y")
+        local adaV4  = (sh("su -c '[ -d \"/sdcard/Arceus X/Workspace\" ] && echo Y'") or ""):match("Y")
+        if adaNeo then
+            cfg.executor      = "arceus"
+            cfg.workspace_dir = "/sdcard/Arceus X Neo/Workspace"
+        elseif adaV4 then
             cfg.executor      = "arceus"
             cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
         else
