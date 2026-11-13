@@ -1,6 +1,6 @@
 -- uplevelnew v8.776
 -- v8.776: debug DS event — log args shape + jalur hit (flat vs deep) untuk diagnosa exe baru
--- v8.775: BillboardGui label nama pet milik sendiri di atas kepala (AlwaysOnTop, loop 2s)
+-- v8.775: panel GUI mengambang kanan — list pet milik per tipe, count + jumlah di workspace
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -252,7 +252,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.775"  -- v8.775: sembunyiin debug panel kanan (Visible=false)
+local VERSION = "v8.776"  -- v8.776: panel pet GUI mengambang kanan + debug DS event (Visible=false)
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -11124,75 +11124,205 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- v8.775: BillboardGui — label nama pet milik sendiri di atas kepala
--- Loop tiap 2s, build milik table dari sesiPool, pasang label ke modelByUuid
--- AlwaysOnTop=true biar kelihatan di executor gelap
+-- v8.775: Panel GUI mengambang kanan — tampilkan pet milik sendiri per sesi
+-- Loop tiap 2s, baca sesiPool → tampilkan tipe + count per sesi
+-- Bisa di-drag, double tap copy, tombol X untuk hide
 -- ============================================================
-task.spawn(function()
-    local TAG = "_ZenxPetLabel"
-    local function labelPet(model, nama, warna)
-        -- hapus label lama kalau ada
-        local lama = model:FindFirstChild(TAG)
-        if lama then lama:Destroy() end
-        local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart")
-        if not root then return end
-        local bb = Instance.new("BillboardGui")
-        bb.Name = TAG
-        bb.Adornee = root
-        bb.Size = UDim2.new(0, 90, 0, 24)
-        bb.StudsOffset = Vector3.new(0, 3.5, 0)
-        bb.AlwaysOnTop = true
-        bb.ResetOnSpawn = false
-        bb.Parent = model
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1, 0, 1, 0)
-        lbl.BackgroundTransparency = 1
-        lbl.TextColor3 = warna or Color3.fromRGB(255, 255, 255)
-        lbl.TextStrokeTransparency = 0.3
-        lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-        lbl.Font = Enum.Font.GothamBold
-        lbl.TextScaled = true
-        lbl.Text = nama or "?"
-        lbl.Parent = bb
-    end
-    local function hapusLabel(model)
-        local lama = model:FindFirstChild(TAG)
-        if lama then lama:Destroy() end
-    end
-    while true do
-        task.wait(2)
-        pcall(function()
-            -- bangun tabel milik: uuid (string dengan {}) -> nama tipe
-            local milik = {}
-            for s = 1, 5 do
-                local pool = sesiPool[s] or {}
-                for tipe, slots in pairs(pool) do
-                    for _, entry in pairs(slots) do
-                        if entry and entry.uuid then
-                            milik[tostring(entry.uuid)] = tipe
-                        end
-                    end
-                end
-            end
-            -- loop modelByUuid, pasang atau hapus label
-            local mbu = modelByUuid
-            if type(mbu) ~= "table" then return end
-            for ustr, model in pairs(mbu) do
-                -- cek model masih valid (belum di-destroy)
-                local ok = pcall(function() return model.Parent end)
-                if ok then
-                    local tipe = milik[ustr]
-                    if tipe then
-                        -- pet milik kita, pastikan label ada
-                        if not model:FindFirstChild(TAG) then
-                            labelPet(model, tipe, petCol(tipe))
-                        end
-                    else
-                        -- bukan milik kita (pet orang lain di server), hapus label kalau ada
-                        hapusLabel(model)
-                    end
-                end
+do
+    local _petPanelBox = nil
+    local _petPanelFr  = nil
+
+    pcall(function()
+        -- hapus panel lama kalau reload
+        if _G._ZenxPetPanel then pcall(function() _G._ZenxPetPanel:Destroy() end) end
+
+        local pg = plr:WaitForChild("PlayerGui", 5)
+        if not pg then return end
+
+        local sg = mk("ScreenGui", {
+            Name = "ZenxPetGui", ResetOnSpawn = false,
+            DisplayOrder = 100, IgnoreGuiInset = true,
+            Parent = pg
+        })
+        _G._ZenxPetPanel = sg
+
+        -- frame mengambang kanan bawah
+        local fr = mk("Frame", {
+            Size = UDim2.new(0, 180, 0, 220),
+            Position = UDim2.new(1, -190, 1, -240),
+            BackgroundColor3 = Color3.fromRGB(8, 8, 8),
+            BackgroundTransparency = 0.1,
+            BorderSizePixel = 0,
+            Parent = sg
+        })
+        mk("UICorner", {CornerRadius = UDim.new(0, 10), Parent = fr})
+        mk("UIStroke", {Color = Color3.fromRGB(78, 214, 204), Thickness = 1.2, Transparency = 0.4, Parent = fr})
+        _petPanelFr = fr
+
+        -- title bar
+        local tb = mk("Frame", {
+            Size = UDim2.new(1, 0, 0, 26),
+            BackgroundColor3 = Color3.fromRGB(14, 14, 14),
+            BorderSizePixel = 0, Parent = fr
+        })
+        mk("UICorner", {CornerRadius = UDim.new(0, 10), Parent = tb})
+        mk("Frame", {Size=UDim2.new(1,0,0,10), Position=UDim2.new(0,0,1,-10),
+            BackgroundColor3=Color3.fromRGB(14,14,14), BorderSizePixel=0, Parent=tb})
+
+        local titLbl = mk("TextLabel", {
+            Size = UDim2.new(1, -32, 1, 0),
+            Position = UDim2.new(0, 8, 0, 0),
+            BackgroundTransparency = 1,
+            Text = "🐾 PET KU",
+            Font = FONT_B, TextSize = 11,
+            TextColor3 = Color3.fromRGB(78, 214, 204),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = tb
+        })
+
+        -- tombol X (hide)
+        local xBtn = mk("TextButton", {
+            Size = UDim2.new(0, 24, 0, 20),
+            Position = UDim2.new(1, -26, 0, 3),
+            BackgroundColor3 = Color3.fromRGB(28, 28, 28),
+            Text = "✕", Font = FONT_B, TextSize = 11,
+            TextColor3 = Color3.fromRGB(180, 80, 80),
+            AutoButtonColor = true, Parent = tb
+        })
+        mk("UICorner", {CornerRadius = UDim.new(0, 4), Parent = xBtn})
+        xBtn.MouseButton1Click:Connect(function()
+            fr.Visible = not fr.Visible
+        end)
+
+        -- content label
+        local content = mk("TextLabel", {
+            Size = UDim2.new(1, -10, 1, -32),
+            Position = UDim2.new(0, 6, 0, 30),
+            BackgroundTransparency = 1,
+            Text = "loading...",
+            Font = Enum.Font.GothamBold, TextSize = 11,
+            TextColor3 = Color3.fromRGB(220, 220, 220),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            TextWrapped = true,
+            Parent = fr
+        })
+        _petPanelBox = content
+
+        -- drag via title bar
+        local dragging, dragStart, startPos = false, nil, nil
+        tb.InputBegan:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1
+            or inp.UserInputType == Enum.UserInputType.Touch then
+                dragging = true; dragStart = inp.Position; startPos = fr.Position
             end
         end)
-    end
-end)
+        tb.InputEnded:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1
+            or inp.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end)
+        game:GetService("UserInputService").InputChanged:Connect(function(inp)
+            if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
+            or inp.UserInputType == Enum.UserInputType.Touch) then
+                local delta = inp.Position - dragStart
+                fr.Position = UDim2.new(
+                    startPos.X.Scale, startPos.X.Offset + delta.X,
+                    startPos.Y.Scale, startPos.Y.Offset + delta.Y
+                )
+            end
+        end)
+    end)
+
+    -- loop update panel tiap 2s
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            pcall(function()
+                if not _petPanelBox then return end
+                -- bangun tabel milik: tipe -> {count, uuids}
+                local tipeCnt = {}  -- tipe -> count
+                local tipeUuids = {} -- tipe -> list uuid pendek
+                for s = 1, 5 do
+                    local pool = sesiPool[s] or {}
+                    for tipe, slots in pairs(pool) do
+                        for _, entry in pairs(slots) do
+                            if entry and entry.uuid then
+                                tipeCnt[tipe] = (tipeCnt[tipe] or 0) + 1
+                                if not tipeUuids[tipe] then tipeUuids[tipe] = {} end
+                                -- ambil 8 char pertama uuid untuk display
+                                local u8 = tostring(entry.uuid):gsub("[{}]",""):sub(1,8)
+                                tipeUuids[tipe][#tipeUuids[tipe]+1] = u8
+                            end
+                        end
+                    end
+                end
+
+                -- cek yang ada di workspace (modelByUuid)
+                local mbu = modelByUuid or {}
+                local uuidMilik = {}
+                for s = 1, 5 do
+                    local pool = sesiPool[s] or {}
+                    for tipe, slots in pairs(pool) do
+                        for _, entry in pairs(slots) do
+                            if entry and entry.uuid then
+                                uuidMilik[tostring(entry.uuid)] = tipe
+                            end
+                        end
+                    end
+                end
+                local diWs = {}  -- tipe -> count yang ada di workspace
+                for ustr, _ in pairs(mbu) do
+                    local t = uuidMilik[ustr]
+                    if t then diWs[t] = (diWs[t] or 0) + 1 end
+                end
+
+                -- build text
+                local lines = {}
+                local URUTAN = {"Mimic Octopus","T-Rex","Baku","Peacock","Bahan"}
+                local sudah = {}
+                for _, tipe in ipairs(URUTAN) do
+                    if tipeCnt[tipe] then
+                        sudah[tipe] = true
+                        local ws = diWs[tipe] or 0
+                        local col = tipe == "Mimic Octopus" and "🩵"
+                            or tipe == "T-Rex" and "🟠"
+                            or tipe == "Baku" and "🟣"
+                            or tipe == "Peacock" and "🟢"
+                            or tipe == "Bahan" and "🟡"
+                            or "⚪"
+                        lines[#lines+1] = col.." "..tipe..": "..tipeCnt[tipe].." ("..ws.."ws)"
+                    end
+                end
+                -- tipe lain yang tidak di URUTAN
+                for tipe, cnt in pairs(tipeCnt) do
+                    if not sudah[tipe] then
+                        local ws = diWs[tipe] or 0
+                        lines[#lines+1] = "⚪ "..tipe..": "..cnt.." ("..ws.."ws)"
+                    end
+                end
+
+                if #lines == 0 then
+                    lines[#lines+1] = "(pool kosong)"
+                end
+
+                -- total di workspace
+                local totalWs = 0
+                for _, c in pairs(diWs) do totalWs = totalWs + c end
+                lines[#lines+1] = ""
+                lines[#lines+1] = "ws: "..totalWs.."  pool: "..(function()
+                    local t=0; for _, c in pairs(tipeCnt) do t=t+c end return t
+                end)()
+
+                _petPanelBox.Text = table.concat(lines, "\n")
+
+                -- resize frame otomatis sesuai isi
+                if _petPanelFr then
+                    local h = math.max(120, 36 + #lines * 14)
+                    _petPanelFr.Size = UDim2.new(0, 180, 0, h)
+                end
+            end)
+        end
+    end)
+end
