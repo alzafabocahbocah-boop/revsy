@@ -3,7 +3,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.685"
+local VERSION = "9.686"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
