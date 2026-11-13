@@ -1,4 +1,6 @@
--- uplevelnew v8.774
+-- uplevelnew v8.776
+-- v8.776: debug DS event — log args shape + jalur hit (flat vs deep) untuk diagnosa exe baru
+-- v8.775: BillboardGui label nama pet milik sendiri di atas kepala (AlwaysOnTop, loop 2s)
 -- v8.720: print versi di startup
 -- v8.719: debug log — log healer re-equip uuid+tipe, log nobaku incomplete check detail slot
 -- v8.718: debug log bahan — masuk 3 / pet lain masuk nobaku def / bahan gak buru diganti
@@ -4218,24 +4220,74 @@ do
         end
 
         -- v8.679: connectDS — bisa dipanggil ulang saat reconnect
+        -- v8.776: debug DS event — log args shape + jalur hit biar tau path mana yang kerja di exe baru
+        local _dsEvtCount = 0  -- total event masuk (termasuk bukan ActivePets)
+        local _dsHitCount = 0  -- total hits CustomAnimationState ditemukan
+        local _dsLastDbg  = 0  -- tick() terakhir log debug shape
         local function connectDS(ds)
             -- v8.683: simpan conn supaya bisa Disconnect saat DS mati — cegah listener ganda saat reconnect
             local conn = ds.OnClientEvent:Connect(function(...)
                 local args = {...}
+                _dsEvtCount = _dsEvtCount + 1
                 local svc = tostring(args[2] or "")
+                -- v8.776: log shape event setiap 10s atau 50 event (cari tau structure di exe baru)
+                local now = tick()
+                if (now - _dsLastDbg) > 10 or _dsEvtCount % 50 == 1 then
+                    _dsLastDbg = now
+                    local argTypes = {}
+                    for i = 1, #args do argTypes[#argTypes+1] = "["..i.."]="..type(args[i]) end
+                    tsLog("DS-DBG evt#".._dsEvtCount.." svc="..svc:sub(1,20).." args="..table.concat(argTypes,","))
+                    -- v8.776: log tipe isi args[3]/args[4] untuk cari structure
+                    for idx = 3, 5 do
+                        local a = args[idx]
+                        if type(a) == "table" then
+                            local n = 0; local sample = ""
+                            for k, v in pairs(a) do
+                                n = n + 1
+                                if n <= 2 then
+                                    local vt = type(v)
+                                    if vt == "table" then
+                                        local v1 = tostring(v[1] or ""):sub(1,40)
+                                        sample = sample.."["..tostring(k).."]={v1="..v1.."} "
+                                    else
+                                        sample = sample.."["..tostring(k).."]="..tostring(v):sub(1,20).." "
+                                    end
+                                end
+                            end
+                            tsLog("DS-DBG args["..idx.."] #="..n.." sample: "..sample)
+                        end
+                    end
+                end
                 if not svc:find("ActivePets",1,true) then return end
                 local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
                 -- v8.709: TEST flat loop (disable deepFind)
+                -- v8.776: juga coba deepFind sebagai jalur ke-2, bandingkan hasil
                 if data then
                     local hits = {}
+                    -- jalur 1: flat loop
                     for _, v in pairs(data) do
                         if type(v) == "table" then
                             local v1 = tostring(v[1] or "")
                             if v1:find("CustomAnimationState",1,true) and v[2] ~= nil then
                                 local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
-                                hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(v[2])}
+                                hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(v[2]), "flat"}
                             end
                         end
+                    end
+                    -- jalur 2: deepFind (rekursif) — kalau flat miss, deepFind bisa nemu
+                    if #hits == 0 then
+                        local hitsDeep = deepFind(data)
+                        for _, h in ipairs(hitsDeep) do
+                            hits[#hits+1] = {h[1], h[2], "deep"}
+                        end
+                    end
+                    if #hits > 0 then
+                        _dsHitCount = _dsHitCount + #hits
+                        -- log path yang berhasil
+                        local paths = {}; for _, h in ipairs(hits) do paths[#paths+1] = h[3] end
+                        local uniq = {}; for _, p in ipairs(paths) do uniq[p]=(uniq[p] or 0)+1 end
+                        local pstr = ""; for p, c in pairs(uniq) do pstr = pstr..p.."×"..c.." " end
+                        tsLog("DS-DBG hit#".._dsHitCount.." via "..pstr.."("..#hits.."hits)")
                     end
                     processHits(hits)
                 end
@@ -11067,6 +11119,80 @@ task.spawn(function()
             local re = ge:WaitForChild("BuyRebirth", 10)
             if not re then warn("[ascend] BuyRebirth belum ada, coba lagi 2 menit") return end
             re:FireServer()
+        end)
+    end
+end)
+
+-- ============================================================
+-- v8.775: BillboardGui — label nama pet milik sendiri di atas kepala
+-- Loop tiap 2s, build milik table dari sesiPool, pasang label ke modelByUuid
+-- AlwaysOnTop=true biar kelihatan di executor gelap
+-- ============================================================
+task.spawn(function()
+    local TAG = "_ZenxPetLabel"
+    local function labelPet(model, nama, warna)
+        -- hapus label lama kalau ada
+        local lama = model:FindFirstChild(TAG)
+        if lama then lama:Destroy() end
+        local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart")
+        if not root then return end
+        local bb = Instance.new("BillboardGui")
+        bb.Name = TAG
+        bb.Adornee = root
+        bb.Size = UDim2.new(0, 90, 0, 24)
+        bb.StudsOffset = Vector3.new(0, 3.5, 0)
+        bb.AlwaysOnTop = true
+        bb.ResetOnSpawn = false
+        bb.Parent = model
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, 0, 1, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.TextColor3 = warna or Color3.fromRGB(255, 255, 255)
+        lbl.TextStrokeTransparency = 0.3
+        lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextScaled = true
+        lbl.Text = nama or "?"
+        lbl.Parent = bb
+    end
+    local function hapusLabel(model)
+        local lama = model:FindFirstChild(TAG)
+        if lama then lama:Destroy() end
+    end
+    while true do
+        task.wait(2)
+        pcall(function()
+            -- bangun tabel milik: uuid (string dengan {}) -> nama tipe
+            local milik = {}
+            for s = 1, 5 do
+                local pool = sesiPool[s] or {}
+                for tipe, slots in pairs(pool) do
+                    for _, entry in pairs(slots) do
+                        if entry and entry.uuid then
+                            milik[tostring(entry.uuid)] = tipe
+                        end
+                    end
+                end
+            end
+            -- loop modelByUuid, pasang atau hapus label
+            local mbu = modelByUuid
+            if type(mbu) ~= "table" then return end
+            for ustr, model in pairs(mbu) do
+                -- cek model masih valid (belum di-destroy)
+                local ok = pcall(function() return model.Parent end)
+                if ok then
+                    local tipe = milik[ustr]
+                    if tipe then
+                        -- pet milik kita, pastikan label ada
+                        if not model:FindFirstChild(TAG) then
+                            labelPet(model, tipe, petCol(tipe))
+                        end
+                    else
+                        -- bukan milik kita (pet orang lain di server), hapus label kalau ada
+                        hapusLabel(model)
+                    end
+                end
+            end
         end)
     end
 end)
