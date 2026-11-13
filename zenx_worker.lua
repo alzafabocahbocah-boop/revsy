@@ -11713,7 +11713,7 @@ _CMD.pasang_2 = function()  -- v9.685
 
     PERINTAH = ""
 end
-if PERINTAH == "pasang" then _CMD.pasang_2(); return end
+if PERINTAH == "pasang" then _CMD.pasang_2() end  -- v9.686: no return, lanjut ke run(cfg)
 
 
 _CMD.riwayat = function()  -- v9.685
