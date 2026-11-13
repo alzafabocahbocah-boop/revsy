@@ -1,4 +1,5 @@
--- uplevelnew v8.779
+-- uplevelnew v8.780
+-- v8.780: debug visual pet — log kapan model pet hilang dari workspace (gone/back per UUID), track durasi hilang di STATUS
 -- v8.779: debug panel — STATUS tiap 5s: T-Rex equip di ws vs fire count per UUID, Peacock fire count
 -- v8.777: fix Bahan ke-equip saat nobaku/nm0 — equipOneBahan di outer newloop hanya jalan saat timAktif=main
 -- v8.776: debug DS event — log args shape + jalur hit (flat vs deep) untuk diagnosa exe baru
@@ -3879,6 +3880,10 @@ task.spawn(function()
         print("  name='"..nm.."' count="..cnt)
     end
 end)
+-- v8.780: track kapan model pet hilang dari workspace (untuk deteksi visual samar/hilang)
+local _visGoneAt  = {}  -- [uuid] = tick() saat model hilang dari workspace
+local _visBackLog = {}  -- [uuid] = durasi terpanjang pernah hilang (s)
+
 -- debug: log count modelByUuid setiap 5s
 task.spawn(function()
     while true do
@@ -3896,9 +3901,30 @@ workspace.DescendantRemoving:Connect(function(d)
             if modelByUuid[uuid] == d then
                 -- masih instance lama, berarti memang benar-benar hilang
                 modelByUuid[uuid] = nil
+                -- v8.780: catat waktu hilang + log tipe
+                _visGoneAt[uuid] = tick()
+                local tipe = getPetTipeFromUUID and getPetTipeFromUUID(uuid) or "?"
+                tsLog("[VIS] gone uuid="..uuid:sub(1,8).." tipe="..tostring(tipe))
             else
+                -- model langsung diganti (normal respawn), tidak perlu flag gone
             end
         end)
+    end
+end)
+-- v8.780: saat model muncul kembali, log durasi hilang
+workspace.DescendantAdded:Connect(function(d)
+    if not isPetModel(d) then return end
+    local uuid = d.Name
+    local goneAt = _visGoneAt[uuid]
+    if goneAt then
+        local dur = tick() - goneAt
+        _visGoneAt[uuid] = nil
+        -- simpan durasi terlama pernah hilang
+        if not _visBackLog[uuid] or dur > _visBackLog[uuid] then
+            _visBackLog[uuid] = dur
+        end
+        local tipe = getPetTipeFromUUID and getPetTipeFromUUID(uuid) or "?"
+        tsLog("[VIS] back uuid="..uuid:sub(1,8).." tipe="..tostring(tipe).." after="..string.format("%.1f",dur).."s")
     end
 end)
 
@@ -4320,6 +4346,29 @@ do
                 dbgLog("[DS] [STATUS] Peacock: "..table.concat(pcInWs,","))
                 if #trexInWs > 0 then
                     dbgLog("[DS] [STATUS] ws: "..table.concat(trexInWs," | "))
+                end
+                -- v8.780: log UUID yang saat ini visual/model-nya hilang dari workspace (gone tapi belum back)
+                local nowV = tick()
+                local visGoneList = {}
+                -- cek semua pet milik (T-Rex + Peacock) yang ada di _visGoneAt
+                for uuid, goneAt in pairs(_visGoneAt) do
+                    local dur = nowV - goneAt
+                    local tipe = getPetTipeFromUUID and getPetTipeFromUUID(uuid) or "?"
+                    visGoneList[#visGoneList+1] = uuid:sub(1,8).."("..tostring(tipe).." gone="..string.format("%.0f",dur).."s)"
+                end
+                -- juga log durasi terlama pernah hilang (worst case per UUID)
+                local visWorstList = {}
+                for uuid, maxDur in pairs(_visBackLog) do
+                    local tipe = getPetTipeFromUUID and getPetTipeFromUUID(uuid) or "?"
+                    visWorstList[#visWorstList+1] = uuid:sub(1,8).."("..tostring(tipe).." worst="..string.format("%.0f",maxDur).."s)"
+                end
+                if #visGoneList > 0 then
+                    dbgLog("[VIS] [STATUS] GONE NOW: "..table.concat(visGoneList,", "))
+                else
+                    dbgLog("[VIS] [STATUS] all visual present")
+                end
+                if #visWorstList > 0 then
+                    dbgLog("[VIS] [STATUS] worst gone: "..table.concat(visWorstList,", "))
                 end
             end
         end)
