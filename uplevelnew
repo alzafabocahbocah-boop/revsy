@@ -2977,7 +2977,16 @@ do
 
     local function _renderDbg()
         if _dbgBox then
-            pcall(function() _dbgBox.Text = table.concat(_dbgLogs, "\n") end)
+            pcall(function()
+                -- v8.776: panel kanan hanya tampilkan baris DS
+                local dsLines = {}
+                for _, line in ipairs(_dbgLogs) do
+                    if line:find("%[DS%]",1,false) then
+                        dsLines[#dsLines+1] = line
+                    end
+                end
+                _dbgBox.Text = table.concat(dsLines, "\n")
+            end)
             -- auto-scroll ke bawah
             pcall(function()
                 local sf = _dbgBox.Parent
@@ -2992,8 +3001,10 @@ do
         local str = tostring(s)
         local ts = string.format("%d.%02d", math.floor(tick() % 1000), math.floor((tick() % 1) * 100))
         table.insert(_dbgLogs, ts.." "..str)
-        -- v8.745: tidak ada batas — semua log tersimpan
-        pcall(_renderDbg)
+        -- v8.776: hanya render kalau ada [DS] biar tidak re-render tiap healer/bahan log
+        if str:find("%[DS%]",1,false) then
+            pcall(_renderDbg)
+        end
     end
 end
 weatherLog = function() end
@@ -4005,14 +4016,13 @@ do
     -- guard ini justru bikin swap tidak connect ulang. Tiap inject selalu connect fresh.
     _G._ZenxDSSwapConnected = true
     task.spawn(function()
-        -- v8.776: pisah log — DS status/debug ke panel kanan, swap biasa ke addLog
+        -- v8.776: panel kanan HANYA DS log, semua lain ke addLog saja
         local function tsLog(msg)
             local s = tostring(msg)
             if s:find("DS%-DBG",1,true) or s:find("DS ",1,true) or s:find("ERR:",1,true) or s:find("ds2",1,true) then
-                dbgLog("[DS] "..s)  -- DS status + debug → panel kanan
-                addLog("[swap] "..s)  -- tetap di addLog juga biar gak hilang
+                dbgLog("[DS] "..s)  -- DS saja → panel kanan
             else
-                addLog("[swap] "..s)
+                addLog("[swap] "..s)  -- swap/healer/bahan dll → addLog saja
             end
         end
         if not ge2 then tsLog("ERR: ge2 nil"); _G._ZenxDSSwapConnected = false; return end
