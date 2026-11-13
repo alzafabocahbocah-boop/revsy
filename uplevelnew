@@ -1,4 +1,5 @@
--- uplevelnew v8.781
+-- uplevelnew v8.782
+-- v8.782: VIS back — log SEMUA model masuk workspace saat ada uuid gone, cek format nama beda (nobrace match), cari root cause visual samar
 -- v8.781: debug model name format — log nama semua model masuk workspace saat equip, deteksi format uuid beda di exe baru
 -- v8.780: debug visual pet — log kapan model pet hilang dari workspace (gone/back per UUID), track durasi hilang di STATUS
 -- v8.779: debug panel — STATUS tiap 5s: T-Rex equip di ws vs fire count per UUID, Peacock fire count
@@ -256,7 +257,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.776"  -- v8.776: panel pet GUI mengambang kanan + debug DS event (Visible=false)
+local VERSION = "v8.782"  -- v8.782: VIS back log semua model + nobrace match
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3927,20 +3928,50 @@ workspace.DescendantRemoving:Connect(function(d)
         end)
     end
 end)
--- v8.780: saat model muncul kembali, log durasi hilang
+-- v8.782: saat model muncul kembali, log durasi hilang + log nama model apapun yang masuk (cek format exe baru)
 workspace.DescendantAdded:Connect(function(d)
-    if not isPetModel(d) then return end
+    if not d:IsA("Model") then return end
     local uuid = d.Name
+    -- v8.782: log SEMUA model yang masuk saat ada uuid di _visGoneAt (bukan hanya yg lolos isPetModel)
+    -- ini untuk deteksi apakah model kembali tapi dengan nama berbeda (format uuid berubah)
+    local anyGone = next(_visGoneAt) ~= nil
+    if anyGone then
+        local isPet = isPetModel(d)
+        local n = tostring(uuid)
+        local c1 = string.byte(n:sub(1,1)) or 0
+        -- log kalau: nama berawalan { ATAU punya - (uuid format) ATAU panjang > 20 (bisa uuid)
+        if isPet or n:sub(1,1) == "{" or (n:find("%-") and #n > 10) or #n > 20 then
+            tsLog("[MDL2] added: isPet="..tostring(isPet).." c1="..c1.." len="..#n.." name="..n:sub(1,24))
+        end
+    end
+    -- cek apakah ini uuid yang sedang gone
     local goneAt = _visGoneAt[uuid]
     if goneAt then
         local dur = tick() - goneAt
         _visGoneAt[uuid] = nil
-        -- simpan durasi terlama pernah hilang
         if not _visBackLog[uuid] or dur > _visBackLog[uuid] then
             _visBackLog[uuid] = dur
         end
         local tipe = getPetTipeFromUUID and getPetTipeFromUUID(uuid) or "?"
         tsLog("[VIS] back uuid="..uuid:sub(1,8).." tipe="..tostring(tipe).." after="..string.format("%.1f",dur).."s")
+    end
+    -- v8.782: coba juga match partial — kalau nama model adalah uuid tanpa {} prefix
+    -- misal uuid di sesiPool adalah "{abc123...}" tapi model di workspace punya nama "abc123..."
+    if not goneAt then
+        local noBrace = uuid:gsub("[{}]","")
+        for goneUuid, goneAt2 in pairs(_visGoneAt) do
+            local goneNoBrace = goneUuid:gsub("[{}]","")
+            if goneNoBrace == noBrace and goneNoBrace ~= "" then
+                local dur = tick() - goneAt2
+                _visGoneAt[goneUuid] = nil
+                if not _visBackLog[goneUuid] or dur > _visBackLog[goneUuid] then
+                    _visBackLog[goneUuid] = dur
+                end
+                local tipe = getPetTipeFromUUID and getPetTipeFromUUID(goneUuid) or "?"
+                tsLog("[VIS] back(nobrace) uuid="..goneUuid:sub(1,8).." modelName="..uuid:sub(1,8).." tipe="..tostring(tipe).." after="..string.format("%.1f",dur).."s")
+                break
+            end
+        end
     end
 end)
 
