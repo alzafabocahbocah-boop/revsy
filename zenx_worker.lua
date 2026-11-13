@@ -1,9 +1,9 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.680 — tambah support path Arceus X Neo (v5) di workspace & autoexec
+-- zenx_worker v9.681 — Arceus X Neo (v5) full support: auto-detect, workspace, autoexec, denyut, sync-clone
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.680"
+local VERSION = "9.681"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -185,12 +185,18 @@ local function load_config()
                     end
                     if not cfg.workspace_dir or cfg.workspace_dir == "" then
                         if cfg.executor == "arceus" then
-                            cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
+                            -- cek v5 (Neo) dulu, fallback v4
+                            local phN = io.popen("su -c '[ -d \"/sdcard/Arceus X Neo/Workspace\" ] && echo Y' 2>/dev/null")
+                            local rN = phN and phN:read("*all") or ""; if phN then phN:close() end
+                            cfg.workspace_dir = rN:match("Y") and "/sdcard/Arceus X Neo/Workspace" or "/sdcard/Arceus X/Workspace"
                         else
-                            local ph = io.popen("su -c '[ -d \"/sdcard/Arceus X/Workspace\" ] && echo Y' 2>/dev/null")
+                            local ph = io.popen("su -c '[ -d \"/sdcard/Arceus X Neo/Workspace\" ] && echo NEO || ([ -d \"/sdcard/Arceus X/Workspace\" ] && echo V4)' 2>/dev/null")
                             local r = ph and ph:read("*all") or ""
                             if ph then ph:close() end
-                            if r:match("Y") then
+                            if r:match("NEO") then
+                                cfg.executor      = "arceus"
+                                cfg.workspace_dir = "/sdcard/Arceus X Neo/Workspace"
+                            elseif r:match("V4") then
                                 cfg.executor      = "arceus"
                                 cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
                             else
@@ -1463,10 +1469,14 @@ function sync_autoexec_clones(cfg)
     local LS = cfg and cfg.script_label or ""
     -- ambil loadstring yang sesuai label (MARKET/HACT/UPLEVEL/dll)
     -- default: pakai yang ada di clone001 sebagai referensi
-    local refContent = sh("su -c 'cat \"/sdcard/RobloxClone001/Arceus X/autoexec/zenx.lua\" 2>/dev/null'") or ""
+    -- coba referensi dari clone001 Arceus X Neo dulu, fallback v4
+    local refContent = sh("su -c 'cat \"/sdcard/RobloxClone001/Arceus X Neo/autoexec/zenx.lua\" 2>/dev/null'") or ""
     if refContent == "" then
-        -- fallback: scan semua clone, ambil yang ada isinya
-        local cloneOut = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec -path \"*/RobloxClone*/Arceus X/*\" 2>/dev/null | sort'") or ""
+        refContent = sh("su -c 'cat \"/sdcard/RobloxClone001/Arceus X/autoexec/zenx.lua\" 2>/dev/null'") or ""
+    end
+    if refContent == "" then
+        -- fallback: scan semua clone Arceus X Neo + v4, ambil yang ada isinya
+        local cloneOut = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec \\( -path \"*/RobloxClone*/Arceus X Neo/*\" -o -path \"*/RobloxClone*/Arceus X/*\" \\) 2>/dev/null | sort'") or ""
         for dir in cloneOut:gmatch("[^\n]+") do
             local c = sh("su -c 'cat \"" .. dir .. "/zenx.lua\" 2>/dev/null'") or ""
             if c ~= "" then refContent = c; break end
@@ -1476,8 +1486,8 @@ function sync_autoexec_clones(cfg)
         info("[autoexec-sync] referensi kosong, skip")
         return
     end
-    -- tulis ke semua clone yang autoexec-nya kosong
-    local cloneDirs = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec -path \"*/RobloxClone*/Arceus X/*\" 2>/dev/null | sort'") or ""
+    -- tulis ke semua clone yang autoexec-nya kosong (Neo + v4)
+    local cloneDirs = sh("su -c 'find -L /sdcard -maxdepth 4 -type d -name autoexec \\( -path \"*/RobloxClone*/Arceus X Neo/*\" -o -path \"*/RobloxClone*/Arceus X/*\" \\) 2>/dev/null | sort'") or ""
     local filled, skipped = 0, 0
     local tmp = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/.zautoexec.tmp"
     local f = io.open(tmp, "w"); if f then f:write(refContent); f:close() end
@@ -4226,10 +4236,18 @@ local function setup_otomatis(namaPreset)
     ok("Game  : " .. cfg.game_label)
     ok("Script: " .. cfg.script_label .. "  (" .. pre.url .. ")")
     if paksaArceus then
-        cfg.executor      = "arceus"
-        cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
-        cfg.autoexec_dir  = "/sdcard/Arceus X/Autoexec"
-        ok("Executor: ARCEUS X (dipaksa via preset -arceus)")
+        cfg.executor = "arceus"
+        -- cek Neo dulu, fallback v4
+        local isNeo = (sh("su -c '[ -d \"/sdcard/Arceus X Neo/Workspace\" ] && echo Y' 2>/dev/null") or ""):match("Y")
+        if isNeo then
+            cfg.workspace_dir = "/sdcard/Arceus X Neo/Workspace"
+            cfg.autoexec_dir  = "/sdcard/Arceus X Neo/Autoexec"
+            ok("Executor: ARCEUS X NEO/v5 (dipaksa via preset -arceus)")
+        else
+            cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
+            cfg.autoexec_dir  = "/sdcard/Arceus X/Autoexec"
+            ok("Executor: ARCEUS X v4 (dipaksa via preset -arceus)")
+        end
     end
     -- v9.502: preset market-arceus (LAMA, beda dari newmarket-arceus) -- restart terjadwal diubah
     -- dari 1 jam jadi 2 jam (00/02/04/06/08.../22:00 WIB). Pattern match (bukan exact) biar kena juga
@@ -10118,11 +10136,11 @@ if PERINTAH == "denyut" then
     info("Jam device sekarang: " .. jamNow .. "  (epoch " .. sekarang .. ")")
     print()
     local raw = ""
-    local ph = io.popen("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt \"/sdcard/Arceus X/Workspace/\"zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null")
+    local ph = io.popen("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt \"/sdcard/Arceus X/Workspace/\"zenx_denyut_*.txt \"/sdcard/Arceus X Neo/Workspace/\"zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null")
     if ph then raw = ph:read("*all") or ""; ph:close() end
     if raw == "" then
         warn("Gak ada file denyut (script belum nulis / path beda).")
-        info("Path dicek: /sdcard/Delta/Workspace/ + /sdcard/Arceus X/Workspace/ zenx_denyut_*.txt")
+        info("Path dicek: /sdcard/Delta/Workspace/ + /sdcard/Arceus X/Workspace/ + /sdcard/Arceus X Neo/Workspace/ zenx_denyut_*.txt")
         return
     end
     local ada = 0
