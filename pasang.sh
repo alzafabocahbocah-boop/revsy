@@ -204,13 +204,11 @@ ok "Worker keunduh: ${VER:-?}"
 case "$PRESET" in
     *arceus*)
         printf "\n${B}[+] Tulis loader Arceus (auto-exe script)${N}\n"
-        # v9.686: cover semua varian path Arceus X (v4, v5, Neo, NEO)
-        AX_DIR=""
-        for _D in "/sdcard/Arceus X/Autoexec" "/sdcard/Arceus X v5/Autoexec" "/sdcard/Arceus X Neo/Autoexec" "/sdcard/Arceus X NEO/Autoexec" "/sdcard/ArcaeusX/Autoexec"; do
-            if su -c "[ -d \"$_D\" ]" 2>/dev/null; then AX_DIR="$_D"; break; fi
-        done
-        # kalau belum ada, default ke v4 (akan dibuat)
-        [ -z "$AX_DIR" ] && AX_DIR="/sdcard/Arceus X/Autoexec"
+        # v9.687: tulis ke SEMUA varian path Arceus X sekaligus (v4, v5, Neo, NEO)
+        # supaya gak peduli versi mana yang kepasang di device
+        AX_DIRS="/sdcard/Arceus X/Autoexec /sdcard/Arceus X v5/Autoexec /sdcard/Arceus X Neo/Autoexec /sdcard/Arceus X NEO/Autoexec /sdcard/ArcaeusX/Autoexec"
+        # AX_DIR = path pertama (untuk laporan OK/GAGAL)
+        AX_DIR="/sdcard/Arceus X/Autoexec"
         AX_LOADER="$AX_DIR/zenx.lua"
         # v9.291: pilih script ronihub sesuai preset. hact-arceus -> hact,
         # panen-arceus -> panen, sisanya -> market.
@@ -248,26 +246,33 @@ case "$PRESET" in
             MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/$RONIHUB_SC"
             SC_LABEL="$RONIHUB_SC"
         fi
-        AX_EXTRA="$AX_DIR/zenx_extra.lua"
-        su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$AX_LOADER\"" 2>/dev/null
-        if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
-            su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$AX_EXTRA\"" 2>/dev/null
-        else
-            su -c "rm -f \"$AX_EXTRA\"" 2>/dev/null
-        fi
-        # cek beneran ketulis
-        AX_CEK=$(su -c "cat \"$AX_LOADER\" 2>/dev/null" 2>/dev/null)
-        if printf '%s' "$AX_CEK" | grep -q "HttpGet"; then
-            ok "Loader Arceus ketulis: $AX_LOADER ($SC_LABEL)"
+        # tulis ke semua varian path
+        AX_OK=0
+        for _AXD in $AX_DIRS; do
+            su -c "mkdir -p \"$_AXD\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$_AXD/zenx.lua\"" 2>/dev/null
             if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
-                ok "Extra script: $AX_EXTRA"
+                su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$_AXD/zenx_extra.lua\"" 2>/dev/null
+            else
+                su -c "rm -f \"$_AXD/zenx_extra.lua\"" 2>/dev/null
+            fi
+            _CEK=$(su -c "cat \"$_AXD/zenx.lua\" 2>/dev/null" 2>/dev/null)
+            if printf '%s' "$_CEK" | grep -q "HttpGet"; then
+                AX_OK=$((AX_OK + 1))
+                info "  -> $_AXD/zenx.lua"
+            fi
+        done
+        AX_EXTRA="$AX_DIR/zenx_extra.lua"
+        if [ "$AX_OK" -gt 0 ]; then
+            ok "Loader Arceus ketulis ke $AX_OK path ($SC_LABEL)"
+            if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
+                ok "Extra script juga ditulis ($AX_OK path)"
                 info "$SC_LABEL + extra auto-nyala tiap Arceus join."
             else
                 info "$SC_LABEL auto-nyala tiap Arceus join."
             fi
         else
-            warn "Loader Arceus GAGAL ketulis (cek akses su / folder Arceus X ada)."
-            info "Manual:  su -c 'echo ... > \"$AX_LOADER\"'"
+            warn "Loader Arceus GAGAL ketulis (cek akses su)."
+            info "Manual:  su -c 'mkdir -p \"/sdcard/Arceus X v5/Autoexec\" && echo ... > ...'"
         fi
 
         # tulis ke Delta Autoexecute
