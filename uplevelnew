@@ -1,4 +1,5 @@
--- uplevelnew v8.780
+-- uplevelnew v8.781
+-- v8.781: debug model name format — log nama semua model masuk workspace saat equip, deteksi format uuid beda di exe baru
 -- v8.780: debug visual pet — log kapan model pet hilang dari workspace (gone/back per UUID), track durasi hilang di STATUS
 -- v8.779: debug panel — STATUS tiap 5s: T-Rex equip di ws vs fire count per UUID, Peacock fire count
 -- v8.777: fix Bahan ke-equip saat nobaku/nm0 — equipOneBahan di outer newloop hanya jalan saat timAktif=main
@@ -3828,8 +3829,22 @@ local function _startEngine()
 if type(_G.ZenxModelByUuid) ~= "table" then _G.ZenxModelByUuid = {} end
 local modelByUuid = _G.ZenxModelByUuid  -- share ke MTS scope via _G
 local function isPetModel(m) return m:IsA("Model") and tostring(m.Name):sub(1,1) == "{" end
+-- v8.781: log nama model masuk workspace — deteksi format uuid di exe baru
+local _modelNameSeen = {}  -- [name] = true, biar tidak spam
+local function logModelName(m)
+    if not m:IsA("Model") then return end
+    local n = tostring(m.Name)
+    if _modelNameSeen[n] then return end
+    _modelNameSeen[n] = true
+    -- log semua model yang masuk workspace (bukan hanya pet)
+    -- format: isPet? nama(len) char1
+    local isPet = isPetModel(m)
+    if isPet or (n:find("%-") and #n > 10) or n:sub(1,1) == "{" then
+        tsLog("[MDL] model added: isPet="..tostring(isPet).." name="..n:sub(1,20).." len="..#n.." c1="..string.byte(n:sub(1,1)))
+    end
+end
 local function regModel(m) if isPetModel(m) then modelByUuid[m.Name]=m end end
-pcall(function() for _,d in ipairs(workspace:GetDescendants()) do regModel(d) end end)
+pcall(function() for _,d in ipairs(workspace:GetDescendants()) do regModel(d); logModelName(d) end end)
 -- v8.737: scan character + v8.738: scan backpack/inventory juga — pet transit di ketiganya
 pcall(function()
     local char = plr and plr.Character
@@ -3853,6 +3868,7 @@ pcall(function()
 end)
 workspace.DescendantAdded:Connect(function(d) task.defer(function()
     pcall(regModel,d)
+    pcall(logModelName,d)  -- v8.781: log format nama model baru
     -- debug: log semua model yang masuk workspace (bukan hanya yg lolos isPetModel)
     if d:IsA("Model") then
         local nm = tostring(d.Name)
