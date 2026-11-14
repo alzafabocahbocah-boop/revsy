@@ -1,4 +1,5 @@
--- uplevelnew v8.784
+-- uplevelnew v8.786
+-- v8.786: log [EQUIP-SKIP] di equipSesi + [KG-TREX] dump T-Rex uuid dari container — debug T-Rex not in container
 -- v8.785: fix ws=0/N — lookup modelByUuid pakai r8InWs() prefix match (bukan exact 8-char key)
 --         tambah dump [MDL-MAP] modelByUuid keys + myTrex r8 keys di STATUS log
 -- v8.784: tambah tombol CPY di debug panel — tap 1x copy semua log (sebelumnya hanya double tap)
@@ -261,7 +262,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.785"  -- v8.785: fix ws lookup pakai r8InWs (prefix match), dump modelByUuid+myTrex keys
+local VERSION = "v8.786"  -- v8.786: log [EQUIP-SKIP] + [KG-TREX] — debug T-Rex skip di equipSesi karena uuid not in container
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -4834,6 +4835,8 @@ equipSesi = function(sesiNum, defs)
                 local uuidStr=tostring(entry.uuid)
                 local validInContainer = _kgContainer and _kgContainer[uuidStr]~=nil
                 if not validInContainer and _kgContainer then
+                    -- v8.786: debug — log uuid yang di-skip supaya bisa bandingkan dgn container
+                    dbgLog("[EQUIP-SKIP] S"..sesiNum.." "..sup.nama.."#"..i.." uuid="..uuidStr:sub(1,10).." not in container")
                     addLog("Pool S"..sesiNum.." "..sup.nama.."#"..i.." uuid expired (rejoin?) — skip manual")
                 else
                     equipPet(entry.uuid)
@@ -4881,6 +4884,19 @@ equipSesi = function(sesiNum, defs)
         local needStr=""
         for nm,n in pairs(need) do needStr=needStr..nm.."×"..n.." " end
         addLog("Need: "..needStr)
+        -- v8.786: dump T-Rex keys di _kgContainer untuk cek format UUID
+        if need["T-Rex"] and _kgContainer then
+            local trexKeys = {}
+            for k,v in pairs(_kgContainer) do
+                if type(v)=="table" then
+                    local pt = tostring(v.PetType or (v.PetData and v.PetData.PetType) or "")
+                    if pt:find("T%-Rex") or pt:find("T-Rex") then
+                        trexKeys[#trexKeys+1] = tostring(k):sub(1,14)
+                    end
+                end
+            end
+            dbgLog("[KG-TREX] T-Rex keys in container("..#trexKeys.."): "..table.concat(trexKeys,"|"):sub(1,120))
+        end
         -- sort by kg terbesar (ambil pet terbaik dulu)
         local allPets=listPetsAll()
         -- debug: count per tipe di container
