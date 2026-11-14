@@ -1,6 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.687 — fix crash "attempt to concatenate a nil value (local 'ak')" saat FORCE (fallback ak ke pkg)
+-- zenx_worker v9.686 — bump (versi sebelumnya tidak di-commit dengan benar)
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
