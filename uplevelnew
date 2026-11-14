@@ -1,4 +1,5 @@
--- uplevelnew v8.803
+-- uplevelnew v8.804
+-- v8.804: deepSearchKey — scan KEY table recursive (port up3.8kg) + fix deepFind skip nil
 -- v8.803: [TNJ-PATH] dump semua path dari TNJHOF event (5 pertama) — lihat isi DS TNJHOF sebenarnya
 -- v8.802: tambah Format 4 (PetAction nested) dari up3.8kg — jalur Roar yang mungkin miss
 -- v8.801: [AP-ANIM] log CustomAnimationState dari SEMUA DS event (bukan hanya 5 pertama) — cari kapan Roar datang
@@ -4218,14 +4219,11 @@ do
                 if type(v) == "table" then
                     local v1 = tostring(v[1] or "")
                     if v1:find("CustomAnimationState",1,true) then
-                        -- v8.682: skip kalau v[2] nil (state clear/idle) — port up3.8kg
-                        if v[2] == nil then
-                            deepFind(v, depth+1, out)
-                        else
+                        if v[2] ~= nil then
                             local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
                             local raw = uuid:gsub("[{}]","")
                             local animStr = tostring(v[2])
-                            out[#out+1] = {raw, animStr}
+                            out[#out+1] = {raw, animStr, "deepF1"}
                         end
                     else
                         deepFind(v, depth+1, out)
@@ -4233,6 +4231,37 @@ do
                 end
             end
             return out
+        end
+
+        -- v8.804: deepSearchKey — scan KEY table recursively (dari up3.8kg deepSearchPath)
+        -- handle format di mana CustomAnimationState adalah KEY (bukan path string)
+        local _deepKeyReported = {}
+        local function deepSearchKey(tbl, uuidHint, depth)
+            if depth > 5 or type(tbl) ~= "table" then return nil end
+            for k, v in pairs(tbl) do
+                local ks = tostring(k)
+                if ks:find("CustomAnimationState",1,true) or ks:find("AnimationState",1,true) then
+                    if type(v)=="string" and #v > 0 then
+                        local sig = (uuidHint or "?"):sub(1,8)..":"..ks..":"..v:sub(1,10)
+                        if not _deepKeyReported[sig] then
+                            _deepKeyReported[sig] = true
+                            dbgLog("[DK-FOUND] uuid="..sig.." key="..ks.." val="..v)
+                        end
+                        return v
+                    end
+                end
+                if type(v)=="string" and v:find("CustomAnimationState",1,true) then
+                    if not _deepKeyReported[v:sub(1,30)] then
+                        _deepKeyReported[v:sub(1,30)] = true
+                        dbgLog("[DK-VAL] key="..ks.." val="..v:sub(1,40))
+                    end
+                end
+                if type(v)=="table" then
+                    local r = deepSearchKey(v, uuidHint, depth+1)
+                    if r then return r end
+                end
+            end
+            return nil
         end
 
         -- v8.682: proses hits di luar deepFind — 1 event = 1x kumpul, baru loop swap
@@ -4690,11 +4719,28 @@ do
                             end
                         end
                     end
-                    -- fallback: deepFind kalau 3 format miss
+                    -- fallback deepFind kalau format 1-4 miss
                     if #hits == 0 then
                         local hitsDeep = deepFind(data)
                         for _, h in ipairs(hitsDeep) do
-                            hits[#hits+1] = {h[1], h[2], "deep"}
+                            hits[#hits+1] = {h[1], h[2], "deepF1"}
+                        end
+                    end
+                    -- v8.804: fallback deepSearchKey — scan KEY table recursive (handle format baru)
+                    if #hits == 0 then
+                        for _, v in pairs(data) do
+                            if type(v)=="table" then
+                                local path = tostring(v[1] or "")
+                                local val = v[2]
+                                local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)/")
+                                if uuid and type(val)=="table" then
+                                    uuid = uuid:gsub("[{}]","")
+                                    local animStr = deepSearchKey(val, uuid, 0)
+                                    if animStr then
+                                        hits[#hits+1] = {uuid, animStr, "deepKey"}
+                                    end
+                                end
+                            end
                         end
                     end
                     if #hits > 0 then
