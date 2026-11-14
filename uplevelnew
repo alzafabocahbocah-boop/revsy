@@ -1,4 +1,5 @@
--- uplevelnew v8.807
+-- uplevelnew v8.808
+-- v8.808: FIX CRITICAL — _dsFireCnt/_dsFireLast nil saat processHits dipanggil → crash sebelum [DS-HIT]
 -- v8.807: RE-SCAN wrap pcall+error logging, langsung print error ke log kalau gagal
 -- v8.806: scan semua RE di ge/ge2 — cari event lain yg bawa animasi/ActivePetStates (bukan hanya DataStream)
 -- v8.805: [APS-PATH] dump semua path dari ActivePetsService (5 event pertama) — lihat struktur path asli
@@ -4313,10 +4314,16 @@ do
         -- v8.799: _anyDsLastSwap untuk debounce global any-trigger swap (jeda 2s antar batch swap)
         local _anyDsLastSwap = 0
 
+        -- v8.807: pindah ke sini supaya processHits bisa akses tanpa nil error
+        local _dsFireCnt  = {}  -- [r8] = jumlah kali fire DS event
+        local _dsFireLast = {}  -- [r8] = tick() terakhir fire
+
         local function processHits(hits)
             -- v8.799: swap berdasarkan UUID yang muncul di DS event
             -- Kalau UUID itu ada di modelByUuid (ws kita) + animStr match SWAP_ANIM → swap UUID itu
             -- Tidak filter mine — UUID dari player lain di-skip otomatis karena tidak ada di modelByUuid kita
+            if #hits == 0 then return end
+            dbgLog("[DS-HIT] processHits called hits="..#hits)
             local seen = {}
             for _, hit in ipairs(hits) do
                 local raw, animStr = hit[1], hit[2]
@@ -4399,8 +4406,7 @@ do
         end
 
         -- v8.779: per-UUID fire counter + equip status monitor
-        local _dsFireCnt  = {}  -- [r8] = jumlah kali fire DS event
-        local _dsFireLast = {}  -- [r8] = tick() terakhir fire
+        -- (deklarasi _dsFireCnt/_dsFireLast dipindah ke sebelum processHits — v8.807)
         -- loop tiap 5s: log berapa T-Rex equip di ws vs berapa yang fire event
         task.spawn(function()
             while true do
@@ -4463,7 +4469,7 @@ do
                     pcInWs[#pcInWs+1] = r8:sub(1,6).."(fire="..fireN..")"
                 end
                 local nMyTrex = 0; for _ in pairs(myTrex) do nMyTrex = nMyTrex + 1 end
-                dbgLog("[DS] [STATUS] v8.807 T-Rex ws="..#trexInWs.."/"..nMyTrex.." noWs="..(#trexNoWs > 0 and table.concat(trexNoWs,",") or "ok").." noFire="..(#trexNoFire > 0 and table.concat(trexNoFire,",") or "ok").." dsEvt=".._dsEvtCount)
+                dbgLog("[DS] [STATUS] v8.808 T-Rex ws="..#trexInWs.."/"..nMyTrex.." noWs="..(#trexNoWs > 0 and table.concat(trexNoWs,",") or "ok").." noFire="..(#trexNoFire > 0 and table.concat(trexNoFire,",") or "ok").." dsEvt=".._dsEvtCount)
                 dbgLog("[DS] [STATUS] Peacock: "..table.concat(pcInWs,","))
                 -- v8.785: dump modelByUuid keys (pertama kali saja / tiap 30s)
                 local mdlKeys = {}
