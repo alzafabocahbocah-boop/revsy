@@ -1,4 +1,5 @@
--- uplevelnew v8.795
+-- uplevelnew v8.796
+-- v8.796: flat loop capture CustomAnimationState termasuk nil (jadi "clear") + SWAP_ANIM tambah clear — DS swap via nil juga trigger
 -- v8.795: [EQ]/[UEQ] log di equipPet/unequipPet — konfirmasi apakah pet beneran di-equip/unequip
 -- v8.794: [AP-KEYS] dump semua keys inner table entry CustomAnimationState — cari root cause flat loop miss
 -- v8.793: log roar/fan dari pet orang lain (mine=false) + cek apakah T-Rex/Peacock kita pernah roar
@@ -4173,7 +4174,8 @@ do
         tsLog("ds2 ON — class="..ds2.ClassName)
 
         -- animStr trigger: T-Rex=roar, Peacock=fan, Spider=weave
-        local SWAP_ANIM = { fan=true, roar=true, weave=true }
+        -- v8.796: tambah "clear" = nil/CustomAnimationState berubah ke apapun termasuk nil
+        local SWAP_ANIM = { fan=true, roar=true, weave=true, clear=true }
         local PEACOCK_CENTER = Vector3.new(10, 3, 12)
         local PEACOCK_THRESH = 2.0
         local SPIDER_CENTER = Vector3.new(10, 3, 12)
@@ -4649,9 +4651,11 @@ do
                     for _, v in pairs(data) do
                         if type(v) == "table" then
                             local v1 = tostring(v[1] or "")
-                            if v1:find("CustomAnimationState",1,true) and v[2] ~= nil then
+                            -- v8.796: hapus syarat v[2] ~= nil — capture semua perubahan CustomAnimationState termasuk nil/clear
+                            if v1:find("CustomAnimationState",1,true) then
                                 local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
-                                hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(v[2]), "flat"}
+                                local animVal = v[2] ~= nil and tostring(v[2]) or "clear"
+                                hits[#hits+1] = {uuid:gsub("[{}]",""), animVal, "flat"}
                             end
                         end
                     end
