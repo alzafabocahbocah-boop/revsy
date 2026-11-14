@@ -1,4 +1,5 @@
--- uplevelnew v8.796
+-- uplevelnew v8.797
+-- v8.797: port 3 format DS parse dari up3.8kg — fmt1 (path CAS langsung), fmt2 (val.CAS), fmt3 (val.Arguments.CAS)
 -- v8.796: flat loop capture CustomAnimationState termasuk nil (jadi "clear") + SWAP_ANIM tambah clear — DS swap via nil juga trigger
 -- v8.795: [EQ]/[UEQ] log di equipPet/unequipPet — konfirmasi apakah pet beneran di-equip/unequip
 -- v8.794: [AP-KEYS] dump semua keys inner table entry CustomAnimationState — cari root cause flat loop miss
@@ -4647,19 +4648,39 @@ do
                 -- v8.776: juga coba deepFind sebagai jalur ke-2, bandingkan hasil
                 if data then
                     local hits = {}
-                    -- jalur 1: flat loop
+                    -- v8.797: port 3 format dari up3.8kg
                     for _, v in pairs(data) do
                         if type(v) == "table" then
-                            local v1 = tostring(v[1] or "")
-                            -- v8.796: hapus syarat v[2] ~= nil — capture semua perubahan CustomAnimationState termasuk nil/clear
-                            if v1:find("CustomAnimationState",1,true) then
-                                local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
-                                local animVal = v[2] ~= nil and tostring(v[2]) or "clear"
-                                hits[#hits+1] = {uuid:gsub("[{}]",""), animVal, "flat"}
+                            local path = tostring(v[1] or "")
+                            local val  = v[2]
+                            -- Format 1: path langsung berisi CustomAnimationState, val = animStr string
+                            if path:find("CustomAnimationState",1,true) and val ~= nil then
+                                local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)/")
+                                if uuid then
+                                    hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(val), "fmt1"}
+                                end
+                            elseif path:find("ActivePetStates",1,true) and type(val)=="table" then
+                                local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)$") or path:match("ActivePetStates/([^/]+)/")
+                                if uuid then
+                                    uuid = uuid:gsub("[{}]","")
+                                    -- Format 2: val = {CustomAnimationState=animStr,...}
+                                    local animStr = val.CustomAnimationState or val.AnimationState or val.animationState
+                                    if animStr then
+                                        hits[#hits+1] = {uuid, tostring(animStr), "fmt2"}
+                                    end
+                                    -- Format 3: val = {Arguments={CustomAnimationState=animStr,...},...}
+                                    if not animStr and type(val.Arguments)=="table" then
+                                        local a = val.Arguments
+                                        animStr = a.CustomAnimationState or a.AnimationState or a.animationState
+                                        if animStr then
+                                            hits[#hits+1] = {uuid, tostring(animStr), "fmt3"}
+                                        end
+                                    end
+                                end
                             end
                         end
                     end
-                    -- jalur 2: deepFind (rekursif) — kalau flat miss, deepFind bisa nemu
+                    -- fallback: deepFind kalau 3 format miss
                     if #hits == 0 then
                         local hitsDeep = deepFind(data)
                         for _, h in ipairs(hitsDeep) do
