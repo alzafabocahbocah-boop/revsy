@@ -1,5 +1,5 @@
 -- uplevelnew v8.799
--- v8.799: DS any-trigger swap — roar dari T-Rex siapapun di server → swap T-Rex kita di ws. fan dari Peacock siapapun → swap Peacock kita di ws. Hapus filter mine.
+-- v8.799: DS swap by UUID — roar/fan UUID apapun di DS → kalau UUID itu ada di ws kita, langsung swap. Hapus filter mine, hapus scan tipe.
 -- v8.798: [WS-UUID] dump UUID T-Rex+Peacock di workspace saat DS event masuk — konfirmasi UUID mana yang aktif di garden
 -- v8.797: port 3 format DS parse dari up3.8kg — fmt1 (path CAS langsung), fmt2 (val.CAS), fmt3 (val.Arguments.CAS)
 -- v8.796: flat loop capture CustomAnimationState termasuk nil (jadi "clear") + SWAP_ANIM tambah clear — DS swap via nil juga trigger
@@ -4278,124 +4278,86 @@ do
         local _anyDsLastSwap = 0
 
         local function processHits(hits)
-            -- v8.799: cek dari hits — ada T-Rex roar? ada Peacock fan?
-            -- Kalau ya → swap semua T-Rex/Peacock KITA di workspace (tidak filter mine di hits)
-            local triggerTrex   = false
-            local triggerPeacock = false
-
+            -- v8.799: swap berdasarkan UUID yang muncul di DS event
+            -- Kalau UUID itu ada di modelByUuid (ws kita) + animStr match SWAP_ANIM → swap UUID itu
+            -- Tidak filter mine — UUID dari player lain di-skip otomatis karena tidak ada di modelByUuid kita
+            local seen = {}
             for _, hit in ipairs(hits) do
                 local raw, animStr = hit[1], hit[2]
                 local anim = animStr and animStr:lower() or "nil"
                 local r8 = raw:sub(1,8)
-                local mine = isMyPetUUID(raw)
                 -- v8.779: track fire count per uuid
                 _dsFireCnt[r8]  = (_dsFireCnt[r8] or 0) + 1
                 _dsFireLast[r8] = tick()
-                dbgLog("[DS-HIT] "..anim.." r8="..r8.." mine="..tostring(mine))
-                -- v8.799: set trigger berdasarkan animStr — tidak perlu mine
-                if anim == "roar" then triggerTrex = true end
-                if anim == "fan"  then triggerPeacock = true end
-            end
+                dbgLog("[DS-HIT] "..anim.." r8="..r8)
 
-            if not triggerTrex and not triggerPeacock then return end
+                if not SWAP_ANIM[anim] then continue end
+                if seen[r8] then continue end
+                seen[r8] = true
 
-            -- v8.799: debounce global — max 1x per 2s
-            local now = tick()
-            if now - _anyDsLastSwap < 2 then return end
-            _anyDsLastSwap = now
-
-            -- helper: scan modelByUuid cari pet tipe tertentu milik kita
-            local function getMyPetsInWs(petTypeCheck)
-                local result = {}
+                -- v8.799: cek apakah UUID ini ada di workspace kita (modelByUuid)
+                local modelFound = nil
                 pcall(function()
-                    local kg = _kgContainer
-                    if not kg then return end
-                    for modelName, _ in pairs(modelByUuid) do
+                    for modelName, m in pairs(modelByUuid) do
                         local mn = tostring(modelName)
-                        local withDash = mn:gsub("[{}]","")          -- strip braces, biarkan dashes
-                        local noDash   = withDash:gsub("%-","")      -- strip dashes juga
-                        local entry = kg[withDash] or kg["{"..withDash.."}"] or kg[noDash] or kg["{"..noDash.."}"] or kg[mn]
-                        if entry then
-                            local pt  = type(entry)=="table" and tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "") or ""
-                            local ptl = pt:lower()
-                            if petTypeCheck(ptl) then
-                                local r8 = noDash:sub(1,8)
-                                result[#result+1] = {raw=withDash, r8=r8}
+                        local mn8 = mn:gsub("[{}]",""):gsub("%-",""):sub(1,8)
+                        if mn8 == r8 then modelFound = {raw=mn:gsub("[{}]",""), r8=r8}; break end
+                    end
+                end)
+
+                if not modelFound then
+                    dbgLog("[DS-HIT] "..anim.." r8="..r8.." — NOT in ws, skip")
+                    continue
+                end
+
+                local mraw, mr8 = modelFound.raw, modelFound.r8
+                dbgLog("[DS-HIT] "..anim.." r8="..mr8.." — IN ws → swap")
+                tsLog("DS "..anim.." uuid="..mr8.." → swap")
+
+                -- Peacock fan
+                if anim == "fan" then
+                    local myTurn = _fanLastSwap + 0.5
+                    local waitNeeded = myTurn - tick()
+                    if waitNeeded > 0 then task.wait(waitNeeded) end
+                    _fanLastSwap = tick()
+                    withSwapDebounce(mr8, function()
+                        pcall(function() unequipPet(mraw) end)
+                        pcall(function() equipPet(mraw) end)
+                        local done, spawnPos = false, nil
+                        local conn2 = workspace.DescendantAdded:Connect(function(d)
+                            if done then return end
+                            if not d:IsA("Model") then return end
+                            if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
+                            local dn = d.Name
+                            local d8 = dn:gsub("[{}]",""):gsub("%-",""):sub(1,8)
+                            if d8 ~= mr8 then return end
+                            task.defer(function()
+                                if done then return end
+                                pcall(function()
+                                    local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
+                                    if p then spawnPos = p.Position end
+                                end)
+                                done = true
+                            end)
+                        end)
+                        local t0 = tick()
+                        while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
+                        conn2:Disconnect()
+                        if spawnPos then
+                            local dist = (spawnPos - PEACOCK_CENTER).Magnitude
+                            if dist > PEACOCK_THRESH then
+                                tsLog("Peacock respawn "..string.format("%.1f",dist).."stud → re-swap")
+                                pcall(function() unequipPet(mraw) end)
+                                pcall(function() equipPet(mraw) end)
                             end
                         end
-                    end
-                end)
-                return result
-            end
-
-            -- swap T-Rex kita kalau ada roar dari T-Rex siapapun di DS
-            if triggerTrex then
-                local myTrex = getMyPetsInWs(function(ptl)
-                    return ptl:find("t.rex") or ptl:find("trex") or ptl:find("tyrannosaurus")
-                end)
-                if #myTrex > 0 then
-                    dbgLog("[DS-ANY] roar → swap "..#myTrex.." T-Rex kita di ws")
-                    tsLog("DS roar-any → T-Rex swap×"..#myTrex)
-                    for _, pet in ipairs(myTrex) do
-                        local r8, raw = pet.r8, pet.raw
-                        withSwapDebounce(r8, function()
-                            tsLog("T-Rex any-swap "..r8)
-                            pcall(function() unequipPet(raw) end)
-                            pcall(function() equipPet(raw) end)
-                        end)
-                    end
+                    end)
+                -- T-Rex roar atau weave
                 else
-                    dbgLog("[DS-ANY] roar trigger tapi T-Rex kita di ws=0")
-                end
-            end
-
-            -- swap Peacock kita kalau ada fan dari Peacock siapapun di DS
-            if triggerPeacock then
-                local myPeacock = getMyPetsInWs(function(ptl)
-                    return ptl:find("peacock")
-                end)
-                if #myPeacock > 0 then
-                    dbgLog("[DS-ANY] fan → swap "..#myPeacock.." Peacock kita di ws")
-                    tsLog("DS fan-any → Peacock swap×"..#myPeacock)
-                    for _, pet in ipairs(myPeacock) do
-                        local r8, raw = pet.r8, pet.raw
-                        withSwapDebounce(r8, function()
-                            tsLog("Peacock any-swap "..r8)
-                            pcall(function() unequipPet(raw) end)
-                            pcall(function() equipPet(raw) end)
-                            -- cek posisi respawn
-                            local done, spawnPos = false, nil
-                            local conn2 = workspace.DescendantAdded:Connect(function(d)
-                                if done then return end
-                                if not d:IsA("Model") then return end
-                                if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
-                                local dn = d.Name
-                                local d8 = dn:gsub("[{}]",""):gsub("%-",""):sub(1,8)
-                                if d8 ~= r8 then return end
-                                task.defer(function()
-                                    if done then return end
-                                    pcall(function()
-                                        local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
-                                        if p then spawnPos = p.Position end
-                                    end)
-                                    done = true
-                                end)
-                            end)
-                            local t0 = tick()
-                            while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
-                            conn2:Disconnect()
-                            if spawnPos then
-                                local dist = (spawnPos - PEACOCK_CENTER).Magnitude
-                                if dist > PEACOCK_THRESH then
-                                    tsLog("Peacock respawn "..string.format("%.1f",dist).."stud → re-swap")
-                                    pcall(function() unequipPet(raw) end)
-                                    pcall(function() equipPet(raw) end)
-                                end
-                            end
-                        end)
-                    end
-                else
-                    dbgLog("[DS-ANY] fan trigger tapi Peacock kita di ws=0")
+                    withSwapDebounce(mr8, function()
+                        pcall(function() unequipPet(mraw) end)
+                        pcall(function() equipPet(mraw) end)
+                    end)
                 end
             end
         end
