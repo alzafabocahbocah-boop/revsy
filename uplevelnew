@@ -1,4 +1,6 @@
 -- uplevelnew v8.784
+-- v8.785: fix ws=0/N — lookup modelByUuid pakai r8InWs() prefix match (bukan exact 8-char key)
+--         tambah dump [MDL-MAP] modelByUuid keys + myTrex r8 keys di STATUS log
 -- v8.784: tambah tombol CPY di debug panel — tap 1x copy semua log (sebelumnya hanya double tap)
 -- v8.783: fix tsLog → dbgLog di VIS gone/back/MDL2 — tsLog hanya ada di DS scope, bug ini bikin [VIS] gone/back tidak pernah muncul di log
 -- v8.782: VIS back — log SEMUA model masuk workspace saat ada uuid gone, cek format nama beda (nobrace match), cari root cause visual samar
@@ -259,7 +261,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.784"  -- v8.784: tombol CPY di debug panel
+local VERSION = "v8.785"  -- v8.785: fix ws lookup pakai r8InWs (prefix match), dump modelByUuid+myTrex keys
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -2872,10 +2874,10 @@ do
 
         -- frame mengambang kanan tengah
         local fr = mk("Frame", {
-            Size = UDim2.new(0, 300, 0, 320),
-            Position = UDim2.new(1, -310, 0.5, -160),
-            BackgroundColor3 = Color3.fromRGB(8, 8, 8),
-            BackgroundTransparency = 0.15,
+            Size = UDim2.new(0, 320, 0, 380),
+            Position = UDim2.new(1, -330, 0.5, -190),
+            BackgroundColor3 = Color3.fromRGB(18, 22, 30),
+            BackgroundTransparency = 0.05,
             BorderSizePixel = 0,
             Visible = true,  -- v8.776: tampilkan lagi untuk debug DS event exe baru
             Parent = sg
@@ -4393,10 +4395,23 @@ do
                     end
                 end
                 -- cek yang ada di workspace (modelByUuid)
+                -- modelByUuid key = nama model lengkap "{xxxxxxxx-xxxx-...}" (38 char)
+                -- r8 = 8 char hex prefix tanpa braces/dashes → harus cek substring
+                local function r8InWs(r8)
+                    if not modelByUuid then return false end
+                    -- coba exact dulu (kalau ada entry pendek)
+                    if modelByUuid[r8] or modelByUuid["{"..r8] then return true end
+                    -- loop semua key, cek apakah key mengandung r8 di awal
+                    for k in pairs(modelByUuid) do
+                        local kClean = tostring(k):gsub("[{}%-]","")
+                        if kClean:sub(1,8) == r8 then return true end
+                    end
+                    return false
+                end
                 local now = tick()
                 local trexInWs, trexNoWs, trexNoFire = {}, {}, {}
                 for r8 in pairs(myTrex) do
-                    local inWs = modelByUuid and (modelByUuid[r8] or modelByUuid["{"..r8] or modelByUuid[r8.."-"])
+                    local inWs = r8InWs(r8)
                     local fireN = _dsFireCnt[r8] or 0
                     local lastF = _dsFireLast[r8]
                     local agoBuf = lastF and string.format("%.0fs ago", now-lastF) or "never"
@@ -4409,13 +4424,25 @@ do
                 end
                 local pcInWs = {}
                 for r8 in pairs(myPeacock) do
-                    local inWs = modelByUuid and (modelByUuid[r8] or modelByUuid["{"..r8])
+                    local inWs = r8InWs(r8)
                     local fireN = _dsFireCnt[r8] or 0
                     pcInWs[#pcInWs+1] = r8:sub(1,6).."(fire="..fireN..")"
                 end
                 local nMyTrex = 0; for _ in pairs(myTrex) do nMyTrex = nMyTrex + 1 end
                 dbgLog("[DS] [STATUS] T-Rex ws="..#trexInWs.."/"..nMyTrex.." noWs="..(#trexNoWs > 0 and table.concat(trexNoWs,",") or "ok").." noFire="..(#trexNoFire > 0 and table.concat(trexNoFire,",") or "ok"))
                 dbgLog("[DS] [STATUS] Peacock: "..table.concat(pcInWs,","))
+                -- v8.785: dump modelByUuid keys (pertama kali saja / tiap 30s)
+                local mdlKeys = {}
+                if modelByUuid then
+                    for k in pairs(modelByUuid) do
+                        mdlKeys[#mdlKeys+1] = tostring(k):sub(1,10)
+                    end
+                end
+                dbgLog("[MDL-MAP] modelByUuid keys("..#mdlKeys.."): "..table.concat(mdlKeys,"|"):sub(1,120))
+                -- dump myTrex r8 keys
+                local trexR8s = {}
+                for r8 in pairs(myTrex) do trexR8s[#trexR8s+1] = r8:sub(1,8) end
+                dbgLog("[MDL-MAP] myTrex r8("..#trexR8s.."): "..table.concat(trexR8s,"|"))
                 if #trexInWs > 0 then
                     dbgLog("[DS] [STATUS] ws: "..table.concat(trexInWs," | "))
                 end
