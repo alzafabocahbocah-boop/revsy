@@ -1,4 +1,5 @@
--- uplevelnew v8.787
+-- uplevelnew v8.788
+-- v8.788: [KG-STAT] hitung T-Rex mine di _kgContainer, [NOWSDBG] cek noWs T-Rex inKG
 -- v8.787: dump [KG-RAW] isi _kgContainer — cek PetType + format UUID di container (executor baru mungkin path berbeda)
 -- v8.786: log [EQUIP-SKIP] di equipSesi + [KG-TREX] dump T-Rex uuid dari container — debug T-Rex not in container
 -- v8.785: fix ws=0/N — lookup modelByUuid pakai r8InWs() prefix match (bukan exact 8-char key)
@@ -263,7 +264,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.787"  -- v8.787: dump [KG-RAW] isi _kgContainer — cek PetType + format UUID di container
+local VERSION = "v8.788"  -- v8.788: [KG-STAT] hitung T-Rex mine di container, [NOWSDBG] cek noWs T-Rex ada di container
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -4456,6 +4457,39 @@ do
                 dbgLog("[MDL-MAP] myTrex r8("..#trexR8s.."): "..table.concat(trexR8s,"|"))
                 if #trexInWs > 0 then
                     dbgLog("[DS] [STATUS] ws: "..table.concat(trexInWs," | "))
+                end
+                -- v8.788: hitung T-Rex di _kgContainer (total + yg match myTrex)
+                if _kgContainer then
+                    local kgTrexAll, kgTrexMine = 0, 0
+                    for k,v in pairs(_kgContainer) do
+                        if type(v)=="table" then
+                            local pt = tostring(v.PetType or (v.PetData and v.PetData.PetType) or "")
+                            if pt:find("T%-Rex") or pt:find("T-Rex") then
+                                kgTrexAll = kgTrexAll + 1
+                                local kClean = tostring(k):gsub("[{}%-]","")
+                                if myTrex[kClean:sub(1,8)] then kgTrexMine = kgTrexMine + 1 end
+                            end
+                        end
+                    end
+                    dbgLog("[KG-STAT] T-Rex in container: total="..kgTrexAll.." mine="..kgTrexMine.."/"..nMyTrex)
+                end
+                -- v8.788: untuk T-Rex yg noWs, cek apakah UUID-nya ada di _kgContainer
+                if #trexNoWs > 0 and _kgContainer then
+                    for r8 in pairs(myTrex) do
+                        if not r8InWs(r8) then
+                            -- cari uuid lengkap di container
+                            local foundInKg = false
+                            local fullUuid = nil
+                            for k in pairs(_kgContainer) do
+                                local kClean = tostring(k):gsub("[{}%-]","")
+                                if kClean:sub(1,8) == r8 then
+                                    foundInKg = true; fullUuid = tostring(k):sub(1,14)
+                                    break
+                                end
+                            end
+                            dbgLog("[NOWSDBG] "..r8:sub(1,6).." inKG="..tostring(foundInKg)..(fullUuid and " key="..fullUuid or ""))
+                        end
+                    end
                 end
                 -- v8.780: log UUID yang saat ini visual/model-nya hilang dari workspace (gone tapi belum back)
                 local nowV = tick()
