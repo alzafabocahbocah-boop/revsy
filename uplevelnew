@@ -1,4 +1,5 @@
--- uplevelnew v8.808
+-- uplevelnew v8.809
+-- v8.809: withSwapDebounce — jangan skip kalau UUID sedang swap, tapi queue/tunggu sampai selesai baru jalankan
 -- v8.808: FIX CRITICAL — _dsFireCnt/_dsFireLast nil saat processHits dipanggil → crash sebelum [DS-HIT]
 -- v8.807: RE-SCAN wrap pcall+error logging, langsung print error ke log kalau gagal
 -- v8.806: scan semua RE di ge/ge2 — cari event lain yg bawa animasi/ActivePetStates (bukan hanya DataStream)
@@ -4300,11 +4301,19 @@ do
         end
 
         -- v8.758: debounce per-UUID — cegah multiple swap in-flight untuk pet yang sama
+        -- v8.809: jangan skip — kalau UUID sedang swap, tunggu sampai selesai baru jalankan
         local _swapInFlight = {}  -- r8 -> true kalau sedang swap
         local function withSwapDebounce(r8, fn)
-            if _swapInFlight[r8] then return end
-            _swapInFlight[r8] = true
             task.spawn(function()
+                -- tunggu sampai swap sebelumnya selesai (max 3s biar gak nunggu selamanya)
+                local t0 = tick()
+                while _swapInFlight[r8] and (tick()-t0) < 3 do
+                    task.wait(0.05)
+                end
+                if _swapInFlight[r8] then
+                    dbgLog("[DS] v8.809 withSwapDebounce timeout r8="..r8.." — jalankan paksa")
+                end
+                _swapInFlight[r8] = true
                 local ok, err = pcall(fn)
                 if not ok then tsLog("swap-err "..r8..": "..tostring(err)) end
                 _swapInFlight[r8] = nil
