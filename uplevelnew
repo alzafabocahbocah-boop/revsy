@@ -1,4 +1,5 @@
--- uplevelnew v8.805
+-- uplevelnew v8.806
+-- v8.806: scan semua RE di ge/ge2 — cari event lain yg bawa animasi/ActivePetStates (bukan hanya DataStream)
 -- v8.805: [APS-PATH] dump semua path dari ActivePetsService (5 event pertama) — lihat struktur path asli
 -- v8.804: deepSearchKey — scan KEY table recursive (port up3.8kg) + fix deepFind skip nil
 -- v8.803: [TNJ-PATH] dump semua path dari TNJHOF event (5 pertama) — lihat isi DS TNJHOF sebenarnya
@@ -4801,6 +4802,62 @@ do
         end)
 
         tsLog("Peacock fan swap listener ON — CENTER("..PEACOCK_CENTER.X..","..PEACOCK_CENTER.Y..","..PEACOCK_CENTER.Z..")")
+
+        -- v8.806: scan SEMUA RemoteEvent di ge2 — cari yang bawa ActivePetStates/CustomAnimationState
+        -- DataStream sudah di-cover, sisanya kita listen sementara untuk diagnosa
+        task.spawn(function()
+            local _reScanned = {}
+            local _reCount = 0
+            local function scanRE(parent, label)
+                for _, child in ipairs(parent:GetChildren()) do
+                    if child:IsA("RemoteEvent") and not _reScanned[child.Name] then
+                        _reScanned[child.Name] = true
+                        _reCount = _reCount + 1
+                        if child.Name ~= "DataStream" then
+                            -- listen sementara, log kalau ada ActivePetStates/CustomAnimationState
+                            local _reEvtCount = 0
+                            child.OnClientEvent:Connect(function(...)
+                                _reEvtCount = _reEvtCount + 1
+                                local args = {...}
+                                -- cek semua string arg untuk "ActivePetStates" atau "CustomAnimationState"
+                                local function containsAnim(val, depth)
+                                    depth = depth or 0
+                                    if depth > 5 then return false end
+                                    local t = type(val)
+                                    if t == "string" then
+                                        return val:find("ActivePetStates",1,true) or val:find("CustomAnimationState",1,true) or val:find("AnimationState",1,true)
+                                    elseif t == "table" then
+                                        for k, v in pairs(val) do
+                                            local ks = tostring(k)
+                                            if ks:find("CustomAnimationState",1,true) or ks:find("AnimationState",1,true) then return true end
+                                            if containsAnim(v, depth+1) then return true end
+                                        end
+                                    end
+                                    return false
+                                end
+                                local found = false
+                                for i = 1, #args do
+                                    if containsAnim(args[i]) then found = true; break end
+                                end
+                                if found or _reEvtCount <= 2 then
+                                    local sampleArgs = {}
+                                    for i = 1, math.min(#args, 3) do
+                                        local t = type(args[i])
+                                        sampleArgs[#sampleArgs+1] = "["..i.."]="..t
+                                        if t == "string" then sampleArgs[#sampleArgs] = sampleArgs[#sampleArgs]..":"..tostring(args[i]):sub(1,30) end
+                                    end
+                                    dbgLog("[RE-SCAN] "..label.."/"..child.Name.." evt#".._reEvtCount.." "..(found and "ANIM!" or "").." "..table.concat(sampleArgs," "))
+                                end
+                            end)
+                        end
+                    end
+                end
+            end
+            task.wait(0.5)
+            pcall(function() scanRE(ge2, "ge2") end)
+            if ge then pcall(function() scanRE(ge, "ge") end) end
+            dbgLog("[RE-SCAN] scan selesai — ".._reCount.." RE di-listen")
+        end)
     end)
     -- v8.746: end do-block DataStream swap (reload guard dihapus)
 
