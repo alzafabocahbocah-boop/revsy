@@ -1,4 +1,5 @@
--- uplevelnew v8.797
+-- uplevelnew v8.798
+-- v8.798: [WS-UUID] dump UUID T-Rex+Peacock di workspace saat DS event masuk — konfirmasi UUID mana yang aktif di garden
 -- v8.797: port 3 format DS parse dari up3.8kg — fmt1 (path CAS langsung), fmt2 (val.CAS), fmt3 (val.Arguments.CAS)
 -- v8.796: flat loop capture CustomAnimationState termasuk nil (jadi "clear") + SWAP_ANIM tambah clear — DS swap via nil juga trigger
 -- v8.795: [EQ]/[UEQ] log di equipPet/unequipPet — konfirmasi apakah pet beneran di-equip/unequip
@@ -4246,6 +4247,17 @@ do
                     end
                 end
             end
+            -- v8.798: log kalau miss — tunjukkan raw yang dicek vs beberapa key di container
+            pcall(function()
+                local kg = _kgContainer
+                if not kg then dbgLog("[KG-MISS] raw="..raw:sub(1,8).." kg=NIL"); return end
+                -- cek apakah ada prefix match (UUID full vs short)
+                local found = nil
+                for k, _ in pairs(kg) do
+                    if tostring(k):find(raw:sub(1,8), 1, true) then found = tostring(k):sub(1,14); break end
+                end
+                dbgLog("[KG-MISS] raw="..raw:sub(1,8).." kgMatch="..(found or "NONE"))
+            end)
             return false
         end
 
@@ -4642,6 +4654,28 @@ do
                         end
                     end
                     dbgLog(table.concat(dumpParts," "))
+                end
+                -- v8.798: dump UUID T-Rex+Peacock yang ada di workspace saat DS event masuk
+                -- cek setiap 20 event (bukan tiap event biar tidak spam)
+                if _dsEvtCount % 20 == 1 then
+                    pcall(function()
+                        local kg = _kgContainer
+                        if not kg then return end
+                        local wsUUIDs = {}
+                        for name, _ in pairs(modelByUuid) do
+                            local raw = name:gsub("[{}]","")
+                            local entry = kg[raw] or kg["{"..raw.."}"] or kg[name]
+                            if entry then
+                                local pt = type(entry)=="table" and tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "?") or "?"
+                                local ptl = pt:lower()
+                                if ptl:find("t.rex") or ptl:find("trex") or ptl:find("peacock") then
+                                    wsUUIDs[#wsUUIDs+1] = raw:sub(1,8).."="..pt:sub(1,8)
+                                end
+                            end
+                        end
+                        dbgLog("[WS-UUID] evt#".._dsEvtCount.." trex/pcck in ws: "..
+                            (#wsUUIDs>0 and table.concat(wsUUIDs," | ") or "NONE"))
+                    end)
                 end
                 local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
                 -- v8.709: TEST flat loop (disable deepFind)
