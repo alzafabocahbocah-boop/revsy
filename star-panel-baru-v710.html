@@ -5089,8 +5089,18 @@ async function pushLvlMaxTim(){
       const r = await api("/ps-list");
       if(r && Array.isArray(r.ps)) r.ps.forEach(x => { if(x&&x.akun&&x.ps_link) pslinkLocal[x.akun]=x.ps_link; });
     }catch(e){}
+    // === DEBUG: lihat isi pslinkLocal & devs ===
+    const _dbgPsKeys = Object.keys(pslinkLocal);
+    if(!window.__ZenxLvlTimDbg) window.__ZenxLvlTimDbg = {};
+    window.__ZenxLvlTimDbg.pslinkKeys = _dbgPsKeys;
+    window.__ZenxLvlTimDbg.pslinkCount = _dbgPsKeys.length;
+    window.__ZenxLvlTimDbg.pushed = [];
+    window.__ZenxLvlTimDbg.skipped = [];
+    window.__ZenxLvlTimDbg.ts = new Date().toLocaleTimeString("id-ID");
+    // ==========================================
     let res; try{ res = hitungLevelLive(); }catch(e){}
     const devs = (res && res.devs) ? res.devs : (Array.isArray(res) ? res : []);
+    window.__ZenxLvlTimDbg.devsCount = devs.length;
     for(const d of devs){
       const namaRF = (d.nm || "").replace(/[^a-zA-Z0-9_-]/g,"_"); if(!namaRF) continue;
       // resolve psLink tim: host = akun yang ps_nama-nya paling banyak diacu (sama kayak _pilihServerHome)
@@ -5105,7 +5115,10 @@ async function pushLvlMaxTim(){
       let timHost = ""; let best = 0;
       Object.keys(psCount).forEach(p=>{ if(psCount[p]>best){ best=psCount[p]; timHost=p; } });
       const lk = timHost ? (pslinkLocal[timHost]||"") : "";
-      if(!lk) continue; // skip tim yang belum ada psLink
+      if(!lk){
+        window.__ZenxLvlTimDbg.skipped.push({tim: namaRF, timHost, psCountKeys: Object.keys(psCount)});
+        continue; // skip tim yang belum ada psLink
+      }
       // hitung total age500 tim ini
       let age500 = 0;
       const akunList = [];
@@ -5116,9 +5129,11 @@ async function pushLvlMaxTim(){
         age500 += Number(st.udah)||0;
         akunList.push(nm);
       });
+      window.__ZenxLvlTimDbg.pushed.push({tim: namaRF, timHost, akunCount: akunList.length, age500});
       await api("/lvlmax-tim","PUT",{ tim: namaRF, psLink: lk, age500, akun: akunList });
     }
-  }catch(e){}
+    console.log("[pushLvlMaxTim] DEBUG:", JSON.stringify(window.__ZenxLvlTimDbg));
+  }catch(e){ console.error("[pushLvlMaxTim] ERROR:", e); }
 }
 
 // v573: push daftar akun MARKET "akun=total:max" -> /marketakun (uplevel gift target + skip full)
