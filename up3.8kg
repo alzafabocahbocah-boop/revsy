@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.79 | log tipe fn unequip/equip untuk diagnosa         ║
+-- ║  UP KG — v2.80 | fix processHits scope — pindah balik ke task.spawn║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.79"
+local VERSION = "up38kg-v2.80"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -723,7 +723,7 @@ _G.ZenxAnimDbgLogAll = _G.ZenxAnimDbgLogAll or {}
 -- v2.34: tulis langsung di top-level saat inject — buat verifikasi panel bisa baca
 do
     local ts = os.date("%H:%M:%S")
-    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.79")
+    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.80")
     if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
 end
 -- v2.26: inisialisasi ZenxSuppSwapOn di top-level biar aktif tanpa KG nyala
@@ -2872,7 +2872,72 @@ do
                 return ok and result or false
             end
 
--- v2.78: ssLog di scope luar supaya swapWorkerStart + processHits bisa pakai
+            -- v2.80: processHits dipindah kembali ke dalam task.spawn — supaya bisa akses SWAP_ANIM, isMyPetUUID, dll
+            local function processHits(hits)
+                local seen = {}
+                for _, hit in ipairs(hits) do
+                    local r, animStr, fmt = hit[1], hit[2], (hit[3] or "F?")
+                    local anim = tostring(animStr):lower()
+                    if not _G.ZenxSuppSwapOn then continue end
+                    local r8 = r:sub(1,8)
+                    if not isMyPetUUID(r) then continue end
+                    local hotdog = isMyHotdog(r)
+                    if not hotdog and not SWAP_ANIM[anim] then continue end
+                    animDbgPush(r, animStr)
+                    if not _G.ZenxSuppSwapOn then
+                        ssLog("skip: SUPP SWAP ANIM toggle OFF")
+                        continue
+                    end
+                    local targetR = r
+                    local kw = LOOKUP_KW[anim]
+                    if kw then
+                        local found = nil
+                        for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
+                            if not container then continue end
+                            for _, t in ipairs(container:GetChildren()) do
+                                if t:IsA("Tool") then
+                                    local uuid = t:GetAttribute("PET_UUID")
+                                    local f = tostring(t:GetAttribute("f") or ""):lower()
+                                    if uuid then for _, k in ipairs(kw) do if f:find(k,1,true) then found=tostring(uuid); break end end end
+                                end
+                                if found then break end
+                            end
+                            if found then break end
+                        end
+                        if not found then
+                            ssLog("skip: "..anim.." "..r8.." perlu hotdog di backpack/equip tapi gak ketemu")
+                            continue
+                        end
+                        targetR = found
+                    end
+                    local raw = targetR:gsub("[{}]","")
+                    local raw8 = raw:sub(1,8)
+                    local _unequip = _G._ZenxUnequipPet
+                    local _equip   = _G._ZenxEquipPet
+                    if not _unequip or not _equip then
+                        ssLog("ERR: fungsi equip nil — coba re-inject script")
+                        continue
+                    end
+                    swapJobN = swapJobN + 1
+                    local capturedRaw, capturedRaw8, capturedAnim = raw, raw8, anim
+                    local capturedUnequip, capturedEquip = _unequip, _equip
+                    local capturedN = swapJobN
+                    ssLog("→ SWAP "..capturedAnim.." "..capturedRaw8.." #"..capturedN.." ["..fmt.."]")
+                    swapQueue[#swapQueue+1] = function()
+                        local ok, err = pcall(function()
+                            if capturedAnim == "trumpet" then task.wait(0.8) end
+                            capturedUnequip(capturedRaw)
+                            ssLog("unequip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
+                            capturedEquip(capturedRaw)
+                            ssLog("equip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
+                        end)
+                        if not ok then ssLog("ERR swap "..capturedAnim.." "..capturedRaw8.." #"..capturedN..": "..tostring(err):sub(1,40)) end
+                    end
+                    swapWorkerStart()
+                end
+            end
+
+-- v2.80: ssLog di scope luar supaya swapWorkerStart bisa pakai
 local function ssLog(msg)
     local s="[SS] "..tostring(msg)
     print(s)
@@ -2914,85 +2979,6 @@ local function swapWorkerStart()
         end
     end)
 end
-
-local function processHits(hits)
-                local seen = {}
-                for _, hit in ipairs(hits) do
-                    local r, animStr, fmt = hit[1], hit[2], (hit[3] or "F?")
-                    local anim = tostring(animStr):lower()
-                    -- filter awal: skip non-SWAP_ANIM dulu (cepat, O(1))
-                    -- hotdog check dilakukan SETELAH isMyPetUUID (tidak perlu scan untuk UUID orang lain)
-                    if not SWAP_ANIM[anim] then
-                        -- nanti cek hotdog setelah konfirmasi UUID milik kita
-                        -- untuk sekarang skip dulu, akan di-override di bawah
-                    end
-                    if not _G.ZenxSuppSwapOn then continue end
-                    local r8 = r:sub(1,8)
-                    -- seen[r8] dimatiin — semua pet boleh masuk queue walau uuid sama dalam 1 batch
-                    -- if seen[r8] then continue end
-                    -- seen[r8] = true
-                    if not isMyPetUUID(r) then continue end
-                    -- v2.40: UUID milik kita — cek apakah hotdog (bypass SWAP_ANIM filter)
-                    local hotdog = isMyHotdog(r)
-                    if not hotdog and not SWAP_ANIM[anim] then continue end
-                    animDbgPush(r, animStr)
-                    if not _G.ZenxSuppSwapOn then
-                        ssLog("skip: SUPP SWAP ANIM toggle OFF")
-                        continue
-                    end
-                    local targetR = r
-                    local kw = LOOKUP_KW[anim]
-                    if kw then
-                        local found = nil
-                        for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
-                            if not container then continue end
-                            for _, t in ipairs(container:GetChildren()) do
-                                if t:IsA("Tool") then
-                                    local uuid = t:GetAttribute("PET_UUID")
-                                    local f = tostring(t:GetAttribute("f") or ""):lower()
-                                    if uuid then for _, k in ipairs(kw) do if f:find(k,1,true) then found=tostring(uuid); break end end end
-                                end
-                                if found then break end
-                            end
-                            if found then break end
-                        end
-                        if not found then
-                            ssLog("skip: "..anim.." "..r8.." perlu hotdog di backpack/equip tapi gak ketemu")
-                            continue
-                        end
-                        targetR = found
-                    end
-                    -- animDbgPush sudah dipanggil di awal loop (v2.29), skip duplikat di sini
-                    local raw = targetR:gsub("[{}]","")
-                    local raw8 = raw:sub(1,8)
-                    -- v2.28: pakai _G wrapper — akses valid walau upkg off (scope luar do-block)
-                    local _unequip = _G._ZenxUnequipPet
-                    local _equip   = _G._ZenxEquipPet
-                    if not _unequip or not _equip then
-                        ssLog("ERR: fungsi equip nil — coba re-inject script")
-                        continue
-                    end
-                    -- v2.67: push ke swapQueue, worker drain sequential no jeda
-                    swapJobN = swapJobN + 1
-                    local capturedRaw, capturedRaw8, capturedAnim = raw, raw8, anim
-                    local capturedUnequip, capturedEquip = _unequip, _equip
-                    local capturedN = swapJobN
-                    ssLog("→ SWAP "..capturedAnim.." "..capturedRaw8.." #"..capturedN.." ["..fmt.."]")
-                    swapQueue[#swapQueue+1] = function()
-                        local ok, err = pcall(function()
-                            if capturedAnim == "trumpet" then task.wait(0.8) end
-                            -- v2.79: log tipe fungsi untuk diagnosa
-                            ssLog("fn unequip="..tostring(capturedUnequip).." equip="..tostring(capturedEquip))
-                            capturedUnequip(capturedRaw)
-                            ssLog("unequip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
-                            capturedEquip(capturedRaw)
-                            ssLog("equip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
-                        end)
-                        if not ok then ssLog("ERR swap "..capturedAnim.." "..capturedRaw8.." #"..capturedN..": "..tostring(err):sub(1,40)) end
-                    end
-                    swapWorkerStart()
-                end
-            end
 
             local function connectDS(ds)
                 local conn = ds.OnClientEvent:Connect(function(...)
