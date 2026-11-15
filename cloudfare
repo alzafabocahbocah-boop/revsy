@@ -4299,6 +4299,106 @@ export default {
         return json({ ok: true, akun });
       }
 
+      // ============================================================
+      // SUPLAI MARKET — market minta join ke server leveling
+      // POST /suplai-minta  : market lapor pet < 20, minta link PS leveling
+      //   body: { akun: "dinoegg208", pet: 12 }
+      //   balas: { ok, leveling, psLink, psNama } atau { ok:false, pesan }
+      // POST /suplai-selesai: market lapor pet sudah max (clear suplai aktif)
+      //   body: { akun: "dinoegg208" }
+      // GET  /suplai-antri  : worker polling — siapa market yang lagi minta suplai
+      //   balas: { antri: [{akunMarket, akunLeveling, psLink, psNama, ts}] }
+      // ============================================================
+
+      if (jalur === "/suplai-minta" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const akunMarket = teks(b.akun);
+        const petJualan = angka(b.pet, 0);
+        if (!akunMarket) return salah("akun kosong");
+
+        // ambil pslink (link PS per akun leveling)
+        const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
+        let pslinkPeta = {};
+        if (cl) { try { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslinkPeta = d; } catch {} }
+
+        // ambil data leveling — cari yang masih hidup + age banyak
+        const SEGAR = skrg - 420;
+        let rowLvl = [];
+        try {
+          const rl = await db.prepare("SELECT akun, ts, data FROM leveling").all();
+          rowLvl = (rl.results || []).filter(x => (x.ts || 0) > SEGAR);
+        } catch (e) {}
+
+        // cari akun leveling yang punya pslink + age >= 50
+        let pilihan = null, pilAge = -1;
+        for (const x of rowLvl) {
+          let d = {};
+          try { d = JSON.parse(x.data); } catch {}
+          const age = Number(d.age || 0);
+          if (!pslinkPeta[x.akun]) continue;  // gak punya PS link, skip
+          if (age > pilAge) { pilAge = age; pilihan = x; }
+        }
+
+        if (!pilihan) return json({ ok: false, pesan: "belum ada akun leveling siap" });
+
+        const psLink = pslinkPeta[pilihan.akun];
+        const psNama = "lvl:" + pilihan.akun;
+
+        // simpan ke cfg scope 'suplai-antri' — worker polling ini
+        const ca = await db.prepare("SELECT data FROM cfg WHERE scope='suplai-antri'").first();
+        let antri = {};
+        if (ca) { try { const d = JSON.parse(ca.data); if (d && typeof d === "object") antri = d; } catch {} }
+        antri[akunMarket] = { akunLeveling: pilihan.akun, psLink, psNama, pet: petJualan, ts: skrg };
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('suplai-antri', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(antri)).run();
+
+        return json({ ok: true, leveling: pilihan.akun, psLink, psNama });
+      }
+
+      if (jalur === "/suplai-selesai" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const akunMarket = teks(b.akun);
+        if (!akunMarket) return salah("akun kosong");
+
+        // hapus dari antri
+        const ca = await db.prepare("SELECT data FROM cfg WHERE scope='suplai-antri'").first();
+        let antri = {};
+        if (ca) { try { const d = JSON.parse(ca.data); if (d && typeof d === "object") antri = d; } catch {} }
+        const ada = !!antri[akunMarket];
+        delete antri[akunMarket];
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('suplai-antri', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(antri)).run();
+
+        return json({ ok: true, akun: akunMarket, dihapus: ada });
+      }
+
+      if (jalur === "/suplai-antri" && req.method === "GET") {
+        const ca = await db.prepare("SELECT data FROM cfg WHERE scope='suplai-antri'").first();
+        let antri = {};
+        if (ca) { try { const d = JSON.parse(ca.data); if (d && typeof d === "object") antri = d; } catch {} }
+        // buang yang stale (> 30 menit tanpa update)
+        const STALE = skrg - 1800;
+        let berubah = false;
+        for (const k of Object.keys(antri)) {
+          if ((antri[k].ts || 0) < STALE) { delete antri[k]; berubah = true; }
+        }
+        if (berubah) {
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('suplai-antri', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify(antri)).run();
+        }
+        const list = Object.entries(antri).map(([akunMarket, v]) => ({
+          akunMarket, akunLeveling: v.akunLeveling, psLink: v.psLink,
+          psNama: v.psNama, pet: v.pet, ts: v.ts
+        }));
+        return json({ skrg, antri: list });
+      }
+
       return salah("jalur gak dikenal: " + jalur, 404);
     } catch (e) {
       // v8.89: log error ke Cloudflare Workers logs (bisa dilihat di dashboard / wrangler tail)
