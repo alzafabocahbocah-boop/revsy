@@ -2875,8 +2875,6 @@ do
 
 local function processHits(hits)
                 local seen = {}
-                -- v2.41: kumpulin dulu semua job valid, baru jalanin sequential (1 pet selesai baru next)
-                local jobs = {}
                 for _, hit in ipairs(hits) do
                     local r, animStr = hit[1], hit[2]
                     local anim = tostring(animStr):lower()
@@ -2945,12 +2943,12 @@ local function processHits(hits)
                         ssLog("ERR: fungsi equip nil — coba re-inject script")
                         continue
                     end
-                    -- v2.41: simpan job, bukan langsung spawn
+                    -- v2.59: langsung spawn per pet, paralel (gak perlu queue/sort)
                     local capturedRaw, capturedRaw8, capturedAnim = raw, raw8, anim
                     local capturedUnequip, capturedEquip = _unequip, _equip
-                    local jobFn; jobFn = function()
+                    task.spawn(function()
                         pcall(function()
-                            -- semua animasi: langsung unequip 1x → equip
+                            if capturedAnim == "trumpet" then task.wait(0.8) end
                             capturedUnequip(capturedRaw)
                             task.wait(0.03)
                             capturedEquip(capturedRaw)
@@ -2977,30 +2975,6 @@ local function processHits(hits)
                                 end
                             end
                         end)
-                    end
-                    -- v2.49: trumpet (elephant) punya loop sendiri, tidak masuk queue utama
-                    -- v2.50: tunggu 0.8s setelah detect sebelum swap
-                    if capturedAnim == "trumpet" then
-                        task.spawn(function()
-                            task.wait(0.8)
-                            jobFn()
-                            task.wait(0.1)
-                        end)
-                    else
-                        jobs[#jobs+1] = { fn = jobFn, anim = capturedAnim }
-                    end
-                end
-                -- v2.42: sort jobs — frill selalu duluan
-                table.sort(jobs, function(a, b)
-                    return a.anim == "frill" and b.anim ~= "frill"
-                end)
-                -- v2.41: jalanin semua job sequential dalam 1 task.spawn
-                if #jobs > 0 then
-                    task.spawn(function()
-                        for _, job in ipairs(jobs) do
-                            job.fn()
-                            task.wait(0.1)
-                        end
                     end)
                 end
             end
