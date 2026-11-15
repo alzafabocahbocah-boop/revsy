@@ -4471,6 +4471,7 @@ do
     do
         local LVLMAX_URL = "https://dry-glitter-63e4.petagee5.workers.dev/lvlmax"   -- akun leveling (sama kayak up6kg)
         local BAHAN_URL = "https://dry-glitter-63e4.petagee5.workers.dev/up6kg-bahan"   -- v10.94: bahan global, di-fetch barengan
+        local _LVLMAX_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"  -- v10.96: kunci buat /lvlmax-tim (HttpGet gak bisa set header)
         -- v1.49: CACHE LOKAL per-akun (mirror fix up6kg v10.127) -- fallback kalau panel lagi mati
         local LVLMAX_CACHE_FILE = "zenx_lvlmax_cache38_" .. tostring((game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.Name) or "x") .. ".json"
         do
@@ -4491,12 +4492,16 @@ do
             local LVLMAX_TIM_URL = LVLMAX_URL:gsub("/lvlmax$", "/lvlmax-tim")  -- v10.95: baca per-tim (merge dari semua panel)
             while true do
                 pcall(function()
-                    -- v10.95: UTAMA: baca /lvlmax-tim (per-tim, merge dari semua panel, gak overwrite)
+                    -- v10.96: UTAMA: baca /lvlmax-tim pakai request+kunci (HttpGet gak bisa set header -> "kunci salah")
                     local rawTim
-                    pcall(function() rawTim = game:HttpGet(LVLMAX_TIM_URL) end)
-                    if (not rawTim or rawTim == "") then
-                        local req = request or http_request or (syn and syn.request)
-                        if req then local ok, res = pcall(function() return req({ Url = LVLMAX_TIM_URL, Method = "GET" }) end); if ok and res and res.Body then rawTim = res.Body end end
+                    local _req = request or http_request or (syn and syn.request)
+                    if _req then
+                        local ok, res = pcall(function() return _req({ Url = LVLMAX_TIM_URL, Method = "GET", Headers = { ["X-Kunci"] = _LVLMAX_KUNCI } }) end)
+                        if ok and res and res.Body and res.Body ~= "" then rawTim = res.Body end
+                    end
+                    if not rawTim or rawTim == "" then
+                        -- fallback HttpGet (kalau executor gak support request)
+                        pcall(function() rawTim = game:HttpGet(LVLMAX_TIM_URL) end)
                     end
                     if rawTim and rawTim ~= "" then
                         local ok2, decoded = pcall(function() return game:GetService("HttpService"):JSONDecode(rawTim) end)
