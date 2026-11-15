@@ -2873,6 +2873,22 @@ do
                 return ok and result or false
             end
 
+-- v2.61: swap queue — 1 worker drain sequential dengan jeda 0.1s antar swap
+                local swapQueue = {}
+                local swapWorkerRunning = false
+                local function swapWorkerStart()
+                    if swapWorkerRunning then return end
+                    swapWorkerRunning = true
+                    task.spawn(function()
+                        while #swapQueue > 0 do
+                            local job = table.remove(swapQueue, 1)
+                            pcall(job)
+                            task.wait(0.1)
+                        end
+                        swapWorkerRunning = false
+                    end)
+                end
+
 local function processHits(hits)
                 local seen = {}
                 for _, hit in ipairs(hits) do
@@ -2946,7 +2962,7 @@ local function processHits(hits)
                     -- v2.59: langsung spawn per pet, paralel (gak perlu queue/sort)
                     local capturedRaw, capturedRaw8, capturedAnim = raw, raw8, anim
                     local capturedUnequip, capturedEquip = _unequip, _equip
-                    task.spawn(function()
+                    swapQueue[#swapQueue+1] = function()
                         local ok, err = pcall(function()
                             if capturedAnim == "trumpet" then task.wait(0.8) end
                             capturedUnequip(capturedRaw)
@@ -2979,7 +2995,8 @@ local function processHits(hits)
                             end
                         end)
                         if not ok then ssLog("ERR swap "..capturedAnim.." "..capturedRaw8..": "..tostring(err):sub(1,40)) end
-                    end)
+                    end
+                    swapWorkerStart()
                 end
             end
 
