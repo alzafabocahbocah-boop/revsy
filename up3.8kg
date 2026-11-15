@@ -2947,11 +2947,13 @@ local function processHits(hits)
                     local capturedRaw, capturedRaw8, capturedAnim = raw, raw8, anim
                     local capturedUnequip, capturedEquip = _unequip, _equip
                     task.spawn(function()
-                        pcall(function()
+                        local ok, err = pcall(function()
                             if capturedAnim == "trumpet" then task.wait(0.8) end
                             capturedUnequip(capturedRaw)
+                            ssLog("unequip OK "..capturedAnim.." "..capturedRaw8)
                             task.wait(0.03)
                             capturedEquip(capturedRaw)
+                            ssLog("equip OK "..capturedAnim.." "..capturedRaw8)
                             -- position check: hanya untuk fan
                             if capturedAnim == "fan" then
                                 local CENTER = Vector3.new(10,3,12)
@@ -2972,9 +2974,11 @@ local function processHits(hits)
                                 conn2:Disconnect()
                                 if spawnPos and (spawnPos-CENTER).Magnitude > 2.0 then
                                     capturedUnequip(capturedRaw); task.wait(0.03); capturedEquip(capturedRaw)
+                                    ssLog("fan reswap OK "..capturedRaw8)
                                 end
                             end
                         end)
+                        if not ok then ssLog("ERR swap "..capturedAnim.." "..capturedRaw8..": "..tostring(err):sub(1,40)) end
                     end)
                 end
             end
@@ -5308,6 +5312,40 @@ do
                 if not tostring(svc):find("ActivePets", 1, true) then return end
                 if type(data) == "table" then pcall(scanDS, data) end
             end)
+        end)
+
+        -- ── poll ZenxAnimDbgLog buat unequip/equip OK + ERR dari ssLog ──
+        local lastDbgN = 0
+        local C_UNEQ  = Color3.fromRGB(96, 165, 250)   -- biru = unequip OK
+        local C_EQ    = Color3.fromRGB(74, 222, 128)    -- hijau = equip OK
+        local C_RERR  = Color3.fromRGB(248, 113, 113)   -- merah = ERR swap
+        task.spawn(function()
+            while fr2 and fr2.Parent do
+                pcall(function()
+                    local log = _G.ZenxAnimDbgLog or {}
+                    local n = #log
+                    if n ~= lastDbgN then
+                        -- ZenxAnimDbgLog: insert at 1 (newest first), tapi kita track dari ujung lama
+                        -- ambil baris yang belum kita tampilkan (baris baru ada di depan)
+                        local newCount = n - lastDbgN
+                        if newCount > 0 and newCount <= n then
+                            for i = newCount, 1, -1 do
+                                local ln = log[i] or ""
+                                -- filter: hanya tampilkan unequip/equip/ERR swap
+                                if ln:find("unequip OK",1,true) or ln:find("equip OK",1,true)
+                                    or ln:find("fan reswap OK",1,true) or ln:find("ERR swap",1,true) then
+                                    local col = C_UNEQ
+                                    if ln:find("equip OK",1,true) or ln:find("reswap OK",1,true) then col = C_EQ end
+                                    if ln:find("ERR",1,true) then col = C_RERR end
+                                    addRow(ln, col)
+                                end
+                            end
+                        end
+                        lastDbgN = n
+                    end
+                end)
+                task.wait(0.1)
+            end
         end)
 
         -- ── update toggle button tiap 1s ──
