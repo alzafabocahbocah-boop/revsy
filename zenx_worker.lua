@@ -6,7 +6,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.688"
+local VERSION = "9.689"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5418,6 +5418,7 @@ local function run(cfg)
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local lastSuplaiAntriCek = 0  -- v9.688: kapan terakhir poll /suplai-antri (market minta isi)
     local _suplaiAntriKnown = {}  -- v9.688: {akunMarket -> {akunLeveling, psLink, psNama}} yg lagi aktif
+    local _psOverrideSetTs   = 0  -- v9.689: kapan _ps_override terakhir diisi (non-kosong) — buat timeout suplai market
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
     local LISENSI_CEK_TS = 0   -- v9.239: kapan terakhir cek lisensi PRIORITAS (top-loop, tiap 60s)
     local lastSettingCek = 0   -- v9.34: kapan terakhir cek /setting-tim (tiap 5s)
@@ -6823,9 +6824,29 @@ local function run(cfg)
                 if link ~= cfg._ps_last then
                     cfg._ps_last = link
                     cfg._ps_override = link
+                    _psOverrideSetTs = (link ~= "") and os.time() or 0  -- v9.689: catat kapan mulai di PS
                     info("PS dari panel: " .. (link ~= "" and link or "(public)"))
                 end
             end
+        end
+
+        -- v9.689: timeout suplai market — kalau udah > 20 menit di PS leveling → balik ke public
+        if tostring(cfg.script_label or ""):find("MARKET")
+            and (cfg._ps_override or "") ~= ""
+            and _psOverrideSetTs > 0
+            and (os.time() - _psOverrideSetTs) >= 1200
+        then
+            info("[SUPLAI-TIMEOUT] udah " .. math.floor((os.time()-_psOverrideSetTs)/60) .. " menit di PS leveling → balik public + lapor selesai ke panel")
+            cfg._ps_last     = ""
+            cfg._ps_override = ""
+            _psOverrideSetTs = 0
+            pcall(function()
+                local akunList = {}
+                for pkg, u in pairs(mapAkun or {}) do akunList[#akunList+1] = u end
+                local akunKirim = akunList[1] or cfg.tim
+                api_post(cfg, "/suplai-selesai",
+                    string.format('{"akun":%q}', akunKirim), "POST")
+            end)
         end
 
         if tostring(cfg.script_label or ""):find("UP6KG") then
