@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v1.34"
+local VERSION = "v1.35"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2261,21 +2261,30 @@ do
 
     local TR = { targets = {}, tipe = {}, minKg = 0, minAge = 0, autoAcc = false, mode = "off" }
     local function saveTr()
-        pcall(function()
-            if not writefile then return end
+        local ok, err = pcall(function()
+            if not writefile then error("writefile nil") end
             writefile(TRADE_CFG, HS:JSONEncode({ targets=TR.targets, tipe=TR.tipe, minKg=TR.minKg, minAge=TR.minAge, autoAcc=TR.autoAcc, mode=TR.mode }))
         end)
+        if not ok then print("[Trade] saveTr gagal: " .. tostring(err)) end
     end
     pcall(function()
-        if isfile and isfile(TRADE_CFG) and readfile then
-            local c = HS:JSONDecode(readfile(TRADE_CFG))
-            if type(c) == "table" then
-                if type(c.targets)=="table" then local a={} for _,v in ipairs(c.targets) do if type(v)=="string" then a[#a+1]=v end end TR.targets=a end
-                if type(c.tipe)=="table" then local s={} for k,v in pairs(c.tipe) do if type(k)=="string" and v then s[k]=true end end TR.tipe=s end
-                TR.minKg=tonumber(c.minKg) or 0; TR.minAge=tonumber(c.minAge) or 0; TR.autoAcc=(c.autoAcc==true)
-                TR.mode = (c.mode=="trade" or c.mode=="gift") and c.mode or "off"
-            end
+        -- v1.35: isfile nil di beberapa executor → pakai pcall readfile langsung
+        local ok, raw = pcall(function()
+            if isfile and not isfile(TRADE_CFG) then return nil end
+            return readfile and readfile(TRADE_CFG) or nil
+        end)
+        if not ok or not raw or raw == "" then
+            print("[Trade] cfg gak ada / gagal baca: " .. tostring(raw)); return
         end
+        local ok2, c = pcall(function() return HS:JSONDecode(raw) end)
+        if not ok2 or type(c) ~= "table" then
+            print("[Trade] JSON parse gagal: " .. tostring(c)); return
+        end
+        if type(c.targets)=="table" then local a={} for _,v in ipairs(c.targets) do if type(v)=="string" then a[#a+1]=v end end TR.targets=a end
+        if type(c.tipe)=="table" then local s={} for k,v in pairs(c.tipe) do if type(k)=="string" and v then s[k]=true end end TR.tipe=s end
+        TR.minKg=tonumber(c.minKg) or 0; TR.minAge=tonumber(c.minAge) or 0; TR.autoAcc=(c.autoAcc==true)
+        TR.mode = (c.mode=="trade" or c.mode=="gift") and c.mode or "off"
+        print("[Trade] cfg loaded — targets=" .. #TR.targets .. " mode=" .. TR.mode)
     end)
 
     local TradeSys = {}
