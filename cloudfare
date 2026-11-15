@@ -4321,7 +4321,13 @@ export default {
         let pslinkPeta = {};
         if (cl) { try { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslinkPeta = d; } catch {} }
 
-        // ambil data leveling — cari yang masih hidup + age banyak
+        // ambil antri aktif — skip leveling yang sudah dipake market lain
+        const ca = await db.prepare("SELECT data FROM cfg WHERE scope='suplai-antri'").first();
+        let antri = {};
+        if (ca) { try { const d = JSON.parse(ca.data); if (d && typeof d === "object") antri = d; } catch {} }
+        const sdgPake = new Set(Object.values(antri).map(x => x.akunLeveling));
+
+        // ambil data leveling — semua yang masih hidup (ts < 7 menit lalu)
         const SEGAR = skrg - 420;
         let rowLvl = [];
         try {
@@ -4329,13 +4335,14 @@ export default {
           rowLvl = (rl.results || []).filter(x => (x.ts || 0) > SEGAR);
         } catch (e) {}
 
-        // cari akun leveling yang punya pslink + age >= 50
+        // pilih leveling: online + punya pslink + belum dipake + age terbanyak
         let pilihan = null, pilAge = -1;
         for (const x of rowLvl) {
+          if (!pslinkPeta[x.akun]) continue;   // gak punya pslink
+          if (sdgPake.has(x.akun)) continue;   // sedang dipake market lain
           let d = {};
           try { d = JSON.parse(x.data); } catch {}
           const age = Number(d.age || 0);
-          if (!pslinkPeta[x.akun]) continue;  // gak punya PS link, skip
           if (age > pilAge) { pilAge = age; pilihan = x; }
         }
 
@@ -4344,10 +4351,6 @@ export default {
         const psLink = pslinkPeta[pilihan.akun];
         const psNama = "lvl:" + pilihan.akun;
 
-        // simpan ke cfg scope 'suplai-antri' — worker polling ini
-        const ca = await db.prepare("SELECT data FROM cfg WHERE scope='suplai-antri'").first();
-        let antri = {};
-        if (ca) { try { const d = JSON.parse(ca.data); if (d && typeof d === "object") antri = d; } catch {} }
         antri[akunMarket] = { akunLeveling: pilihan.akun, psLink, psNama, pet: petJualan, ts: skrg };
         await db.prepare(
           `INSERT INTO cfg (scope, ts, data) VALUES ('suplai-antri', ?1, ?2)
