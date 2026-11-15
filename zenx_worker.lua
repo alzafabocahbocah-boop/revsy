@@ -11309,7 +11309,7 @@ _CMD.lite = function()  -- v9.685
         end
     end
 
-    print("== DOWNLOAD ZETSU ARCEUS LITE: slot " .. rentang .. " ==")
+    print("== DOWNLOAD ARCEUS NODEX: slot " .. rentang .. " ==")
     print("ambil daftar rilis GitHub...")
     local rel = sh_tmo("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null", 30) or ""
     if rel == "" or not rel:find("assets") then
@@ -11320,12 +11320,12 @@ _CMD.lite = function()  -- v9.685
         local nn = string.format("%02d", n)
         local label = "lite-" .. nn
         local outApk = "/sdcard/lite" .. nn .. ".apk"
-        -- pattern: ZETSU.ARCEUS.LITE.VIP.NN-versi.apk
-        local url = rel:match('"(https://[^"]*ZETSU%.ARCEUS%.LITE%.VIP%.' .. nn .. '[^"]*%.apk)"')
+        -- pattern: Arceus.Nodex.NN_versi.apk
+        local url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. nn .. '[^"]*%.apk)"')
         if not url then
             print("[" .. label .. "] URL gak ketemu di rilis (skip).")
         else
-            print("[" .. label .. "] download (~92MB, sabar)...")
+            print("[" .. label .. "] download (~104MB, sabar)...")
             os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 30 '" .. url .. "' -o '" .. outApk .. "' 2>/dev/null")
             local szRaw = sh("su -c 'stat -c%s \"" .. outApk .. "\" 2>/dev/null' 2>/dev/null") or "0"
             local sz = tonumber((szRaw:gsub("%s", ""))) or 0
@@ -11339,7 +11339,7 @@ _CMD.lite = function()  -- v9.685
             sh("rm -f '" .. outApk .. "' 2>/dev/null")
         end
     end
-    print("== SELESAI lite ==")
+    print("== SELESAI arceus nodex ==")
     return
 end
 if PERINTAH == "lite" then _CMD.lite(); return end
