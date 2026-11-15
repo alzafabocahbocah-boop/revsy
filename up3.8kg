@@ -5142,182 +5142,214 @@ do
     end)
     task.spawn(function() while trDbgLbl and trDbgLbl.Parent do pcall(function() trDbgLbl.Text = (#trLog > 0 and table.concat(trLog, "\n") or "belum ada log") end); task.wait(1) end end)
 
-    -- v2.52: overlay mengambang KIRI — trade debug realtime + tombol copy
+    -- v2.55: overlay mengambang KIRI — DS swap animation debug realtime
     task.spawn(function()
         local plrGui = player:WaitForChild("PlayerGui", 10)
         if not plrGui then return end
-        local Players2 = game:GetService("Players")
+        local RS3 = game:GetService("ReplicatedStorage")
+
         local sg2 = Instance.new("ScreenGui")
-        sg2.Name = "ZenxTrDbgFloat"; sg2.ResetOnSpawn = false; sg2.IgnoreGuiInset = true
+        sg2.Name = "ZenxSwapAnimDbg"; sg2.ResetOnSpawn = false; sg2.IgnoreGuiInset = true
         sg2.DisplayOrder = 99996; sg2.Parent = plrGui
 
         local fr2 = Instance.new("Frame")
         fr2.AnchorPoint = Vector2.new(0, 0)
-        fr2.Size = UDim2.new(0, 280, 0, 300)
+        fr2.Size = UDim2.new(0, 290, 0, 310)
         fr2.Position = UDim2.new(0, 8, 0, 90)
         fr2.BackgroundColor3 = Color3.fromRGB(10, 16, 22)
         fr2.BackgroundTransparency = 0.05; fr2.BorderSizePixel = 0
         fr2.Active = true; fr2.Draggable = true; fr2.Parent = sg2
         Instance.new("UICorner", fr2).CornerRadius = UDim.new(0, 10)
         local stk2 = Instance.new("UIStroke", fr2)
-        stk2.Color = Color3.fromRGB(34, 211, 238); stk2.Thickness = 1.4
+        stk2.Color = Color3.fromRGB(168, 85, 247); stk2.Thickness = 1.4  -- ungu = anim
 
         -- header
         local hdr2 = Instance.new("TextLabel")
-        hdr2.Size = UDim2.new(1, -8, 0, 18); hdr2.Position = UDim2.new(0, 6, 0, 3)
+        hdr2.Size = UDim2.new(1, -70, 0, 18); hdr2.Position = UDim2.new(0, 6, 0, 3)
         hdr2.BackgroundTransparency = 1; hdr2.Font = Enum.Font.GothamBold; hdr2.TextSize = 11
         hdr2.TextXAlignment = Enum.TextXAlignment.Left
-        hdr2.TextColor3 = Color3.fromRGB(34, 211, 238); hdr2.Text = "🔁 TRADE DEBUG up3.8kg"; hdr2.Parent = fr2
+        hdr2.TextColor3 = Color3.fromRGB(168, 85, 247); hdr2.Text = "🎬 SWAP ANIM DEBUG"; hdr2.Parent = fr2
+
+        -- counter
+        local ctrLbl = Instance.new("TextLabel")
+        ctrLbl.Size = UDim2.new(0, 60, 0, 18); ctrLbl.Position = UDim2.new(1, -64, 0, 3)
+        ctrLbl.BackgroundTransparency = 1; ctrLbl.Font = Enum.Font.Gotham; ctrLbl.TextSize = 9
+        ctrLbl.TextXAlignment = Enum.TextXAlignment.Right
+        ctrLbl.TextColor3 = Color3.fromRGB(100, 100, 100); ctrLbl.Text = "total: 0"; ctrLbl.Parent = fr2
 
         -- tombol copy
         local copyBtn = Instance.new("TextButton")
-        copyBtn.Size = UDim2.new(0, 54, 0, 16); copyBtn.Position = UDim2.new(1, -58, 0, 4)
-        copyBtn.BackgroundColor3 = Color3.fromRGB(34, 211, 238); copyBtn.BorderSizePixel = 0
-        copyBtn.Font = Enum.Font.GothamBold; copyBtn.TextSize = 9; copyBtn.TextColor3 = Color3.fromRGB(0,0,0)
-        copyBtn.Text = "📋 COPY"; copyBtn.Parent = fr2
+        copyBtn.Size = UDim2.new(1, -12, 0, 18); copyBtn.Position = UDim2.new(0, 6, 0, 24)
+        copyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 50); copyBtn.BorderSizePixel = 0
+        copyBtn.Font = Enum.Font.GothamBold; copyBtn.TextSize = 9; copyBtn.TextColor3 = Color3.fromRGB(168, 85, 247)
+        copyBtn.Text = "📋 COPY LOG"; copyBtn.Parent = fr2
         Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 5)
 
         local sep2 = Instance.new("Frame")
-        sep2.Size = UDim2.new(1, -12, 0, 1); sep2.Position = UDim2.new(0, 6, 0, 24)
+        sep2.Size = UDim2.new(1, -12, 0, 1); sep2.Position = UDim2.new(0, 6, 0, 46)
         sep2.BackgroundColor3 = Color3.fromRGB(50, 60, 70); sep2.BorderSizePixel = 0; sep2.Parent = fr2
+
+        -- status bar (swap ON/OFF + toggle)
+        local swapToggle = Instance.new("TextButton")
+        swapToggle.Size = UDim2.new(1, -12, 0, 20); swapToggle.Position = UDim2.new(0, 6, 1, -26)
+        swapToggle.BorderSizePixel = 0; swapToggle.Font = Enum.Font.GothamBold; swapToggle.TextSize = 10
+        swapToggle.Parent = fr2
+        Instance.new("UICorner", swapToggle).CornerRadius = UDim.new(0, 6)
 
         -- scroll log
         local sf2 = Instance.new("ScrollingFrame")
-        sf2.Size = UDim2.new(1, -8, 1, -60); sf2.Position = UDim2.new(0, 4, 0, 28)
+        sf2.Size = UDim2.new(1, -8, 1, -92); sf2.Position = UDim2.new(0, 4, 0, 50)
         sf2.BackgroundTransparency = 1; sf2.BorderSizePixel = 0
         sf2.ScrollBarThickness = 3; sf2.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80)
         sf2.CanvasSize = UDim2.new(0,0,0,0); sf2.AutomaticCanvasSize = Enum.AutomaticSize.Y
         sf2.Parent = fr2
-        local lay2 = Instance.new("UIListLayout"); lay2.Padding = UDim.new(0,1); lay2.SortOrder = Enum.SortOrder.LayoutOrder; lay2.Parent = sf2
+        local lay2 = Instance.new("UIListLayout"); lay2.Padding = UDim.new(0,1)
+        lay2.SortOrder = Enum.SortOrder.LayoutOrder; lay2.Parent = sf2
 
-        -- status bar bawah
-        local statBar = Instance.new("TextLabel")
-        statBar.Size = UDim2.new(1, -8, 0, 28); statBar.Position = UDim2.new(0, 4, 1, -30)
-        statBar.BackgroundColor3 = Color3.fromRGB(20, 28, 36); statBar.BorderSizePixel = 0
-        statBar.Font = Enum.Font.Code; statBar.TextSize = 9
-        statBar.TextXAlignment = Enum.TextXAlignment.Left; statBar.TextWrapped = true
-        statBar.TextColor3 = Color3.fromRGB(180, 190, 200); statBar.Text = ""; statBar.Parent = fr2
-        Instance.new("UICorner", statBar).CornerRadius = UDim.new(0, 6)
-        Instance.new("UIPadding", statBar).PaddingLeft = UDim.new(0, 4)
+        local C_MINE  = Color3.fromRGB(74, 222, 128)   -- hijau = uuid kita, swap JALAN
+        local C_OTHER = Color3.fromRGB(148, 163, 184)  -- abu = uuid orang lain (skip)
+        local C_SKIP  = Color3.fromRGB(251, 191, 36)   -- kuning = uuid kita tapi swap SKIP
+        local C_ERR   = Color3.fromRGB(248, 113, 113)  -- merah = error
+        local C_SYS   = Color3.fromRGB(100, 120, 140)  -- gelap = sistem (init/OK/ERR)
 
         local logLines = {}
-        local fullText = ""
+        local fullLog = {}
+        local totalCount = 0
 
-        local function addLine(txt, col)
-            col = col or Color3.fromRGB(200, 210, 220)
+        local function addRow(txt, col)
+            totalCount = totalCount + 1
+            ctrLbl.Text = "total: "..totalCount
             local lb = Instance.new("TextLabel")
             lb.Size = UDim2.new(1, -4, 0, 13); lb.BackgroundTransparency = 1
             lb.Font = Enum.Font.Code; lb.TextSize = 9
             lb.TextXAlignment = Enum.TextXAlignment.Left; lb.TextTruncate = Enum.TextTruncate.AtEnd
-            lb.LayoutOrder = #logLines + 1; lb.TextColor3 = col; lb.Text = txt; lb.Parent = sf2
+            lb.LayoutOrder = totalCount; lb.TextColor3 = col; lb.Text = txt; lb.Parent = sf2
             table.insert(logLines, lb)
-            if #logLines > 60 then logLines[1]:Destroy(); table.remove(logLines, 1) end
+            table.insert(fullLog, txt)
+            if #logLines > 80 then logLines[1]:Destroy(); table.remove(logLines, 1) end
+            if #fullLog > 200 then table.remove(fullLog, 1) end
             task.defer(function() sf2.CanvasPosition = Vector2.new(0, math.huge) end)
         end
 
         copyBtn.MouseButton1Click:Connect(function()
             pcall(function()
                 local clip = setclipboard or toclipboard or (Clipboard and Clipboard.set)
-                if clip then clip(fullText); copyBtn.Text = "✓ COPIED"; task.delay(1.5, function() copyBtn.Text = "📋 COPY" end)
+                local txt = "=== SWAP ANIM DEBUG ===\n"..table.concat(fullLog, "\n")
+                if clip then clip(txt); copyBtn.Text = "✓ COPIED"
+                    task.delay(1.5, function() copyBtn.Text = "📋 COPY LOG" end)
                 else copyBtn.Text = "✗ no clip" end
             end)
         end)
 
-        -- warna per kategori
-        local C_OK    = Color3.fromRGB(74, 222, 128)   -- hijau = ok/jalan
-        local C_WARN  = Color3.fromRGB(251, 191, 36)   -- kuning = warning
-        local C_ERR   = Color3.fromRGB(248, 113, 113)  -- merah = error/gagal
-        local C_INFO  = Color3.fromRGB(148, 163, 184)  -- abu = info
+        swapToggle.MouseButton1Click:Connect(function()
+            _G.ZenxSuppSwapOn = not (_G.ZenxSuppSwapOn ~= false)
+        end)
 
-        local lastLogN = 0
+        -- ── listen DS langsung buat overlay ini ──
+        -- (paralel sama animStr block, buat nampilkan milik kita/orang lain + swap jalan/skip)
+        task.spawn(function()
+            local ge3 = RS3:WaitForChild("GameEvents", 15)
+            if not ge3 then addRow("ERR: GameEvents nil", C_ERR); return end
+            local ds3 = ge3:WaitForChild("DataStream", 15)
+            if not ds3 then addRow("ERR: DataStream nil", C_ERR); return end
+            addRow("DS connected ✓", C_SYS)
+
+            local SWAP_ANIM = { frill=true, fan=true, roar=true, pee=true, pew=true, screech=true, trumpet=true }
+            local lastAnimPet = {}  -- uuid -> anim terakhir (de-dup)
+
+            local function scanDS(data, depth)
+                depth = depth or 0
+                if depth > 6 or type(data) ~= "table" then return end
+                for _, v in pairs(data) do
+                    if type(v) == "table" then
+                        local path = tostring(v[1] or "")
+                        local animVal = v[2]
+                        if path:find("CustomAnimationState", 1, true) then
+                            local uuid = path:match("{([^}]+)}") or path:match("([a-f0-9%-]+)")
+                            local anim = tostring(animVal or ""):lower()
+                            if uuid and uuid ~= "" and anim ~= "" then
+                                -- de-dup: skip kalau anim sama
+                                if lastAnimPet[uuid] == anim then return end
+                                lastAnimPet[uuid] = anim
+
+                                local ts = os.date("%H:%M:%S")
+                                local uuid8 = uuid:sub(1, 8)
+
+                                -- cek milik kita atau orang lain
+                                local isMine = false
+                                pcall(function()
+                                    if _kgContainer and (_kgContainer["{"..uuid.."}"] or _kgContainer[uuid]) then
+                                        isMine = true; return
+                                    end
+                                    local bp = player:FindFirstChild("Backpack")
+                                    local ch = player.Character
+                                    for _, cont in ipairs({bp, ch}) do
+                                        if not cont then continue end
+                                        for _, t in ipairs(cont:GetChildren()) do
+                                            local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                                            if u and tostring(u):gsub("[{}]","") == uuid then isMine = true; return end
+                                        end
+                                    end
+                                end)
+
+                                if not isMine then
+                                    -- orang lain — tampilkan abu, skip
+                                    if SWAP_ANIM[anim] then
+                                        addRow(string.format("[%s] %s  %-10s  OTHER→skip", ts, uuid8, anim), C_OTHER)
+                                    end
+                                    return
+                                end
+
+                                -- milik kita — cek swap jalan atau skip
+                                local swapOn = (_G.ZenxSuppSwapOn ~= false)
+                                if not SWAP_ANIM[anim] then
+                                    -- bukan anim swap (Idle/Walk/dll) — tidak di-log
+                                    return
+                                end
+
+                                local reason = ""
+                                local col = C_MINE
+                                if not swapOn then
+                                    reason = "SKIP(toggle off)"; col = C_SKIP
+                                else
+                                    -- cek blacklist roar/trex
+                                    if anim == "roar" then
+                                        pcall(function()
+                                            local e = _kgContainer and (_kgContainer["{"..uuid.."}"] or _kgContainer[uuid])
+                                            local pt = ""
+                                            if type(e)=="table" then pt = tostring(e.PetType or ""):lower() end
+                                            if pt:find("trex",1,true) or pt:find("t-rex",1,true) then
+                                                reason = "SKIP(roar blacklist:"..pt:sub(1,10)..")"; col = C_SKIP
+                                            end
+                                        end)
+                                    end
+                                    if reason == "" then reason = "SWAP→jalan" end
+                                end
+
+                                addRow(string.format("[%s] %s  %-10s  MINE  %s", ts, uuid8, anim, reason), col)
+                            end
+                        else
+                            scanDS(v, depth + 1)
+                        end
+                    end
+                end
+            end
+
+            ds3.OnClientEvent:Connect(function(_, svc, data)
+                if not tostring(svc):find("ActivePets", 1, true) then return end
+                if type(data) == "table" then pcall(scanDS, data) end
+            end)
+        end)
+
+        -- ── update toggle button tiap 1s ──
         while fr2 and fr2.Parent do
             pcall(function()
-                -- ── status realtime ──
-                local mode  = tostring(TR and TR.mode or "?")
-                local al    = tostring(TR and TR.autoLevel or "?")
-                local busy  = trBusy
-                local lvlMax = _G.ZenxLvlMax or {}
-                local nLvl  = 0; for _ in pairs(lvlMax) do nLvl = nLvl + 1 end
-                local presentList = {}
-                for nm in pairs(lvlMax) do if Players2:FindFirstChild(nm) then presentList[#presentList+1] = nm end end
-                local nPresent = #presentList
-
-                -- ── diagnosis kenapa gak trade ──
-                local issues = {}
-                -- 1. mode off
-                if mode == "off" and al ~= "true" then
-                    issues[#issues+1] = "❌ mode=off & autoLevel=false → loop SKIP"
-                end
-                -- 2. busy stuck
-                if busy then issues[#issues+1] = "⚠ trBusy=true (jalankan() blm selesai)" end
-                -- 3. lvlMax kosong
-                if nLvl == 0 then issues[#issues+1] = "❌ ZenxLvlMax kosong → /lvlmax-tim belum fetch" end
-                -- 4. gak ada target online
-                if nLvl > 0 and nPresent == 0 then issues[#issues+1] = "❌ 0 target online di server ini" end
-                -- 5. petsLolos 0
-                local nKirim = _G.ZenxKirimN
-                if nKirim and nKirim == 0 then
-                    local pllog = tostring(_G.__ZenxPlLog or "")
-                    -- parse reject reasons dari __ZenxPlLog
-                    local nTotal = pllog:match("total=(%d+)") or "?"
-                    local nSup   = pllog:match("sup=(%d+)") or "?"
-                    local nTipe  = pllog:match("tipe=(%d+)") or "?"
-                    local nKg    = pllog:match("kg<6=(%d+)") or "?"
-                    local nAge   = pllog:match("age>501=(%d+)") or "?"
-                    local nFav   = pllog:match("FAV=(%d+)") or "?"
-                    issues[#issues+1] = string.format("❌ 0 pet lolos (total=%s sup=%s tipe=%s kg=%s age=%s fav=%s)", nTotal, nSup, nTipe, nKg, nAge, nFav)
-                    if nTipe ~= "0" and nTipe ~= "?" then
-                        local bahan = _G.ZenxBahanDipilih or {}
-                        issues[#issues+1] = "   → reject tipe: bahanSet={"..table.concat(bahan, ",").."}"
-                    end
-                    if nKg ~= "0" and nKg ~= "?" then issues[#issues+1] = "   → reject kg: pet base <3.8 atau >6.4" end
-                    if nAge ~= "0" and nAge ~= "?" then issues[#issues+1] = "   → reject age: >501 (udah done)" end
-                end
-                -- 6. support belum lengkap
-                local lastLog = trLog[#trLog] or ""
-                if lastLog:find("support belum lengkap") then issues[#issues+1] = "⚠ support belum lengkap → nunggu equip" end
-
-                local diagStr = #issues == 0 and (nPresent > 0 and "✅ kondisi OK" or "⏳ nunggu...") or table.concat(issues, "\n")
-
-                -- ── status bar ──
-                statBar.Text = string.format("mode:%s AL:%s busy:%s | pet→:%s | target:%d/%d online",
-                    mode, al, tostring(busy), tostring(nKirim or "?"), nPresent, nLvl)
-                statBar.TextColor3 = (#issues == 0) and C_OK or C_ERR
-
-                -- ── update fullText buat copy ──
-                local lines = {}
-                lines[#lines+1] = "=== TRADE DEBUG up3.8kg ==="
-                lines[#lines+1] = "mode="..mode.." autoLevel="..al.." busy="..tostring(busy)
-                lines[#lines+1] = "lvlMax="..nLvl.." present="..nPresent.."("..table.concat(presentList,",")..")"
-                lines[#lines+1] = "pet kirim="..tostring(nKirim or "?")
-                lines[#lines+1] = "--- DIAGNOSIS ---"
-                lines[#lines+1] = diagStr
-                lines[#lines+1] = "--- LOG (last 20) ---"
-                for i = math.max(1,#trLog-19), #trLog do lines[#lines+1] = (trLog[i] or "") end
-                fullText = table.concat(lines, "\n")
-
-                -- ── sync trLog baris baru ke GUI ──
-                if #trLog ~= lastLogN then
-                    local start = math.max(lastLogN+1, #trLog-19)
-                    for i = start, #trLog do
-                        local ln = trLog[i] or ""
-                        local col = C_INFO
-                        if ln:find("STOP") or ln:find("❌") or ln:find("gagal") or ln:find("ERR") then col = C_ERR
-                        elseif ln:find("✅") or ln:find("selesai") or ln:find("TRADE") or ln:find("GIFT") then col = C_OK
-                        elseif ln:find("⚠") or ln:find("skip") or ln:find("SKIP") then col = C_WARN end
-                        addLine(ln, col)
-                    end
-                    lastLogN = #trLog
-                end
-
-                -- ── tampilkan diagnosis kalau ada issue (tiap refresh) ──
-                if #issues > 0 then
-                    for _, iss in ipairs(issues) do
-                        addLine(iss, iss:sub(1,2)=="❌" and C_ERR or C_WARN)
-                    end
-                end
+                local on = (_G.ZenxSuppSwapOn ~= false)
+                swapToggle.Text = on and "⚡ SWAP ON (tap = OFF)" or "⛔ SWAP OFF (tap = ON)"
+                swapToggle.BackgroundColor3 = on and Color3.fromRGB(21, 128, 61) or Color3.fromRGB(80, 20, 20)
+                swapToggle.TextColor3 = Color3.fromRGB(220, 220, 220)
             end)
-            task.wait(2)
+            task.wait(1)
         end
     end)
 end
