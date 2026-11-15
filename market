@@ -648,9 +648,46 @@ task.spawn(function()
             return
         end
         _supSelesai = false
+        -- maxInv belum ke-detect → fetch dari /marketakun panel buat dapetin maxInv akun ini
+        if maxInv <= 0 then
+            task.spawn(function()
+                pcall(function()
+                    local r = req({
+                        Url = PANEL_URL .. "/marketakun",
+                        Method = "GET",
+                        Headers = { ["X-Kunci"] = PANEL_KUNCI },
+                    })
+                    if r and (r.StatusCode == 200 or r.Success) then
+                        -- format: "akun1=total:max,akun2=total:max,..."
+                        local body = r.Body or ""
+                        local nama = plr and plr.Name or ""
+                        -- cari entry akun ini
+                        for entry in body:gmatch("[^,]+") do
+                            local nm, tot, mx = entry:match("^(.-)=(%d+):(%d+)$")
+                            if nm == nama then
+                                local mi = tonumber(mx) or 0
+                                local ti = tonumber(tot) or 0
+                                if mi > 0 then
+                                    maxInvTerakhir = mi; _G.__ZenxMaxInv = mi
+                                    print("[ZenxMarket] maxInv dari panel /marketakun: " .. mi)
+                                end
+                                if ti > 0 then totalPetTerakhir = ti end
+                                break
+                            end
+                        end
+                    end
+                end)
+            end)
+            _G.__ZenxSuplaiDebug = _G.__ZenxSuplaiDebug or {}
+            _G.__ZenxSuplaiDebug.status   = "FETCH-INV"
+            _G.__ZenxSuplaiDebug.totalPet = totalPetTerakhir or 0
+            _G.__ZenxSuplaiDebug.maxInv   = 0
+            _G.__ZenxSuplaiDebug.alasan   = "maxInv 0, fetch /marketakun dari panel, retry next tick"
+            return
+        end
         -- cek ruang inventory: kalau maxInv sudah ke-detect, harus ada ruang minimal 10 slot
-        local sisaInv = (maxInv > 0) and math.max(0, maxInv - (totalPetTerakhir or 0)) or nil
-        if maxInv > 0 and (sisaInv or 0) < 10 then
+        local sisaInv = math.max(0, maxInv - (totalPetTerakhir or 0))
+        if sisaInv < 10 then
             -- ruang terlalu sedikit, gak worth minta suplai
             if _supMinta then
                 _supMinta = false  -- reset flag biar nanti bisa minta lagi kalau ada ruang
@@ -659,8 +696,9 @@ task.spawn(function()
             _G.__ZenxSuplaiDebug.status   = "SKIP-PENUH"
             _G.__ZenxSuplaiDebug.totalPet = totalPetTerakhir or 0
             _G.__ZenxSuplaiDebug.maxInv   = maxInvTerakhir or 0
-            _G.__ZenxSuplaiDebug.sisa     = sisaInv or 0
+            _G.__ZenxSuplaiDebug.sisa     = sisaInv
             _G.__ZenxSuplaiDebug.petRule  = pet
+            _G.__ZenxSuplaiDebug.alasan   = "sisa inv " .. sisaInv .. " < 10 slot"
             return
         end
         -- pet jualan < threshold & belum minta / cooldown lewat → minta suplai
