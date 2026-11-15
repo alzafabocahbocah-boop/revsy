@@ -256,7 +256,8 @@ case "$PRESET" in
         IFS_BAK="$IFS"; IFS='
 '
         for _AXD in $AX_DIRS; do
-            su -c "mkdir -p \"$_AXD\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$_AXD/zenx.lua\"" 2>/dev/null
+            su -c "mkdir -p \"$_AXD\" && printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$_AXD/zenx.lua\"" 2>/dev/null \
+                || su -c "mkdir -p \"$_AXD\"" 2>/dev/null && su -c "printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$_AXD/zenx.lua\"" 2>/dev/null
             if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
                 su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$_AXD/zenx_extra.lua\"" 2>/dev/null
             else
@@ -266,6 +267,8 @@ case "$PRESET" in
             if printf '%s' "$_CEK" | grep -q "HttpGet"; then
                 AX_OK=$((AX_OK + 1))
                 info "  -> $_AXD/zenx.lua"
+            else
+                info "  -> SKIP (folder gak ada / gak bisa tulis): $_AXD"
             fi
         done
         IFS="$IFS_BAK"
