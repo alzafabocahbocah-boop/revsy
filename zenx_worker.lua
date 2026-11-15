@@ -6,7 +6,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.693"
+local VERSION = "9.694"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -11309,7 +11309,7 @@ _CMD.lite = function()  -- v9.685
         end
     end
 
-    print("== DOWNLOAD ARCEUS NODEX: slot " .. rentang .. " ==")
+    print("== DOWNLOAD ARCEUS NEO SHIRO: slot " .. rentang .. " ==")
     print("ambil daftar rilis GitHub...")
     local rel = sh_tmo("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null", 30) or ""
     if rel == "" or not rel:find("assets") then
@@ -11320,15 +11320,12 @@ _CMD.lite = function()  -- v9.685
         local nn = string.format("%02d", n)
         local label = "lite-" .. nn
         local outApk = "/sdcard/lite" .. nn .. ".apk"
-        -- pattern: Arceus.Nodex.N_versi_clone.apk (N tanpa leading zero) atau NN
-        local url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. tostring(n) .. '[^"]*_clone%.apk)"')
-        if not url then url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. nn .. '[^"]*_clone%.apk)"') end
-        if not url then url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. tostring(n) .. '[^"]*%.apk)"') end
-        if not url then url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. nn .. '[^"]*%.apk)"') end
+        -- pattern: ZETSU.ARCEUS.NEO.SHIRO.NN-versi.apk
+        local url = rel:match('"(https://[^"]*ZETSU%.ARCEUS%.NEO%.SHIRO%.' .. nn .. '[^"]*%.apk)"')
         if not url then
             print("[" .. label .. "] URL gak ketemu di rilis (skip).")
         else
-            print("[" .. label .. "] download (~104MB, sabar)...")
+            print("[" .. label .. "] download (~87MB, sabar)...")
             os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 30 '" .. url .. "' -o '" .. outApk .. "' 2>/dev/null")
             local szRaw = sh("su -c 'stat -c%s \"" .. outApk .. "\" 2>/dev/null' 2>/dev/null") or "0"
             local sz = tonumber((szRaw:gsub("%s", ""))) or 0
@@ -11342,7 +11339,7 @@ _CMD.lite = function()  -- v9.685
             sh("rm -f '" .. outApk .. "' 2>/dev/null")
         end
     end
-    print("== SELESAI arceus nodex ==")
+    print("== SELESAI arceus neo shiro ==")
     return
 end
 if PERINTAH == "lite" then _CMD.lite(); return end
