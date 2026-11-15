@@ -4317,10 +4317,17 @@ export default {
         const akunMarket = teks(b.akun);
         if (!akunMarket) return salah("akun kosong");
 
-        // ambil pslink per akun leveling
+        // ambil pslink per akun leveling (cfg scope 'pslink')
         const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
         let pslinkPeta = {};
         if (cl) { try { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslinkPeta = d; } catch {} }
+
+        // fallback: cookies.ps_link (diisi otomatis dari worker getps)
+        let cookiePsLink = {};
+        try {
+          const ck = await db.prepare("SELECT akun, ps_link FROM cookies WHERE ps_link IS NOT NULL AND ps_link != ''").all();
+          for (const r of (ck.results || [])) { if (r.akun && r.ps_link) cookiePsLink[r.akun] = r.ps_link; }
+        } catch (e) {}
 
         // leveling online (ts < 7 menit lalu)
         const SEGAR = skrg - 420;
@@ -4333,12 +4340,14 @@ export default {
         // kelompokkan per tim — hitung age500 (jumlah pet age >= 500) per tim
         const timMap = {};
         for (const x of rowLvl) {
-          if (!pslinkPeta[x.akun]) continue;
+          // pslink: cek cfg dulu, fallback ke cookies.ps_link
+          const psLink = pslinkPeta[x.akun] || cookiePsLink[x.akun] || "";
+          if (!psLink) continue;
           let d = {};
           try { d = JSON.parse(x.data); } catch {}
           const tim = (d.tim && String(d.tim).trim()) || x.akun;
           const age500 = Number(d.count || d.age500 || 0);  // field count = jumlah pet age>=500
-          if (!timMap[tim]) timMap[tim] = { tim, psLink: pslinkPeta[x.akun], age500: 0, akun: [] };
+          if (!timMap[tim]) timMap[tim] = { tim, psLink, age500: 0, akun: [] };
           timMap[tim].age500 += age500;
           timMap[tim].akun.push(x.akun);
         }
