@@ -4488,8 +4488,38 @@ do
         end
         task.spawn(function()
             local haveLvl = false   -- v10.60: pas awal execute, retry cepet (10s) sampe dapet; abis dapet -> 30s
+            local LVLMAX_TIM_URL = LVLMAX_URL:gsub("/lvlmax$", "/lvlmax-tim")  -- v10.95: baca per-tim (merge dari semua panel)
             while true do
                 pcall(function()
+                    -- v10.95: UTAMA: baca /lvlmax-tim (per-tim, merge dari semua panel, gak overwrite)
+                    local rawTim
+                    pcall(function() rawTim = game:HttpGet(LVLMAX_TIM_URL) end)
+                    if (not rawTim or rawTim == "") then
+                        local req = request or http_request or (syn and syn.request)
+                        if req then local ok, res = pcall(function() return req({ Url = LVLMAX_TIM_URL, Method = "GET" }) end); if ok and res and res.Body then rawTim = res.Body end end
+                    end
+                    if rawTim and rawTim ~= "" then
+                        local ok2, decoded = pcall(function() return game:GetService("HttpService"):JSONDecode(rawTim) end)
+                        if ok2 and type(decoded) == "table" and type(decoded.leveling) == "table" then
+                            local m, mc = {}, {}
+                            for _, tim in ipairs(decoded.leveling) do
+                                if type(tim.akun) == "table" then
+                                    for _, nm in ipairs(tim.akun) do
+                                        if type(nm) == "string" and nm ~= "" then
+                                            m[nm] = 200   -- maxInv default (gak perlu exact buat trade target)
+                                            mc[nm] = tonumber(tim.age500) or 0
+                                        end
+                                    end
+                                end
+                            end
+                            if next(m) then
+                                _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; haveLvl = true
+                                print("[up38kg] load lvlmax dari /lvlmax-tim: "..tostring(#(decoded.leveling or {})).." tim")
+                            end
+                            return  -- sukses, skip fallback lama
+                        end
+                    end
+                    -- FALLBACK: baca /lvlmax lama (kalau /lvlmax-tim kosong/gagal)
                     local raw
                     pcall(function() raw = game:HttpGet(LVLMAX_URL) end)
                     if (not raw or raw == "") then
@@ -4499,11 +4529,11 @@ do
                     if raw and raw ~= "" then
                         local m, mc = {}, {}
                         for pair in tostring(raw):gmatch("[^,]+") do
-                            local k, mx, cn = pair:match("^%s*(.-)%s*=%s*(%d+):(%d+)")   -- "akun=max:count" (toleran :age500 di belakang)
+                            local k, mx, cn = pair:match("^%s*(.-)%s*=%s*(%d+):(%d+)")
                             if k and mx then
                                 m[k] = tonumber(mx); mc[k] = tonumber(cn)
                             else
-                                local k2, v2 = pair:match("^%s*(.-)%s*=%s*(%d+)%s*$")          -- backward: max doang
+                                local k2, v2 = pair:match("^%s*(.-)%s*=%s*(%d+)%s*$")
                                 if k2 and v2 then m[k2] = tonumber(v2) end
                             end
                         end
