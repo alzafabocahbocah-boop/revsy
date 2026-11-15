@@ -11320,8 +11320,10 @@ _CMD.lite = function()  -- v9.685
         local nn = string.format("%02d", n)
         local label = "lite-" .. nn
         local outApk = "/sdcard/lite" .. nn .. ".apk"
-        -- pattern: Arceus.Nodex.NN_versi_clone.apk
-        local url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. nn .. '[^"]*_clone%.apk)"')
+        -- pattern: Arceus.Nodex.N_versi_clone.apk (N tanpa leading zero) atau NN
+        local url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. tostring(n) .. '[^"]*_clone%.apk)"')
+        if not url then url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. nn .. '[^"]*_clone%.apk)"') end
+        if not url then url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. tostring(n) .. '[^"]*%.apk)"') end
         if not url then url = rel:match('"(https://[^"]*Arceus%.Nodex%.' .. nn .. '[^"]*%.apk)"') end
         if not url then
             print("[" .. label .. "] URL gak ketemu di rilis (skip).")
