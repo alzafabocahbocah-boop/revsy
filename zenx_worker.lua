@@ -6,7 +6,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.692"
+local VERSION = "9.693"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -11278,7 +11278,7 @@ _CMD.new = function()  -- v9.685
                 print("[" .. label .. "] download GAGAL/partial (" .. math.floor(sz/1048576) .. "MB) -> SKIP")
             else
                 print("[" .. label .. "] " .. math.floor(sz/1048576) .. "MB, install...")
-                local r = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -d -S " .. sz .. "' 2>&1") or ""
+                local r = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -S " .. sz .. "' 2>&1") or ""
                 print("[" .. label .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
             end
             sh("rm -f '" .. outApk .. "' 2>/dev/null")
@@ -11336,7 +11336,7 @@ _CMD.lite = function()  -- v9.685
                 print("[" .. label .. "] download GAGAL/partial (" .. math.floor(sz/1048576) .. "MB) -> SKIP")
             else
                 print("[" .. label .. "] " .. math.floor(sz/1048576) .. "MB, install...")
-                local r = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -d -S " .. sz .. "' 2>&1") or ""
+                local r = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -S " .. sz .. "' 2>&1") or ""
                 print("[" .. label .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
             end
             sh("rm -f '" .. outApk .. "' 2>/dev/null")
