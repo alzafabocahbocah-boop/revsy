@@ -403,7 +403,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.554"
+local VERSION = "8.555"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -669,9 +669,8 @@ task.spawn(function()
                                 local a = tonumber(v.age500) or 0
                                 local best = tonumber(pilih.age500) or 0
                                 if sisa > 0 then
-                                    -- cukup buat nuhin? pilih yang pertama cukup, atau yang paling banyak
                                     if a >= sisa and best < sisa then pilih = v
-                                    elseif a >= sisa and best >= sisa then break  -- yang pertama cukup udah cukup
+                                    elseif a >= sisa and best >= sisa then break
                                     elseif a > best then pilih = v
                                     end
                                 else
@@ -680,6 +679,19 @@ task.spawn(function()
                             end
                             -- set mapLink suplai → worker baca lewat _G.__ZenxSuplaiPS
                             _G.__ZenxSuplaiPS = { tim = pilih.tim, psLink = pilih.psLink }
+                            -- debug info buat floating panel
+                            local akunList = {}
+                            for _, v in ipairs(d.leveling) do akunList[#akunList+1] = tostring(v.tim) .. "(" .. tostring(v.age500 or 0) .. ")" end
+                            _G.__ZenxSuplaiDebug = {
+                                status   = "AKTIF",
+                                dapet    = table.concat(akunList, ", "),
+                                pilih    = tostring(pilih.tim) .. " age500=" .. tostring(pilih.age500 or 0),
+                                kirim    = os.date("%H:%M:%S"),
+                                petRule  = pet,
+                                totalPet = totalPetTerakhir or 0,
+                                maxInv   = maxInvTerakhir or 0,
+                                sisa     = sisa,
+                            }
                             warn("[SUPLAI] minta isi — pet=" .. pet
                                 .. " → pilih tim=" .. tostring(pilih.tim)
                                 .. " age500=" .. tostring(pilih.age500)
@@ -1530,6 +1542,28 @@ do
         local vPet   = makeCard(WH, "total pet",  1)
         local vToken = makeCard(AM, "token",       2)
         local vSnipe = makeCard(AM, "snipe",       3)
+        -- v8.554: debug card suplai
+        local CY = Color3.fromRGB(0,229,255)
+        local dbCard = Instance.new("Frame"); dbCard.BackgroundColor3=Color3.fromRGB(12,12,20); dbCard.BorderSizePixel=0
+        dbCard.Size=UDim2.new(1,0,0,110); dbCard.LayoutOrder=4; dbCard.Parent=gridF
+        Instance.new("UICorner",dbCard).CornerRadius=UDim.new(0,10)
+        Instance.new("UIStroke",dbCard).Color=Color3.fromRGB(0,80,120); dbCard:FindFirstChildOfClass("UIStroke").Thickness=1
+        local dbPad=Instance.new("UIPadding",dbCard); dbPad.PaddingLeft=UDim.new(0,10); dbPad.PaddingRight=UDim.new(0,8); dbPad.PaddingTop=UDim.new(0,7); dbPad.PaddingBottom=UDim.new(0,6)
+        local dbList=Instance.new("UIListLayout",dbCard); dbList.FillDirection=Enum.FillDirection.Vertical; dbList.Padding=UDim.new(0,2)
+        local function dbRow(txt, col)
+            local r=Instance.new("TextLabel",dbCard); r.BackgroundTransparency=1; r.Font=Enum.Font.GothamSemibold
+            r.TextSize=10; r.TextColor3=col or Color3.fromRGB(160,160,160); r.TextXAlignment=Enum.TextXAlignment.Left
+            r.Size=UDim2.new(1,0,0,14); r.TextScaled=false; r.TextTruncate=Enum.TextTruncate.AtEnd; r.Text=txt
+            return r
+        end
+        local dbTitle  = dbRow("● SUPLAI", CY)
+        local dbStatus = dbRow("status: -", Color3.fromRGB(120,120,120))
+        local dbDapet  = dbRow("dapet: -", Color3.fromRGB(100,100,100))
+        local dbPilih  = dbRow("pilih: -", Color3.fromRGB(100,180,255))
+        local dbKirim  = dbRow("kirim: -", Color3.fromRGB(100,100,100))
+        local dbInv    = dbRow("pet/max: -", Color3.fromRGB(180,180,180))
+        local dbRule   = dbRow("rule: -", Color3.fromRGB(180,180,180))
+
         -- v8.552: loop stat panel — total pet / token / snipe tiap 5 detik
         task.spawn(function()
             task.wait(3)
@@ -1540,6 +1574,20 @@ do
                     vPet.Text = (_m > 0) and (_p.."/"..tostring(_m)) or tostring(_p)
                     vToken.Text = tostring(_G.__ZenxTokenNow or 0)
                     vSnipe.Text = tostring(_G.__ZenxSnipeN or 0)
+                    -- update debug card suplai
+                    local db = _G.__ZenxSuplaiDebug
+                    if db then
+                        dbStatus.Text = "status: " .. tostring(db.status or "-")
+                        dbStatus.TextColor3 = (db.status == "AKTIF") and Color3.fromRGB(74,222,128) or Color3.fromRGB(120,120,120)
+                        dbDapet.Text  = "dapet: " .. tostring(db.dapet or "-")
+                        dbPilih.Text  = "pilih: " .. tostring(db.pilih or "-")
+                        dbKirim.Text  = "kirim: " .. tostring(db.kirim or "-")
+                        dbInv.Text    = "pet/max: " .. tostring(db.totalPet or 0) .. "/" .. tostring(db.maxInv or 0) .. " sisa=" .. tostring(db.sisa or 0)
+                        dbRule.Text   = "rule: " .. tostring(db.petRule or 0)
+                    else
+                        dbStatus.Text = "status: idle"
+                        dbStatus.TextColor3 = Color3.fromRGB(80,80,80)
+                    end
                 end)
                 task.wait(5)
             end
