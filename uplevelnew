@@ -1,4 +1,5 @@
--- uplevelnew v8.809
+-- uplevelnew v8.810
+-- v8.810: fan throttle + pos check dipisah ke task.spawn — tidak block processHits loop
 -- v8.809: withSwapDebounce — jangan skip kalau UUID sedang swap, tapi queue/tunggu sampai selesai baru jalankan
 -- v8.808: FIX CRITICAL — _dsFireCnt/_dsFireLast nil saat processHits dipanggil → crash sebelum [DS-HIT]
 -- v8.807: RE-SCAN wrap pcall+error logging, langsung print error ke log kalau gagal
@@ -4367,42 +4368,48 @@ do
                 tsLog("DS "..anim.." uuid="..mr8.." → swap")
 
                 -- Peacock fan
+                -- v8.810: throttle + pos check dipisah ke task.spawn — tidak block processHits loop
                 if anim == "fan" then
-                    local myTurn = _fanLastSwap + 0.5
-                    local waitNeeded = myTurn - tick()
-                    if waitNeeded > 0 then task.wait(waitNeeded) end
-                    _fanLastSwap = tick()
-                    withSwapDebounce(mr8, function()
-                        pcall(function() unequipPet(mraw) end)
-                        pcall(function() equipPet(mraw) end)
-                        local done, spawnPos = false, nil
-                        local conn2 = workspace.DescendantAdded:Connect(function(d)
-                            if done then return end
-                            if not d:IsA("Model") then return end
-                            if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
-                            local dn = d.Name
-                            local d8 = dn:gsub("[{}]",""):gsub("%-",""):sub(1,8)
-                            if d8 ~= mr8 then return end
-                            task.defer(function()
-                                if done then return end
-                                pcall(function()
-                                    local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
-                                    if p then spawnPos = p.Position end
+                    task.spawn(function()
+                        local myTurn = _fanLastSwap + 0.5
+                        local waitNeeded = myTurn - tick()
+                        if waitNeeded > 0 then task.wait(waitNeeded) end
+                        _fanLastSwap = tick()
+                        withSwapDebounce(mr8, function()
+                            pcall(function() unequipPet(mraw) end)
+                            pcall(function() equipPet(mraw) end)
+                            -- pos check juga di task.spawn — tidak block withSwapDebounce
+                            task.spawn(function()
+                                local done, spawnPos = false, nil
+                                local conn2 = workspace.DescendantAdded:Connect(function(d)
+                                    if done then return end
+                                    if not d:IsA("Model") then return end
+                                    if not d.Name:match("^{?%x%x%x%x%x%x%x%x%-") then return end
+                                    local dn = d.Name
+                                    local d8 = dn:gsub("[{}]",""):gsub("%-",""):sub(1,8)
+                                    if d8 ~= mr8 then return end
+                                    task.defer(function()
+                                        if done then return end
+                                        pcall(function()
+                                            local p = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChildWhichIsA("BasePart")
+                                            if p then spawnPos = p.Position end
+                                        end)
+                                        done = true
+                                    end)
                                 end)
-                                done = true
+                                local t0 = tick()
+                                while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
+                                conn2:Disconnect()
+                                if spawnPos then
+                                    local dist = (spawnPos - PEACOCK_CENTER).Magnitude
+                                    if dist > PEACOCK_THRESH then
+                                        tsLog("Peacock respawn "..string.format("%.1f",dist).."stud → re-swap")
+                                        pcall(function() unequipPet(mraw) end)
+                                        pcall(function() equipPet(mraw) end)
+                                    end
+                                end
                             end)
                         end)
-                        local t0 = tick()
-                        while not done and (tick()-t0) < 1.5 do task.wait(0.02) end
-                        conn2:Disconnect()
-                        if spawnPos then
-                            local dist = (spawnPos - PEACOCK_CENTER).Magnitude
-                            if dist > PEACOCK_THRESH then
-                                tsLog("Peacock respawn "..string.format("%.1f",dist).."stud → re-swap")
-                                pcall(function() unequipPet(mraw) end)
-                                pcall(function() equipPet(mraw) end)
-                            end
-                        end
                     end)
                 -- T-Rex roar atau weave
                 else
