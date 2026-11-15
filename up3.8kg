@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.81 | delay 0.1s antara unequip-equip                  ║
+-- ║  UP KG — v2.82 | fix scope: ssLog+swapQueue masuk task.spawn       ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.81"
+local VERSION = "up38kg-v2.82"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -723,7 +723,7 @@ _G.ZenxAnimDbgLogAll = _G.ZenxAnimDbgLogAll or {}
 -- v2.34: tulis langsung di top-level saat inject — buat verifikasi panel bisa baca
 do
     local ts = os.date("%H:%M:%S")
-    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.81")
+    table.insert(_G.ZenxAnimDbgLog, 1, ts.." | INJECT up38kg-v2.82")
     if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
 end
 -- v2.26: inisialisasi ZenxSuppSwapOn di top-level biar aktif tanpa KG nyala
@@ -2938,48 +2938,49 @@ do
                 end
             end
 
--- v2.80: ssLog di scope luar supaya swapWorkerStart bisa pakai
-local function ssLog(msg)
-    local s="[SS] "..tostring(msg)
-    print(s)
-    local ts = os.date("%H:%M:%S")..string.format(".%03d", math.floor((tick()%1)*1000))
-    local line = ts.." | "..s
-    if _G.ZenxAnimDbgLog then
-        table.insert(_G.ZenxAnimDbgLog, 1, line)
-        if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
-    end
-    if _G.ZenxAnimDbgLogAll then
-        _G.ZenxAnimDbgLogAll[#_G.ZenxAnimDbgLogAll+1] = line
-    end
-end
-
--- v2.78: swapQueue di scope luar processHits supaya bisa diakses
-local swapQueue = {}
-local swapWorkerRunning = false
-local swapJobN = 0
-local function swapWorkerStart()
-    if swapWorkerRunning then
-        ssLog("[WRK] skip: worker masih jalan, queue="..#swapQueue)
-        return
-    end
-    swapWorkerRunning = true
-    ssLog("[WRK] spawn worker, queue="..#swapQueue)
-    task.spawn(function()
-        local drained = 0
-        while true do
-            local job = table.remove(swapQueue, 1)
-            if not job then
-                ssLog("[WRK] queue kosong setelah drain "..drained.." job, stop")
-                swapWorkerRunning = false
-                break
+            -- v2.82: ssLog, swapQueue, swapWorkerStart dipindah ke dalam task.spawn — sebelum processHits
+            -- SEBELUM (v2.80-v2.81): definisi di luar task.spawn → processHits (dalam spawn) gak bisa akses → silent fail
+            -- SESUDAH: semua dalam satu scope, forward reference valid di Lua
+            local function ssLog(msg)
+                local s="[SS] "..tostring(msg)
+                print(s)
+                local ts = os.date("%H:%M:%S")..string.format(".%03d", math.floor((tick()%1)*1000))
+                local line = ts.." | "..s
+                if _G.ZenxAnimDbgLog then
+                    table.insert(_G.ZenxAnimDbgLog, 1, line)
+                    if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
+                end
+                if _G.ZenxAnimDbgLogAll then
+                    _G.ZenxAnimDbgLogAll[#_G.ZenxAnimDbgLogAll+1] = line
+                end
             end
-            drained = drained + 1
-            ssLog("[WRK] mulai job #"..drained..", sisa queue="..#swapQueue)
-            pcall(job)
-            ssLog("[WRK] selesai job #"..drained..", sisa queue="..#swapQueue)
-        end
-    end)
-end
+
+            local swapQueue = {}
+            local swapWorkerRunning = false
+            local swapJobN = 0
+            local function swapWorkerStart()
+                if swapWorkerRunning then
+                    ssLog("[WRK] skip: worker masih jalan, queue="..#swapQueue)
+                    return
+                end
+                swapWorkerRunning = true
+                ssLog("[WRK] spawn worker, queue="..#swapQueue)
+                task.spawn(function()
+                    local drained = 0
+                    while true do
+                        local job = table.remove(swapQueue, 1)
+                        if not job then
+                            ssLog("[WRK] queue kosong setelah drain "..drained.." job, stop")
+                            swapWorkerRunning = false
+                            break
+                        end
+                        drained = drained + 1
+                        ssLog("[WRK] mulai job #"..drained..", sisa queue="..#swapQueue)
+                        pcall(job)
+                        ssLog("[WRK] selesai job #"..drained..", sisa queue="..#swapQueue)
+                    end
+                end)
+            end
 
             local function connectDS(ds)
                 local conn = ds.OnClientEvent:Connect(function(...)
