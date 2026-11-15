@@ -1,3 +1,4 @@
+-- ZENX MARKET v8.549 — suplai: pet jualan < 20 → minta link PS leveling ke panel, lapor selesai saat max inv
 -- ZENX MARKET v8.548 — auto ascend: hanya jalan di server garden (bukan market/TradeWorld)
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
@@ -610,6 +611,66 @@ task.spawn(function()
     local lamaTok, lamaPet, lamaKirim = -1, -1, 0
     local lamaTotal = -1   -- v8.461: totalPet terakhir dikirim (buat cek perubahan)
     local lamaDetail = 0   -- v8.460: kapan terakhir kirim payload detail (tiap 5 menit)
+
+    -- v8.549: SUPLAI — deteksi pet jualan < 20, minta link PS leveling ke panel
+    local _supMinta = false       -- sudah minta suplai, jangan spam
+    local _supSelesai = false     -- sudah lapor selesai, jangan spam
+    local _supLamaMinta = 0       -- kapan terakhir minta (cooldown 5 menit)
+    local _SUPLAI_MIN = 20        -- threshold: kalau pet jualan < ini → minta suplai
+    local _SUPLAI_CD  = 300       -- cooldown antar minta (detik)
+    local function cekSuplai()
+        if not plr then return end
+        local pet = petTerakhir or 0
+        local maxInv = maxInvTerakhir or 0
+        local now = os.time()
+        -- sudah penuh → lapor selesai (sekali)
+        if maxInv > 0 and totalPetTerakhir >= maxInv then
+            if not _supSelesai then
+                _supSelesai = true
+                _supMinta   = false
+                pcall(function()
+                    local r = req({
+                        Url = PANEL_URL .. "/suplai-selesai", Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
+                        Body = HS:JSONEncode({ akun = plr.Name }),
+                    })
+                    warn("[SUPLAI] lapor selesai — pet max (" .. totalPetTerakhir .. "/" .. maxInv .. ")")
+                end)
+            end
+            return
+        end
+        _supSelesai = false
+        -- pet jualan < threshold & belum minta / cooldown lewat → minta suplai
+        if pet < _SUPLAI_MIN and (not _supMinta) and (now - _supLamaMinta) >= _SUPLAI_CD then
+            _supMinta = true
+            _supLamaMinta = now
+            task.spawn(function()
+                local ok, res = pcall(function()
+                    local r = req({
+                        Url = PANEL_URL .. "/suplai-minta", Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
+                        Body = HS:JSONEncode({ akun = plr.Name, pet = pet }),
+                    })
+                    if r and (r.StatusCode == 200 or r.Success) then
+                        local d = HS:JSONDecode(r.Body or "{}") or {}
+                        if d.ok then
+                            warn("[SUPLAI] minta isi — pet=" .. pet .. " → leveling=" .. tostring(d.leveling) .. " ps=" .. tostring(d.psNama))
+                        else
+                            warn("[SUPLAI] panel gak ada leveling siap: " .. tostring(d.pesan))
+                            _supMinta = false  -- boleh coba lagi
+                        end
+                    else
+                        warn("[SUPLAI] POST /suplai-minta gagal")
+                        _supMinta = false
+                    end
+                end)
+                if not ok then
+                    warn("[SUPLAI] error: " .. tostring(res))
+                    _supMinta = false
+                end
+            end)
+        end
+    end
     task.wait(8)   -- tunggu UI + BH kebangun
     -- v8.329: kirim daftar SEMUA nama pet dari game (PetRegistry, ~421) ke Worker
     -- SEKALI. Panel pakai buat picker jenis pet di editor rule. Jarang berubah,
@@ -1054,6 +1115,8 @@ task.spawn(function()
             end
         end)
         _G.__ZenxMarketLaporTs = os.time()   -- penanda: loop idup (buat debug)
+        -- v8.549: cek suplai tiap loop — minta PS leveling kalau pet jualan < 20
+        pcall(cekSuplai)
         task.wait(120)   -- v8.520: interval 2 menit (sama kayak token), gak perlu tiap 20s
     end
 end)
