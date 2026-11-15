@@ -2873,9 +2873,10 @@ do
                 return ok and result or false
             end
 
--- v2.61: swap queue — 1 worker drain sequential dengan jeda 0.1s antar swap
+-- v2.63: swap queue — 1 worker drain sequential dengan jeda 0.2s antar swap
                 local swapQueue = {}
                 local swapWorkerRunning = false
+                local swapJobN = 0  -- counter tagar #N per job
                 local function swapWorkerStart()
                     if swapWorkerRunning then return end
                     swapWorkerRunning = true
@@ -2913,7 +2914,6 @@ local function processHits(hits)
                         ssLog("skip: SUPP SWAP ANIM toggle OFF")
                         continue
                     end
-                    ssLog("→ SWAP "..anim.." uuid="..r8)
                     do
                         local bl = ANIM_BLACKLIST[anim]
                         if bl then
@@ -2960,16 +2960,19 @@ local function processHits(hits)
                         continue
                     end
                     -- v2.59: langsung spawn per pet, paralel (gak perlu queue/sort)
+                    swapJobN = swapJobN + 1
                     local capturedRaw, capturedRaw8, capturedAnim = raw, raw8, anim
                     local capturedUnequip, capturedEquip = _unequip, _equip
+                    local capturedN = swapJobN
+                    ssLog("→ SWAP "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
                     swapQueue[#swapQueue+1] = function()
                         local ok, err = pcall(function()
                             if capturedAnim == "trumpet" then task.wait(0.8) end
                             capturedUnequip(capturedRaw)
-                            ssLog("unequip OK "..capturedAnim.." "..capturedRaw8)
+                            ssLog("unequip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
                             task.wait(0.03)
                             capturedEquip(capturedRaw)
-                            ssLog("equip OK "..capturedAnim.." "..capturedRaw8)
+                            ssLog("equip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
                             -- position check: hanya untuk fan
                             if capturedAnim == "fan" then
                                 local CENTER = Vector3.new(10,3,12)
@@ -2990,11 +2993,11 @@ local function processHits(hits)
                                 conn2:Disconnect()
                                 if spawnPos and (spawnPos-CENTER).Magnitude > 2.0 then
                                     capturedUnequip(capturedRaw); task.wait(0.03); capturedEquip(capturedRaw)
-                                    ssLog("fan reswap OK "..capturedRaw8)
+                                    ssLog("fan reswap OK "..capturedRaw8.." #"..capturedN)
                                 end
                             end
                         end)
-                        if not ok then ssLog("ERR swap "..capturedAnim.." "..capturedRaw8..": "..tostring(err):sub(1,40)) end
+                        if not ok then ssLog("ERR swap "..capturedAnim.." "..capturedRaw8.." #"..capturedN..": "..tostring(err):sub(1,40)) end
                     end
                     swapWorkerStart()
                 end
