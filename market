@@ -1,3 +1,4 @@
+-- ZENX MARKET v8.552 — maxInv: tambah getgc scan layer 0 (upkg style) di startup + per-tick detect
 -- ZENX MARKET v8.551 — suplai: guard PlaceId TradeWorld di cekSuplai (gak minta suplai kalau lagi di luar server market)
 -- ZENX MARKET v8.548 — auto ascend: hanya jalan di server garden (bukan market/TradeWorld)
 -- Left sidebar: Market | List Harga | Snipe
@@ -891,7 +892,20 @@ task.spawn(function()
     local _maxInvFile = plr and plr.Name and ("zenx_maxinv_" .. plr.Name .. ".txt")
     pcall(function()
         if not _maxInvFile then return end
-        -- 1) RC direct — prioritas utama, paling akurat tanpa getgc
+        -- v8.552: layer 0 — getgc scan (sama kayak upkg, paling reliable)
+        if maxInvTerakhir <= 0 then pcall(function()
+            if getgc then
+                local mx = nil
+                for _, obj in ipairs(getgc(true)) do
+                    if type(obj) == "table" then
+                        local mp = rawget(obj, "MaxPetsInInventory")
+                        if type(mp) == "number" and mp > 0 and (not mx or mp > mx) then mx = mp end
+                    end
+                end
+                if mx then maxInvTerakhir = mx end
+            end
+        end) end
+        -- 1) RC direct — fallback kalau getgc gak available
         if maxInvTerakhir <= 0 then pcall(function()
             local rcv = _rcGetMaxInv()
             if rcv then maxInvTerakhir = rcv end
@@ -992,16 +1006,33 @@ task.spawn(function()
                     while #pjArr > 80 do table.remove(pjArr) end
                     petJenisTerakhir = pjArr
                 end
-                -- v8.525: maxInv per-tick — RC direct prioritas utama, tanpa getgc, tanpa UI scan
-                -- 1) RC direct, 2) HactTelurGetMaxPets, 3) Attribute, 4) leaderstats/Data folder
+                -- v8.552: maxInv per-tick — 0) getgc scan (upkg style), 1) RC, 2) Hact, 3) Attr, 4) folder
+                -- getgc berat → cache 60s via __ZenxMaxPetCacheTime
                 -- hanya update kalau nilai baru > tersimpan
                 do
                     local mxNew = nil
+                    -- layer 0: getgc scan (sama kayak upkg — paling reliable)
+                    if not mxNew then pcall(function()
+                        if getgc and (not _G.__ZenxMaxPetCacheTime or (tick() - _G.__ZenxMaxPetCacheTime) > 60) then
+                            local mx = nil
+                            for _, obj in ipairs(getgc(true)) do
+                                if type(obj) == "table" then
+                                    local mp = rawget(obj, "MaxPetsInInventory")
+                                    if type(mp) == "number" and mp > 0 and (not mx or mp > mx) then mx = mp end
+                                end
+                            end
+                            _G.__ZenxMaxPetCacheTime = tick()
+                            if mx then mxNew = mx end
+                        elseif _G.__ZenxMaxPetCache and _G.__ZenxMaxPetCache > 0 then
+                            mxNew = _G.__ZenxMaxPetCache
+                        end
+                        if mxNew then _G.__ZenxMaxPetCache = mxNew end
+                    end) end
                     -- layer 1: RC direct
-                    pcall(function()
+                    if not mxNew then pcall(function()
                         local rcv = _rcGetMaxInv()
                         if rcv then mxNew = rcv end
-                    end)
+                    end) end
                     -- layer 2: HactTelurGetMaxPets
                     if not mxNew then pcall(function()
                         if _G.HactTelurGetMaxPets then
