@@ -5079,6 +5079,42 @@ async function pushLvlMax(){
     if(str) await api("/lvlmax","PUT",{data:str});
   }catch(e){}
 }
+// v710: push data tim leveling ke /lvlmax-tim — per tim, merge tidak overwrite
+// tiap panel push timnya sendiri → cloudflare simpan per-tim (scope lvlmax-tim-<namaRF>)
+async function pushLvlMaxTim(){
+  try{
+    let res; try{ res = hitungLevelLive(); }catch(e){}
+    const devs = (res && res.devs) ? res.devs : (Array.isArray(res) ? res : []);
+    for(const d of devs){
+      const namaRF = (d.nm || "").replace(/[^a-zA-Z0-9_-]/g,"_"); if(!namaRF) continue;
+      // resolve psLink tim: host = akun yang ps_nama-nya paling banyak diacu (sama kayak _pilihServerHome)
+      const psCount = {};
+      (d.clients||[]).forEach(c => {
+        if(c.on !== false){
+          const a = (typeof STAT_AKUN !== "undefined" ? (STAT_AKUN||[]).find(x=>x.nama===(c.nm||c.akun)) : null) || {};
+          const ps = String(a.ps_nama || c.ps || "").replace(/^lvl:/i,"").trim();
+          if(ps && ps.toLowerCase()!=="public") psCount[ps] = (psCount[ps]||0) + 1;
+        }
+      });
+      let timHost = ""; let best = 0;
+      Object.keys(psCount).forEach(p=>{ if(psCount[p]>best){ best=psCount[p]; timHost=p; } });
+      const lk = timHost ? ((typeof pslink!=="undefined"?pslink:{})[timHost]||"") : "";
+      if(!lk) continue; // skip tim yang belum ada psLink
+      // hitung total age500 tim ini
+      let age500 = 0;
+      const akunList = [];
+      (d.clients||[]).forEach(c => {
+        const nm = c.nm||c.akun; if(!nm) return;
+        let st = c.upkgstat || c.stat || {};
+        if(typeof st==="string"){ try{ st=JSON.parse(st); }catch(e){ st={}; } }
+        age500 += Number(st.udah)||0;
+        akunList.push(nm);
+      });
+      await api("/lvlmax-tim","PUT",{ tim: namaRF, psLink: lk, age500, akun: akunList });
+    }
+  }catch(e){}
+}
+
 // v573: push daftar akun MARKET "akun=total:max" -> /marketakun (uplevel gift target + skip full)
 async function pushMarketAkun(){
   try{
@@ -5189,7 +5225,7 @@ async function pushLevelAkun(){
     if(str) await api("/levelakun","PUT",{data:str});
   }catch(e){}
 }
-try{ setInterval(pushLvlMax, 60000); setInterval(pushMarketAkun, 60000); setInterval(pushUp38Akun, 60000); setInterval(pushUp6kgAkun, 60000); setInterval(pushHactAkun, 60000); setInterval(pushLevelAkun, 60000); pushLvlMax(); pushMarketAkun(); pushUp38Akun(); pushUp6kgAkun(); pushHactAkun(); pushLevelAkun(); }catch(e){}
+try{ setInterval(pushLvlMax, 60000); setInterval(pushLvlMaxTim, 60000); setInterval(pushMarketAkun, 60000); setInterval(pushUp38Akun, 60000); setInterval(pushUp6kgAkun, 60000); setInterval(pushHactAkun, 60000); setInterval(pushLevelAkun, 60000); pushLvlMax(); pushLvlMaxTim(); pushMarketAkun(); pushUp38Akun(); pushUp6kgAkun(); pushHactAkun(); pushLevelAkun(); }catch(e){}
 
 // v573: PICKER pet types buat gift uplevel (1 list global) -> /uplevel-giftpet
 async function bukaGiftPetUplevel(){
@@ -5334,7 +5370,7 @@ function toggleHideStale(){
 try{ window.toggleHideStale = toggleHideStale; }catch(e){}
 
 async function _populateUpkgOper(dev){
-  try{ pushLvlMax(); }catch(e){}
+  try{ pushLvlMax(); pushLvlMaxTim(); }catch(e){}
   const cont = document.getElementById("upkgOperList");
   if(!cont) return;
   // v675: parallel fetch /ps-list + /setting-tim sekaligus (lebih cepet)
