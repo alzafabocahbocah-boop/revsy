@@ -4311,23 +4311,24 @@ export default {
       // ============================================================
 
       if (jalur === "/suplai-minta" && req.method === "POST") {
+        // market minta suplai: panel cari leveling online → set /ps tim market → balas psLink
+        // market gak perlu PUT /ps sendiri, cukup 1 request ini
         const b = await req.json().catch(() => ({}));
         const akunMarket = teks(b.akun);
         const petJualan = angka(b.pet, 0);
         if (!akunMarket) return salah("akun kosong");
 
-        // ambil pslink (link PS per akun leveling)
+        // cari tim market dari tabel akun
+        const rowMkt = await db.prepare("SELECT tim FROM akun WHERE nama=?1").bind(akunMarket).first();
+        const timMarket = rowMkt ? teks(rowMkt.tim) : "";
+        if (!timMarket) return json({ ok: false, pesan: "tim market gak ketemu untuk akun: " + akunMarket });
+
+        // ambil pslink per akun leveling
         const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
         let pslinkPeta = {};
         if (cl) { try { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslinkPeta = d; } catch {} }
 
-        // ambil antri aktif — skip leveling yang sudah dipake market lain
-        const ca = await db.prepare("SELECT data FROM cfg WHERE scope='suplai-antri'").first();
-        let antri = {};
-        if (ca) { try { const d = JSON.parse(ca.data); if (d && typeof d === "object") antri = d; } catch {} }
-        const sdgPake = new Set(Object.values(antri).map(x => x.akunLeveling));
-
-        // ambil data leveling — semua yang masih hidup (ts < 7 menit lalu)
+        // ambil data leveling online (ts < 7 menit lalu)
         const SEGAR = skrg - 420;
         let rowLvl = [];
         try {
@@ -4335,29 +4336,32 @@ export default {
           rowLvl = (rl.results || []).filter(x => (x.ts || 0) > SEGAR);
         } catch (e) {}
 
-        // pilih leveling: online + punya pslink + belum dipake + age terbanyak
-        let pilihan = null, pilAge = -1;
+        // kelompokkan per tim leveling — 1 tim = 1 psLink
+        const timMap = {};
         for (const x of rowLvl) {
-          if (!pslinkPeta[x.akun]) continue;   // gak punya pslink
-          if (sdgPake.has(x.akun)) continue;   // sedang dipake market lain
+          if (!pslinkPeta[x.akun]) continue;
           let d = {};
           try { d = JSON.parse(x.data); } catch {}
-          const age = Number(d.age || 0);
-          if (age > pilAge) { pilAge = age; pilihan = x; }
+          const tim = (d.tim && String(d.tim).trim()) || x.akun;
+          if (!timMap[tim]) timMap[tim] = { psLink: pslinkPeta[x.akun], psNama: "lvl:" + x.akun, akun: [], totalAge: 0 };
+          timMap[tim].akun.push(x.akun);
+          timMap[tim].totalAge += Number(d.age || 0);
         }
 
-        if (!pilihan) return json({ ok: false, pesan: "belum ada akun leveling siap" });
+        const daftar = Object.values(timMap);
+        if (daftar.length === 0) return json({ ok: false, pesan: "belum ada akun leveling siap" });
 
-        const psLink = pslinkPeta[pilihan.akun];
-        const psNama = "lvl:" + pilihan.akun;
+        // random pilih 1 tim leveling
+        const pilih = daftar[Math.floor(Math.random() * daftar.length)];
 
-        antri[akunMarket] = { akunLeveling: pilihan.akun, psLink, psNama, pet: petJualan, ts: skrg };
+        // set /ps untuk tim market → worker market otomatis dapet link baru
         await db.prepare(
-          `INSERT INTO cfg (scope, ts, data) VALUES ('suplai-antri', ?1, ?2)
-           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
-        ).bind(skrg, JSON.stringify(antri)).run();
+          `INSERT INTO ps (tim, ts, link) VALUES (?1, ?2, ?3)
+           ON CONFLICT(tim) DO UPDATE SET ts=?2, link=?3`
+        ).bind(timMarket, skrg, pilih.psLink).run();
+        await tandaiPsGanti();
 
-        return json({ ok: true, leveling: pilihan.akun, psLink, psNama });
+        return json({ ok: true, leveling: pilih.akun[0], psLink: pilih.psLink, psNama: pilih.psNama, timMarket });
       }
 
       if (jalur === "/suplai-selesai" && req.method === "POST") {
@@ -4365,18 +4369,18 @@ export default {
         const akunMarket = teks(b.akun);
         if (!akunMarket) return salah("akun kosong");
 
-        // hapus dari antri
-        const ca = await db.prepare("SELECT data FROM cfg WHERE scope='suplai-antri'").first();
-        let antri = {};
-        if (ca) { try { const d = JSON.parse(ca.data); if (d && typeof d === "object") antri = d; } catch {} }
-        const ada = !!antri[akunMarket];
-        delete antri[akunMarket];
-        await db.prepare(
-          `INSERT INTO cfg (scope, ts, data) VALUES ('suplai-antri', ?1, ?2)
-           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
-        ).bind(skrg, JSON.stringify(antri)).run();
+        // cari tim market → clear link PS (leveling balik public/TradeWorld)
+        const rowMkt = await db.prepare("SELECT tim FROM akun WHERE nama=?1").bind(akunMarket).first();
+        const timMarket = rowMkt ? teks(rowMkt.tim) : "";
+        if (timMarket) {
+          await db.prepare(
+            `INSERT INTO ps (tim, ts, link) VALUES (?1, ?2, '')
+             ON CONFLICT(tim) DO UPDATE SET ts=?2, link=''`
+          ).bind(timMarket, skrg).run();
+          await tandaiPsGanti();
+        }
 
-        return json({ ok: true, akun: akunMarket, dihapus: ada });
+        return json({ ok: true, akun: akunMarket, timMarket: timMarket || null });
       }
 
       if (jalur === "/suplai-antri" && req.method === "GET") {

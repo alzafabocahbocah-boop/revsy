@@ -1,4 +1,4 @@
--- ZENX MARKET v8.549 — suplai: pet jualan < 20 → minta link PS leveling ke panel, lapor selesai saat max inv
+-- ZENX MARKET v8.550 — suplai: panel random pilih leveling online → set /ps tim market langsung (1 request, gak pakai antri)
 -- ZENX MARKET v8.548 — auto ascend: hanya jalan di server garden (bukan market/TradeWorld)
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
@@ -403,7 +403,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.548"
+local VERSION = "8.550"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -612,7 +612,9 @@ task.spawn(function()
     local lamaTotal = -1   -- v8.461: totalPet terakhir dikirim (buat cek perubahan)
     local lamaDetail = 0   -- v8.460: kapan terakhir kirim payload detail (tiap 5 menit)
 
-    -- v8.549: SUPLAI — deteksi pet jualan < 20, minta link PS leveling ke panel
+    -- v8.550: SUPLAI — deteksi pet jualan < 20, minta link PS leveling ke panel
+    -- panel pilih leveling online (random), langsung set /ps tim market → worker market join PS leveling
+    -- market selesai (inv max) → panel clear /ps tim market → worker market balik TradeWorld
     local _supMinta = false       -- sudah minta suplai, jangan spam
     local _supSelesai = false     -- sudah lapor selesai, jangan spam
     local _supLamaMinta = 0       -- kapan terakhir minta (cooldown 5 menit)
@@ -623,18 +625,20 @@ task.spawn(function()
         local pet = petTerakhir or 0
         local maxInv = maxInvTerakhir or 0
         local now = os.time()
-        -- sudah penuh → lapor selesai (sekali)
+        -- sudah penuh → lapor selesai (sekali) → panel clear PS tim market
         if maxInv > 0 and totalPetTerakhir >= maxInv then
             if not _supSelesai then
                 _supSelesai = true
                 _supMinta   = false
-                pcall(function()
-                    local r = req({
-                        Url = PANEL_URL .. "/suplai-selesai", Method = "POST",
-                        Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
-                        Body = HS:JSONEncode({ akun = plr.Name }),
-                    })
-                    warn("[SUPLAI] lapor selesai — pet max (" .. totalPetTerakhir .. "/" .. maxInv .. ")")
+                task.spawn(function()
+                    pcall(function()
+                        req({
+                            Url = PANEL_URL .. "/suplai-selesai", Method = "POST",
+                            Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
+                            Body = HS:JSONEncode({ akun = plr.Name }),
+                        })
+                        warn("[SUPLAI] lapor selesai — pet max (" .. totalPetTerakhir .. "/" .. maxInv .. ") → panel clear PS tim market")
+                    end)
                 end)
             end
             return
@@ -654,10 +658,13 @@ task.spawn(function()
                     if r and (r.StatusCode == 200 or r.Success) then
                         local d = HS:JSONDecode(r.Body or "{}") or {}
                         if d.ok then
-                            warn("[SUPLAI] minta isi — pet=" .. pet .. " → leveling=" .. tostring(d.leveling) .. " ps=" .. tostring(d.psNama))
+                            warn("[SUPLAI] minta isi — pet=" .. pet
+                                .. " → leveling=" .. tostring(d.leveling)
+                                .. " ps=" .. tostring(d.psNama)
+                                .. " timMarket=" .. tostring(d.timMarket))
                         else
                             warn("[SUPLAI] panel gak ada leveling siap: " .. tostring(d.pesan))
-                            _supMinta = false  -- boleh coba lagi
+                            _supMinta = false
                         end
                     else
                         warn("[SUPLAI] POST /suplai-minta gagal")
