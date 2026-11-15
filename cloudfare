@@ -4317,39 +4317,47 @@ export default {
         const akunMarket = teks(b.akun);
         if (!akunMarket) return salah("akun kosong");
 
-        // ambil pslink per akun leveling (cfg scope 'pslink')
-        const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
+        // ambil data lvlmax: "akun=maxInv:age500:totalAll:namaRF,..." (push tiap 60s dari panel)
+        let lvlmaxStr = "";
+        try { const r = await db.prepare("SELECT data FROM cfg WHERE scope='lvlmax'").first(); if (r && r.data) lvlmaxStr = r.data; } catch (e) {}
+
+        // parse lvlmax -> map akun -> { maxInv, age500, totalAll, namaRF }
+        const lvlmaxPeta = {};
+        for (const bagian of lvlmaxStr.split(",")) {
+          const [ak, val] = bagian.split("="); if (!ak || !val) continue;
+          const [maxInv, age500, totalAll, namaRF] = val.split(":");
+          lvlmaxPeta[ak.trim()] = { maxInv: Number(maxInv)||0, age500: Number(age500)||0, totalAll: Number(totalAll)||0, namaRF: namaRF||"" };
+        }
+        if (!Object.keys(lvlmaxPeta).length) return json({ ok: false, pesan: "belum ada akun leveling siap" });
+
+        // ambil ps_nama + tim dari tabel akun (untuk tentukan tim dan psLink)
+        let rowAkun = [];
+        try { const ra = await db.prepare("SELECT nama, ps_nama, tim FROM akun WHERE nama IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(Object.keys(lvlmaxPeta))).all(); rowAkun = ra.results || []; } catch (e) {
+          // fallback: ambil semua akun leveling
+          try { const ra2 = await db.prepare("SELECT nama, ps_nama, tim FROM akun").all(); rowAkun = (ra2.results||[]).filter(r => lvlmaxPeta[r.nama]); } catch (e2) {}
+        }
+
+        // ambil pslink (cfg 'pslink') + fallback cookies.ps_link
         let pslinkPeta = {};
-        if (cl) { try { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslinkPeta = d; } catch {} }
-
-        // fallback: cookies.ps_link (diisi otomatis dari worker getps)
+        try { const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first(); if (cl) { const d = JSON.parse(cl.data||"{}"); if (d && typeof d==="object") pslinkPeta = d; } } catch (e) {}
         let cookiePsLink = {};
-        try {
-          const ck = await db.prepare("SELECT akun, ps_link FROM cookies WHERE ps_link IS NOT NULL AND ps_link != ''").all();
-          for (const r of (ck.results || [])) { if (r.akun && r.ps_link) cookiePsLink[r.akun] = r.ps_link; }
-        } catch (e) {}
+        try { const ck = await db.prepare("SELECT akun, ps_link FROM cookies WHERE ps_link IS NOT NULL AND ps_link != ''").all(); for (const r of (ck.results||[])) { if (r.akun && r.ps_link) cookiePsLink[r.akun] = r.ps_link; } } catch (e) {}
 
-        // leveling online (ts < 7 menit lalu)
-        const SEGAR = skrg - 420;
-        let rowLvl = [];
-        try {
-          const rl = await db.prepare("SELECT akun, ts, data FROM leveling").all();
-          rowLvl = (rl.results || []).filter(x => (x.ts || 0) > SEGAR);
-        } catch (e) {}
-
-        // kelompokkan per tim — hitung age500 (jumlah pet age >= 500) per tim
+        // kelompokkan per tim — hitung age500 per tim, resolve psLink
         const timMap = {};
-        for (const x of rowLvl) {
-          // pslink: cek cfg dulu, fallback ke cookies.ps_link
-          const psLink = pslinkPeta[x.akun] || cookiePsLink[x.akun] || "";
+        for (const r of rowAkun) {
+          const lv = lvlmaxPeta[r.nama]; if (!lv) continue;
+          // psLink: dari ps_nama (lvl:<akun> → pslinkPeta[akun]), atau cookies.ps_link
+          let psLink = "";
+          const psNm = String(r.ps_nama || "");
+          if (psNm.startsWith("lvl:")) { const host = psNm.slice(4); psLink = pslinkPeta[host] || cookiePsLink[host] || ""; }
+          if (!psLink) psLink = pslinkPeta[r.nama] || cookiePsLink[r.nama] || "";
           if (!psLink) continue;
-          let d = {};
-          try { d = JSON.parse(x.data); } catch {}
-          const tim = (d.tim && String(d.tim).trim()) || x.akun;
-          const age500 = Number(d.count || d.age500 || 0);  // field count = jumlah pet age>=500
+          // tim: dari nama RF (namaRF di lvlmax) atau field tim di tabel akun
+          const tim = lv.namaRF || r.tim || r.nama;
           if (!timMap[tim]) timMap[tim] = { tim, psLink, age500: 0, akun: [] };
-          timMap[tim].age500 += age500;
-          timMap[tim].akun.push(x.akun);
+          timMap[tim].age500 += lv.age500;
+          timMap[tim].akun.push(r.nama);
         }
 
         const daftar = Object.values(timMap);
