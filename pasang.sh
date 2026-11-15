@@ -206,7 +206,12 @@ case "$PRESET" in
         printf "\n${B}[+] Tulis loader Arceus (auto-exe script)${N}\n"
         # v9.687: tulis ke SEMUA varian path Arceus X sekaligus (v4, v5, Neo, NEO)
         # supaya gak peduli versi mana yang kepasang di device
-        AX_DIRS="/sdcard/Arceus X/Autoexec /sdcard/Arceus X v5/Autoexec /sdcard/Arceus X Neo/Autoexec /sdcard/Arceus X NEO/Autoexec /sdcard/ArcaeusX/Autoexec"
+        # v9.688: pakai newline sebagai separator (bukan spasi) supaya path dengan spasi gak kepecah
+        AX_DIRS="/sdcard/Arceus X/Autoexec
+/sdcard/Arceus X v5/Autoexec
+/sdcard/Arceus X Neo/Autoexec
+/sdcard/Arceus X NEO/Autoexec
+/sdcard/ArcaeusX/Autoexec"
         # AX_DIR = path pertama (untuk laporan OK/GAGAL)
         AX_DIR="/sdcard/Arceus X/Autoexec"
         AX_LOADER="$AX_DIR/zenx.lua"
@@ -248,6 +253,8 @@ case "$PRESET" in
         fi
         # tulis ke semua varian path
         AX_OK=0
+        IFS_BAK="$IFS"; IFS='
+'
         for _AXD in $AX_DIRS; do
             su -c "mkdir -p \"$_AXD\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$_AXD/zenx.lua\"" 2>/dev/null
             if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
@@ -261,6 +268,7 @@ case "$PRESET" in
                 info "  -> $_AXD/zenx.lua"
             fi
         done
+        IFS="$IFS_BAK"
         AX_EXTRA="$AX_DIR/zenx_extra.lua"
         if [ "$AX_OK" -gt 0 ]; then
             ok "Loader Arceus ketulis ke $AX_OK path ($SC_LABEL)"
