@@ -4311,24 +4311,18 @@ export default {
       // ============================================================
 
       if (jalur === "/suplai-minta" && req.method === "POST") {
-        // market minta suplai: panel cari leveling online → set /ps tim market → balas psLink
-        // market gak perlu PUT /ps sendiri, cukup 1 request ini
+        // market minta suplai: panel balas list tim leveling online + psLink + age500
+        // market yang milih sendiri sesuai kondisinya, lalu set mapLink di worker sendiri
         const b = await req.json().catch(() => ({}));
         const akunMarket = teks(b.akun);
-        const petJualan = angka(b.pet, 0);
         if (!akunMarket) return salah("akun kosong");
-
-        // cari tim market dari tabel akun
-        const rowMkt = await db.prepare("SELECT tim FROM akun WHERE nama=?1").bind(akunMarket).first();
-        const timMarket = rowMkt ? teks(rowMkt.tim) : "";
-        if (!timMarket) return json({ ok: false, pesan: "tim market gak ketemu untuk akun: " + akunMarket });
 
         // ambil pslink per akun leveling
         const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
         let pslinkPeta = {};
         if (cl) { try { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslinkPeta = d; } catch {} }
 
-        // ambil data leveling online (ts < 7 menit lalu)
+        // leveling online (ts < 7 menit lalu)
         const SEGAR = skrg - 420;
         let rowLvl = [];
         try {
@@ -4336,32 +4330,24 @@ export default {
           rowLvl = (rl.results || []).filter(x => (x.ts || 0) > SEGAR);
         } catch (e) {}
 
-        // kelompokkan per tim leveling — 1 tim = 1 psLink
+        // kelompokkan per tim — hitung age500 (jumlah pet age >= 500) per tim
         const timMap = {};
         for (const x of rowLvl) {
           if (!pslinkPeta[x.akun]) continue;
           let d = {};
           try { d = JSON.parse(x.data); } catch {}
           const tim = (d.tim && String(d.tim).trim()) || x.akun;
-          if (!timMap[tim]) timMap[tim] = { psLink: pslinkPeta[x.akun], psNama: "lvl:" + x.akun, akun: [], totalAge: 0 };
+          const age500 = Number(d.count || d.age500 || 0);  // field count = jumlah pet age>=500
+          if (!timMap[tim]) timMap[tim] = { tim, psLink: pslinkPeta[x.akun], age500: 0, akun: [] };
+          timMap[tim].age500 += age500;
           timMap[tim].akun.push(x.akun);
-          timMap[tim].totalAge += Number(d.age || 0);
         }
 
         const daftar = Object.values(timMap);
         if (daftar.length === 0) return json({ ok: false, pesan: "belum ada akun leveling siap" });
 
-        // random pilih 1 tim leveling
-        const pilih = daftar[Math.floor(Math.random() * daftar.length)];
-
-        // set /ps untuk tim market → worker market otomatis dapet link baru
-        await db.prepare(
-          `INSERT INTO ps (tim, ts, link) VALUES (?1, ?2, ?3)
-           ON CONFLICT(tim) DO UPDATE SET ts=?2, link=?3`
-        ).bind(timMarket, skrg, pilih.psLink).run();
-        await tandaiPsGanti();
-
-        return json({ ok: true, leveling: pilih.akun[0], psLink: pilih.psLink, psNama: pilih.psNama, timMarket });
+        // balas list semua tim — market yang milih
+        return json({ ok: true, leveling: daftar });
       }
 
       if (jalur === "/suplai-selesai" && req.method === "POST") {

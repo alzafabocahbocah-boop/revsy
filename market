@@ -403,7 +403,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.552"
+local VERSION = "8.553"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -612,9 +612,10 @@ task.spawn(function()
     local lamaTotal = -1   -- v8.461: totalPet terakhir dikirim (buat cek perubahan)
     local lamaDetail = 0   -- v8.460: kapan terakhir kirim payload detail (tiap 5 menit)
 
-    -- v8.550: SUPLAI — deteksi pet jualan < 20, minta link PS leveling ke panel
-    -- panel pilih leveling online (random), langsung set /ps tim market → worker market join PS leveling
-    -- market selesai (inv max) → panel clear /ps tim market → worker market balik TradeWorld
+    -- v8.553: SUPLAI — deteksi pet jualan < 20, minta list leveling ke panel
+    -- panel balas list tim leveling online + psLink + age500
+    -- market pilih tim dengan age500 terbanyak → set _G.__ZenxSuplaiPS → worker pakai mapLink itu
+    -- market selesai (inv max) → lapor /suplai-selesai → worker clear mapLink suplai
     local _supMinta = false       -- sudah minta suplai, jangan spam
     local _supSelesai = false     -- sudah lapor selesai, jangan spam
     local _supLamaMinta = 0       -- kapan terakhir minta (cooldown 5 menit)
@@ -627,11 +628,12 @@ task.spawn(function()
         local pet = petTerakhir or 0
         local maxInv = maxInvTerakhir or 0
         local now = os.time()
-        -- sudah penuh → lapor selesai (sekali) → panel clear PS tim market
+        -- sudah penuh → lapor selesai (sekali)
         if maxInv > 0 and totalPetTerakhir >= maxInv then
             if not _supSelesai then
                 _supSelesai = true
                 _supMinta   = false
+                _G.__ZenxSuplaiPS = nil  -- clear mapLink suplai
                 task.spawn(function()
                     pcall(function()
                         req({
@@ -639,7 +641,7 @@ task.spawn(function()
                             Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
                             Body = HS:JSONEncode({ akun = plr.Name }),
                         })
-                        warn("[SUPLAI] lapor selesai — pet max (" .. totalPetTerakhir .. "/" .. maxInv .. ") → panel clear PS tim market")
+                        warn("[SUPLAI] lapor selesai — pet max (" .. totalPetTerakhir .. "/" .. maxInv .. ")")
                     end)
                 end)
             end
@@ -659,11 +661,15 @@ task.spawn(function()
                     })
                     if r and (r.StatusCode == 200 or r.Success) then
                         local d = HS:JSONDecode(r.Body or "{}") or {}
-                        if d.ok then
+                        if d.ok and type(d.leveling) == "table" and #d.leveling > 0 then
+                            -- pilih random dari list leveling yang tersedia
+                            local pilih = d.leveling[math.random(#d.leveling)]
+                            -- set mapLink suplai → worker baca lewat _G.__ZenxSuplaiPS
+                            _G.__ZenxSuplaiPS = { tim = pilih.tim, psLink = pilih.psLink }
                             warn("[SUPLAI] minta isi — pet=" .. pet
-                                .. " → leveling=" .. tostring(d.leveling)
-                                .. " ps=" .. tostring(d.psNama)
-                                .. " timMarket=" .. tostring(d.timMarket))
+                                .. " → pilih tim=" .. tostring(pilih.tim)
+                                .. " age500=" .. tostring(pilih.age500)
+                                .. " psLink=" .. tostring(pilih.psLink):sub(1,40))
                         else
                             warn("[SUPLAI] panel gak ada leveling siap: " .. tostring(d.pesan))
                             _supMinta = false

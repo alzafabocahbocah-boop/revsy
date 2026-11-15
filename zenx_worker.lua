@@ -6,7 +6,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.689"
+local VERSION = "9.690"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6826,6 +6826,25 @@ local function run(cfg)
                     cfg._ps_override = link
                     _psOverrideSetTs = (link ~= "") and os.time() or 0  -- v9.689: catat kapan mulai di PS
                     info("PS dari panel: " .. (link ~= "" and link or "(public)"))
+                end
+            end
+            -- v9.690: MARKET — baca _G.__ZenxSuplaiPS (diset market script setelah pilih leveling)
+            -- apply psLink ke semua pkg mapLink biar worker langsung join PS leveling
+            if tostring(cfg.script_label or ""):find("MARKET") then
+                local sp = getgenv and getgenv().__ZenxSuplaiPS or _G.__ZenxSuplaiPS
+                if sp and type(sp) == "table" and (sp.psLink or "") ~= "" then
+                    if sp.psLink ~= (cfg._suplaiPsApplied or "") then
+                        cfg._suplaiPsApplied = sp.psLink
+                        cfg._ps_override     = sp.psLink
+                        _psOverrideSetTs     = os.time()
+                        for pkg in pairs(mapLink) do mapLink[pkg] = sp.psLink end
+                        info("[SUPLAI] apply psLink dari market script → tim=" .. tostring(sp.tim) .. " link=" .. sp.psLink:sub(1,40))
+                    end
+                elseif (cfg._suplaiPsApplied or "") ~= "" then
+                    -- market clear suplai (_G.__ZenxSuplaiPS = nil) → bersihkan mapLink suplai
+                    cfg._suplaiPsApplied = ""
+                    info("[SUPLAI] market clear suplai → mapLink dikembalikan ke normal (refresh_ps)")
+                    pcall(refresh_ps)
                 end
             end
         end
