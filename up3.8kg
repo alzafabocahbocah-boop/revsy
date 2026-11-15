@@ -2893,7 +2893,7 @@ do
 local function processHits(hits)
                 local seen = {}
                 for _, hit in ipairs(hits) do
-                    local r, animStr = hit[1], hit[2]
+                    local r, animStr, fmt = hit[1], hit[2], (hit[3] or "F?")
                     local anim = tostring(animStr):lower()
                     -- filter awal: skip non-SWAP_ANIM dulu (cepat, O(1))
                     -- hotdog check dilakukan SETELAH isMyPetUUID (tidak perlu scan untuk UUID orang lain)
@@ -2965,7 +2965,7 @@ local function processHits(hits)
                     local capturedRaw, capturedRaw8, capturedAnim = raw, raw8, anim
                     local capturedUnequip, capturedEquip = _unequip, _equip
                     local capturedN = swapJobN
-                    ssLog("→ SWAP "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
+                    ssLog("→ SWAP "..capturedAnim.." "..capturedRaw8.." #"..capturedN.." ["..fmt.."]")
                     swapQueue[#swapQueue+1] = function()
                         local ok, err = pcall(function()
                             if capturedAnim == "trumpet" then task.wait(0.8) end
@@ -3041,7 +3041,7 @@ local function processHits(hits)
                             if path:find("CustomAnimationState",1,true) and val ~= nil then
                                 local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)/")
                                 if uuid then
-                                    hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(val)}
+                                    hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(val), "F1"}
                                 end
                             elseif path:find("ActivePetStates",1,true) and type(val)=="table" then
                                 local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)$") or path:match("ActivePetStates/([^/]+)/")
@@ -3050,14 +3050,14 @@ local function processHits(hits)
                                     -- Format 2: val = {CustomAnimationState=animStr,...}
                                     local animStr = val.CustomAnimationState or val.AnimationState or val.animationState
                                     if animStr then
-                                        hits[#hits+1] = {uuid, tostring(animStr)}
+                                        hits[#hits+1] = {uuid, tostring(animStr), "F2"}
                                     end
                                     -- Format 3: val = {Arguments={CustomAnimationState=animStr,...},...} (PetAction)
                                     if not animStr and type(val.Arguments)=="table" then
                                         local a = val.Arguments
                                         animStr = a.CustomAnimationState or a.AnimationState or a.animationState
                                         if animStr then
-                                            hits[#hits+1] = {uuid, tostring(animStr)}
+                                            hits[#hits+1] = {uuid, tostring(animStr), "F3"}
                                         end
                                     end
                                     -- Format 4: PetAction nested lebih dalam
@@ -3068,7 +3068,7 @@ local function processHits(hits)
                                             animStr = pa.Arguments.CustomAnimationState or pa.Arguments.AnimationState
                                         end
                                         if animStr then
-                                            hits[#hits+1] = {uuid, tostring(animStr)}
+                                            hits[#hits+1] = {uuid, tostring(animStr), "F4"}
                                         end
                                     end
                                 end
