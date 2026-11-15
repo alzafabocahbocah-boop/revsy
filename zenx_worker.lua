@@ -1,11 +1,12 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.688 — suplai-antri polling: market minta isi pet → worker arahkan leveling client ke PS market → selesai balik TradeWorld
 -- zenx_worker v9.687 — fix crash "attempt to concatenate a nil value (local 'ak')" saat FORCE (fallback ak ke pkg)
 -- zenx_worker v9.686 — bump (versi sebelumnya tidak di-commit dengan benar)
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.687"
+local VERSION = "9.688"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5415,6 +5416,8 @@ local function run(cfg)
     local lastJagaDepan = 0     -- v4.52: kapan terakhir munculin ulang jendela
     local lastRekamDc = 0       -- v7.29: kapan terakhir rekam disconnect dari logcat
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
+    local lastSuplaiAntriCek = 0  -- v9.688: kapan terakhir poll /suplai-antri (market minta isi)
+    local _suplaiAntriKnown = {}  -- v9.688: {akunMarket -> {akunLeveling, psLink, psNama}} yg lagi aktif
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
     local LISENSI_CEK_TS = 0   -- v9.239: kapan terakhir cek lisensi PRIORITAS (top-loop, tiap 60s)
     local lastSettingCek = 0   -- v9.34: kapan terakhir cek /setting-tim (tiap 5s)
@@ -8299,6 +8302,74 @@ local function run(cfg)
             if nb > 0 then tambahLog("SUPLAI: " .. nb .. " akun market dikumpulin ke PS leveling") end
             if np > 0 then tambahLog("SUPLAI: " .. np .. " akun market dipulangin (stok cukup)") end
             if npd > 0 then tambahLog("SUPLAI: " .. npd .. " akun market pindah gudang (leveling abis)") end
+        end
+
+        -- v9.688: SUPLAI-ANTRI — poll market minta isi, arahkan leveling client ke PS market
+        if hit and (now - lastSuplaiAntriCek) >= 30 then
+            lastSuplaiAntriCek = now
+            local rsA = api_get(cfg, "/suplai-antri")
+            if rsA and rsA ~= "" then
+                -- build akun -> pkg map
+                local akun2pkg = {}
+                if mapAkun then
+                    for pkg_, ak_ in pairs(mapAkun) do akun2pkg[ak_] = pkg_ end
+                end
+                -- parse antri array
+                local antriSet = {}  -- akunMarket -> true (masih aktif di antri sekarang)
+                for entry in rsA:gmatch('{[^}]+}') do
+                    local akunMarket  = entry:match('"akunMarket"%s*:%s*"(.-)"')
+                    local akunLvl     = entry:match('"akunLeveling"%s*:%s*"(.-)"')
+                    local psLink_     = entry:match('"psLink"%s*:%s*"(.-)"')
+                    local psNama_     = entry:match('"psNama"%s*:%s*"(.-)"')
+                    local pet_        = entry:match('"pet"%s*:%s*(%d+)')
+                    if akunMarket and akunLvl and psLink_ and psLink_ ~= "" then
+                        antriSet[akunMarket] = true
+                        local prev = _suplaiAntriKnown[akunMarket]
+                        if not prev then
+                            -- entry BARU — arahkan leveling client ke PS market
+                            _suplaiAntriKnown[akunMarket] = {
+                                akunLeveling = akunLvl, psLink = psLink_, psNama = psNama_ or ""
+                            }
+                            local pkgLvl = akun2pkg[akunLvl]
+                            if pkgLvl then
+                                mapLink[pkgLvl] = psLink_
+                                _G.__hactPsNama = _G.__hactPsNama or {}
+                                _G.__hactLastLink = _G.__hactLastLink or {}
+                                _G.__hactPsNama[pkgLvl] = psNama_ or akunMarket
+                                _G.__hactLastLink[pkgLvl] = psLink_
+                                tambahLog(("[SUPLAI] market " .. akunMarket .. " minta isi — pet=" .. tostring(pet_ or "?") ..
+                                    " → leveling=" .. akunLvl .. " join PS " .. (psNama_ or psLink_:sub(1,24))))
+                                info(("[SUPLAI] " .. akunLvl .. " (clienu) → join PS " .. akunMarket ..
+                                    " host=" .. tostring(psNama_ or "-")))
+                                open_one(cfg, pkgLvl, psLink_, "suplai-antri-baru", true)
+                            else
+                                tambahLog("[SUPLAI] " .. akunLvl .. " gak ketemu pkg — skip")
+                            end
+                        end
+                    end
+                end
+                -- cek entry HILANG dari antri (market sudah penuh → selesai)
+                for mkt, info_ in pairs(_suplaiAntriKnown) do
+                    if not antriSet[mkt] then
+                        local akunLvl = info_.akunLeveling
+                        local pkgLvl  = akun2pkg[akunLvl]
+                        _suplaiAntriKnown[mkt] = nil
+                        tambahLog("[SUPLAI] " .. akunLvl .. " meminta balik ke server market segera")
+                        info("[SUPLAI] " .. akunLvl .. " (clienu) selesai isi " .. mkt .. " → balik TradeWorld")
+                        if pkgLvl then
+                            -- hapus PS override — leveling balik ke server_utama (TradeWorld)
+                            mapLink[pkgLvl] = nil
+                            if _G.__hactPsNama  then _G.__hactPsNama[pkgLvl]  = nil end
+                            if _G.__hactLastLink then _G.__hactLastLink[pkgLvl] = nil end
+                            KICK_DIURUS["pslink_cache:" .. pkgLvl] = nil  -- biar gak re-pakai link lama
+                            local urlHome = cfg.server_utama or ""
+                            if urlHome ~= "" then
+                                open_one(cfg, pkgLvl, urlHome, "suplai-selesai-balik", true)
+                            end
+                        end
+                    end
+                end
+            end
         end
 
         local _jd_sec = cfg.jaga_depan_sec or 15
