@@ -3118,59 +3118,61 @@ do
 
                 if req and req:IsA("RemoteEvent") then pcall(function() req:FireServer() end) end
 
+                -- v2.90: scan support pets yg equipped sekarang, tampilkan di log
+                do
+                    local found = {}
+                    for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
+                        if not container then continue end
+                        for _, t in ipairs(container:GetChildren()) do
+                            local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                            if u then
+                                local nm = tostring(t.Name):lower()
+                                for _, kw in ipairs(CD_KW) do
+                                    if nm:find(kw, 1, true) then
+                                        local uid = tostring(u):gsub("[{}]","")
+                                        found[#found+1] = "  "..kw.." uuid="..uid:sub(1,8).." name="..tostring(t.Name)
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    if #found > 0 then
+                        ssLog("[CD] support pets ditemukan:")
+                        for _, ln in ipairs(found) do ssLog(ln) end
+                    else
+                        ssLog("[CD] WARN: gak ada support pet (dilop/lion/peacock/peryton) di backpack/char")
+                    end
+                end
+
                 pcu.OnClientEvent:Connect(function(uuid, data)
                     local key = tostring(uuid):gsub("[{}]","")
-                    -- v2.90: debug — log semua event masuk (biar tau event diterima atau gak)
-                    local isMine = isMyPetUUID(key)
-                    ssLog("[CD] event uuid="..key:sub(1,8).." mine="..tostring(isMine))
-                    if not isMine then return end
-                    -- cek apakah ada skill Time<=0
+                    if not isMyPetUUID(key) then return end
+                    -- v2.90: cek apakah support pet, log nama + CD time
+                    local isSup, kw = isSupportPet(key)
+                    if not isSup then return end  -- skip non-support pet
+                    -- v2.90: log semua CD time dari event ini
+                    local cdTimes = {}
                     local cdNol = false
                     if type(data) == "table" then
                         for _, v in ipairs(data) do
                             if type(v) == "table" and type(v.Time) == "number" then
                                 local p = tostring(v.Passive or ""):lower()
+                                cdTimes[#cdTimes+1] = string.format("%s=%.1fs", p~="" and p:sub(1,8) or "skill", v.Time)
                                 if not p:find("mutation") and v.Time <= 0 then
-                                    cdNol = true; break
+                                    cdNol = true
                                 end
                             end
                         end
                     end
+                    ssLog("[CD] "..kw.." uuid="..key:sub(1,8).." | "..table.concat(cdTimes, " | "))
                     if cdNol then
                         if not cdZeroAt[key] then
                             cdZeroAt[key] = tick()
-                            -- log nama pet: scan backpack+char dulu, fallback workspace model {uuid}
-                            local petNm = "?"
-                            for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
-                                if not container then continue end
-                                for _, t in ipairs(container:GetChildren()) do
-                                    local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
-                                    if u and tostring(u):gsub("[{}]","") == key then
-                                        petNm = tostring(t.Name); break
-                                    end
-                                end
-                                if petNm ~= "?" then break end
-                            end
-                            if petNm == "?" then
-                                -- cari di workspace: model namanya {uuid}
-                                local wm = game:GetService("Workspace"):FindFirstChild("{"..key.."}")
-                                if wm then
-                                    local nm = wm:GetAttribute("PET_NAME") or wm:GetAttribute("Name")
-                                    if nm then petNm = tostring(nm)
-                                    else
-                                        -- ambil nama dari child pertama yg bukan BasePart
-                                        for _, c in ipairs(wm:GetChildren()) do
-                                            if not c:IsA("BasePart") and not c:IsA("Script") then
-                                                petNm = tostring(c.Name); break
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                            ssLog("[CD] "..key:sub(1,8).." cd nol 0.0s name="..petNm)
+                            ssLog("[CD] "..kw.." uuid="..key:sub(1,8).." cd NOL pertama kali")
                         else
                             local elapsed = tick() - cdZeroAt[key]
-                            ssLog("[CD] "..key:sub(1,8).." cd nol "..string.format("%.1f",elapsed).."s")
+                            ssLog("[CD] "..kw.." uuid="..key:sub(1,8).." cd nol "..string.format("%.1f",elapsed).."s")
                             if elapsed > 1 then
                                 if isMyPetUUID(key) then
                                     ssLog("[CD] "..key:sub(1,8).." cd nol "..string.format("%.1f",elapsed).."s — paksa swap!")
