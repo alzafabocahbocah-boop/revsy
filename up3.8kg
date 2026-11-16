@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.87 | tambah delay 50ms antara unequip-equip di swap     ║
+-- ║  UP KG — v2.88 | CD ready check: dilop/lion/peacock/peryton cd nol >1s → swap          ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -3082,6 +3082,85 @@ do
             end
 
             local activeConn = connectDS(ds2)
+
+            -- v2.88: CD ready check — dilop/lion/peacock/peryton cd nol >1s → paksa swap
+            -- (kadang swap anim miss, pet nyangkut cd nol tanpa ke-swap)
+            task.spawn(function()
+                local ge3 = RS:WaitForChild("GameEvents", 15)
+                if not ge3 then ssLog("[CD] ERR: GameEvents nil"); return end
+                local pcu = ge3:FindFirstChild("PetCooldownsUpdated")
+                local req = ge3:FindFirstChild("RequestPetCooldowns")
+                if not pcu then ssLog("[CD] ERR: PetCooldownsUpdated nil"); return end
+                ssLog("[CD] listener ON")
+
+                local CD_KW = {"dilo", "lion", "peacock", "peryton"}
+                local cdZeroAt = {}  -- uuid -> tick() saat cd pertama kali nol
+
+                local function isSupportPet(uuid)
+                    for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
+                        if not container then continue end
+                        for _, t in ipairs(container:GetChildren()) do
+                            local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                            if u and tostring(u):gsub("[{}]","") == uuid then
+                                local nm = tostring(t.Name):lower()
+                                for _, kw in ipairs(CD_KW) do
+                                    if nm:find(kw, 1, true) then return true, kw end
+                                end
+                            end
+                        end
+                    end
+                    return false
+                end
+
+                if req and req:IsA("RemoteEvent") then pcall(function() req:FireServer() end) end
+
+                pcu.OnClientEvent:Connect(function(uuid, data)
+                    local key = tostring(uuid):gsub("[{}]","")
+                    if not isMyPetUUID(key) then return end
+                    -- cek apakah ada skill Time<=0
+                    local cdNol = false
+                    if type(data) == "table" then
+                        for _, v in ipairs(data) do
+                            if type(v) == "table" and type(v.Time) == "number" then
+                                local p = tostring(v.Passive or ""):lower()
+                                if not p:find("mutation") and v.Time <= 0 then
+                                    cdNol = true; break
+                                end
+                            end
+                        end
+                    end
+                    if cdNol then
+                        if not cdZeroAt[key] then
+                            cdZeroAt[key] = tick()
+                            ssLog("[CD] "..key:sub(1,8).." cd nol — mulai hitung")
+                        else
+                            local elapsed = tick() - cdZeroAt[key]
+                            if elapsed > 1 then
+                                local ok, kw = isSupportPet(key)
+                                if ok then
+                                    ssLog("[CD] "..key:sub(1,8).." ("..kw..") cd nol "..string.format("%.1f",elapsed).."s — paksa swap!")
+                                    local _u = _G._ZenxUnequipPet
+                                    local _e = _G._ZenxEquipPet
+                                    if _u and _e then
+                                        task.spawn(function()
+                                            pcall(_u, key)
+                                            task.wait(0.05)
+                                            pcall(_e, key)
+                                            ssLog("[CD] "..key:sub(1,8).." swap done")
+                                        end)
+                                        cdZeroAt[key] = nil  -- reset setelah swap
+                                    else
+                                        ssLog("[CD] ERR: fungsi equip nil")
+                                    end
+                                end
+                            end
+                        end
+                    else
+                        cdZeroAt[key] = nil  -- cd udah > 0 lagi, reset
+                    end
+                end)
+            end)
+
             local _lastDsId = ds2
             ge2.ChildAdded:Connect(function(child)
                 if child.Name ~= "DataStream" or child == _lastDsId then return end
