@@ -1,4 +1,4 @@
--- ZENX MARKET v8.555 — getBaseKg: pakai BaseWeight×1.1 (KG age-1) — rule panel diset berdasarkan KG saat age 1
+-- ZENX MARKET v8.556 — getBaseKg: tambah log src di warning (RC-age1/APS-age1/display-est) buat debug
 -- ZENX MARKET v8.552 — maxInv: tambah getgc scan layer 0 (upkg style) di startup + per-tick detect
 -- ZENX MARKET v8.551 — suplai: guard PlaceId TradeWorld di cekSuplai (gak minta suplai kalau lagi di luar server market)
 -- ZENX MARKET v8.548 — auto ascend: hanya jalan di server garden (bukan market/TradeWorld)
@@ -405,7 +405,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.555"
+local VERSION = "8.556"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -8100,9 +8100,10 @@ BH.countMyPetsForRule = function(r)
             local typeOk = (not ruleType) or (pBase == ruleType) or (pType == ruleType)
             if typeOk then
                 debugInfo.typeMatch = debugInfo.typeMatch + 1
-                local baseKg = getBaseKg(t)
+                local baseKg, bkSrc = getBaseKg(t)
                 if baseKg then debugInfo.hasBase = debugInfo.hasBase + 1
                     if #debugInfo.kgs < 12 then table.insert(debugInfo.kgs, baseKg) end   -- v8.416: sample kg asli
+                    if not debugInfo.bkSrc then debugInfo.bkSrc = bkSrc end   -- v8.556: catat source pertama
                 else debugInfo.noBase = debugInfo.noBase + 1 end
                 if baseKg and baseKg >= ruleMin and (ruleMax == math.huge or baseKg <= ruleMax) then
                     debugInfo.kgMatch = debugInfo.kgMatch + 1
@@ -8137,7 +8138,8 @@ BH.countMyPetsForRule = function(r)
         -- v8.417: PUSH ke KABAR DARI PANEL (deduped per rule) — biar keliatan di GUI, gak perlu console
         local rmax = (ruleMax==math.huge and "∞" or tostring(ruleMax))
         local diagMsg = "⚠ " .. ruleType .. ": " .. debugInfo.typeMatch .. "pet, KG asli " ..
-                        (kgShort ~= "" and kgShort or "?") .. " TAPI rule " .. ruleMin .. "-" .. rmax .. " → set range!"
+                        (kgShort ~= "" and kgShort or "?") .. " [src:" .. tostring(debugInfo.bkSrc or "?") .. "]" ..
+                        " TAPI rule " .. ruleMin .. "-" .. rmax .. " → set range!"
         _G.__ZenxDiagLast = _G.__ZenxDiagLast or {}
         if _G.__ZenxDiagLast[ruleType] ~= diagMsg then
             _G.__ZenxDiagLast[ruleType] = diagMsg
