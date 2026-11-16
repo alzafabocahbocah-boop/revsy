@@ -1,11 +1,11 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.274 (trade langsung semua akun present, gohome timeout 2 menit)  ║
+-- ║  UP KG — v10.275 (swap anim engine port dari up3.8kg — queue+ssLog+isMyPetUUID)  ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.273"
+local VERSION = "up6kg-v10.275"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1998,43 +1998,157 @@ do
         end
     end)
 
-    -- ── Ele skill-swap: swap elephant saat CustomAnimationState skill ──
+    -- ── Swap anim engine — port dari up3.8kg v2.87 ──
     task.spawn(function()
         local ge2 = RS:WaitForChild("GameEvents", 15)
         if not ge2 then return end
         local ds = ge2:WaitForChild("DataStream", 15)
         if not ds then return end
-        local SKIP_ELE = { Idle=true, Walk=true, Run=true }
-        local function scanEleAnim(t, depth)
-            depth = depth or 0
-            if depth > 6 or type(t) ~= "table" then return end
+
+        local plrSS = game:GetService("Players").LocalPlayer
+        if not _G.ZenxAnimDbgLog then _G.ZenxAnimDbgLog = {} end
+
+        -- SWAP_ANIM: animasi yang trigger swap (sama persis up3.8kg)
+        local SWAP_ANIM = { frill=true, fan=true, roar=true, pee=true, pew=true, screech=true, trumpet=true }
+
+        local function ssLog(msg)
+            local s = "[SS] "..tostring(msg)
+            print(s)
+            local ts = os.date("%H:%M:%S")..string.format(".%03d", math.floor((tick()%1)*1000))
+            local line = ts.." | "..s
+            if _G.ZenxAnimDbgLog then
+                table.insert(_G.ZenxAnimDbgLog, 1, line)
+                if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
+            end
+            if _G.ZenxAnimDbgLogAll then
+                _G.ZenxAnimDbgLogAll[#_G.ZenxAnimDbgLogAll+1] = line
+            end
+        end
+
+        -- isMyPetUUID: scan backpack+char (port up3.8kg)
+        local function isMyPetUUID(raw)
+            local bp = plrSS:FindFirstChild("Backpack")
+            if bp then
+                for _, t in ipairs(bp:GetChildren()) do
+                    local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                    if u and tostring(u):gsub("[{}]","") == raw then return true end
+                end
+            end
+            local char = plrSS.Character
+            if char then
+                for _, t in ipairs(char:GetChildren()) do
+                    local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                    if u and tostring(u):gsub("[{}]","") == raw then return true end
+                end
+            end
+            return false
+        end
+
+        -- isMyHotdog: cek di backpack+char apakah UUID ini hotdog milik kita
+        local function isMyHotdog(raw)
+            local function checkChildren(parent)
+                if not parent then return false end
+                for _, t in ipairs(parent:GetChildren()) do
+                    local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                    if u and tostring(u):gsub("[{}]","") == raw then
+                        local nm = tostring(t.Name):lower()
+                        local f = t:FindFirstChild("PetType") or t:FindFirstChild("Type")
+                        local fn = f and tostring(f.Value or f):lower() or ""
+                        if nm:find("hotdog",1,true) or fn:find("hotdog",1,true) then return true end
+                    end
+                end
+                return false
+            end
+            return checkChildren(plrSS:FindFirstChild("Backpack")) or checkChildren(plrSS.Character)
+        end
+
+        -- Sequential swap queue
+        local swapQueue = {}
+        local swapWorkerRunning = false
+        local swapJobN = 0
+        local function swapWorkerStart()
+            if swapWorkerRunning then return end
+            swapWorkerRunning = true
+            ssLog("[WRK] spawn worker, queue="..#swapQueue)
+            task.spawn(function()
+                local drained = 0
+                while true do
+                    local job = table.remove(swapQueue, 1)
+                    if not job then
+                        ssLog("[WRK] queue kosong setelah drain "..drained.." job, stop")
+                        swapWorkerRunning = false
+                        break
+                    end
+                    drained = drained + 1
+                    ssLog("[WRK] mulai job #"..drained..", sisa queue="..#swapQueue)
+                    pcall(job)
+                    ssLog("[WRK] selesai job #"..drained..", sisa queue="..#swapQueue)
+                end
+            end)
+        end
+
+        -- processHits: port up3.8kg
+        local function processHits(hits)
+            if #hits > 0 then ssLog("[PH] masuk "..#hits.." hits") end
+            for _, hit in ipairs(hits) do
+                local r, animStr, fmt = hit[1], hit[2], (hit[3] or "F?")
+                local anim = tostring(animStr):lower()
+                local r8 = r:sub(1,8)
+                ssLog("[PH] hit "..r8.." anim="..anim.." fmt="..fmt)
+                if not isMyPetUUID(r) then ssLog("[PH] skip: bukan punya aku "..r8); continue end
+                local hotdog = isMyHotdog(r)
+                if not hotdog and not SWAP_ANIM[anim] then ssLog("[PH] skip: anim "..anim.." bukan target"); continue end
+                swapJobN = swapJobN + 1
+                local capturedRaw  = r
+                local capturedAnim = anim
+                local capturedRaw8 = r8
+                local capturedN    = swapJobN
+                local _unequip = unequipPet
+                local _equip   = equipPet
+                ssLog("[PH] pre-swap "..capturedRaw8.." unequip="..(type(_unequip)).." equip="..(type(_equip)))
+                if not _unequip or not _equip then ssLog("ERR: fungsi equip nil"); continue end
+                ssLog("→ SWAP "..capturedAnim.." "..capturedRaw8.." #"..capturedN.." ["..fmt.."]")
+                swapQueue[#swapQueue+1] = function()
+                    if capturedAnim == "trumpet" then task.wait(0.8) end
+                    _unequip(capturedRaw)
+                    ssLog("unequip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
+                    task.wait(0.05)
+                    _equip(capturedRaw)
+                    ssLog("equip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
+                end
+                swapWorkerStart()
+            end
+        end
+
+        -- deepFind: kumpul hits dari DS event
+        local function deepFind(t, depth, out)
+            depth = depth or 0; out = out or {}
+            if depth > 12 or type(t) ~= "table" then return out end
             for _, v in pairs(t) do
                 if type(v) == "table" then
-                    local path = tostring(v[1] or "")
-                    if path:find("CustomAnimationState", 1, true) then
-                        local uuid = path:match("{([^}]+)}") or "?"
-                        local animStr = tostring(v[2] or "")
-                        if animStr ~= "" and not SKIP_ELE[animStr] then
-                            -- cek apakah uuid ini elephant
-                            local raw = uuid:gsub("[{}]", "")
-                            if eleUuids[raw] or eleUuids["{"..raw.."}"] then
-                                print(string.format("[EleSwap] %s [%s] → swap!", raw:sub(1,8), animStr))
-                                task.spawn(function()
-                                    unequipPet(raw)
-                                    task.wait(0.3)
-                                    equipPet(raw)
-                                end)
-                            end
+                    local v1 = tostring(v[1] or "")
+                    if v1:find("CustomAnimationState",1,true) then
+                        if v[2] ~= nil then
+                            local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
+                            local raw = uuid:gsub("[{}]","")
+                            out[#out+1] = {raw, tostring(v[2]), "F1"}
                         end
                     else
-                        scanEleAnim(v, depth+1)
+                        deepFind(v, depth+1, out)
                     end
                 end
             end
+            return out
         end
+
+        ssLog("DS listener ON")
         ds.OnClientEvent:Connect(function(_, service, data)
             if not tostring(service):find("ActivePets", 1, true) then return end
-            if type(data) == "table" then scanEleAnim(data) end
+            if type(data) ~= "table" then return end
+            local hits = deepFind(data)
+            if #hits > 0 then
+                task.spawn(function() processHits(hits) end)
+            end
         end)
     end)
 
