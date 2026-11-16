@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.88 | CD ready check: dilop/lion/peacock/peryton cd nol >1s → swap          ║
+-- ║  UP KG — v2.89 | isMyPetUUID + workspace scan (pet equipped di world)                  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.88"
+local VERSION = "up38kg-v2.89"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2838,6 +2838,7 @@ do
             local LOOKUP_KW = {}
 
             -- v2.28: scan backpack + character — gak butuh _kgContainer, kerja walau upkg off
+            -- v2.89: tambah scan workspace — detect pet yang lagi equipped di world (model {uuid})
             local function isMyPetUUID(raw)
                 -- cek container dulu kalau ada (cepat, O(1))
                 if _kgContainer and (_kgContainer[raw] or _kgContainer["{"..raw.."}"]) then return true end
@@ -2852,6 +2853,9 @@ do
                 end
                 if scanContainer(plr:FindFirstChild("Backpack")) then return true end
                 if scanContainer(plr.Character) then return true end
+                -- v2.89: pet lagi equipped di world → model namanya {uuid} di workspace
+                local wm = game:GetService("Workspace"):FindFirstChild("{"..raw.."}")
+                if wm then return true end
                 return false
             end
 
@@ -3132,7 +3136,7 @@ do
                     if cdNol then
                         if not cdZeroAt[key] then
                             cdZeroAt[key] = tick()
-                            -- log nama pet buat debug
+                            -- log nama pet: scan backpack+char dulu, fallback workspace model {uuid}
                             local petNm = "?"
                             for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
                                 if not container then continue end
@@ -3140,6 +3144,23 @@ do
                                     local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
                                     if u and tostring(u):gsub("[{}]","") == key then
                                         petNm = tostring(t.Name); break
+                                    end
+                                end
+                                if petNm ~= "?" then break end
+                            end
+                            if petNm == "?" then
+                                -- cari di workspace: model namanya {uuid}
+                                local wm = game:GetService("Workspace"):FindFirstChild("{"..key.."}")
+                                if wm then
+                                    local nm = wm:GetAttribute("PET_NAME") or wm:GetAttribute("Name")
+                                    if nm then petNm = tostring(nm)
+                                    else
+                                        -- ambil nama dari child pertama yg bukan BasePart
+                                        for _, c in ipairs(wm:GetChildren()) do
+                                            if not c:IsA("BasePart") and not c:IsA("Script") then
+                                                petNm = tostring(c.Name); break
+                                            end
+                                        end
                                     end
                                 end
                             end
