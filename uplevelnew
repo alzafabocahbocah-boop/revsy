@@ -1,4 +1,5 @@
--- uplevelnew v8.812
+-- uplevelnew v8.813
+-- v8.813: fan tetap task.spawn sendiri (bukan queue) — roar/weave/clear pakai queue worker, fan langsung tanpa throttle
 -- v8.812: port swap engine dari up3.8kg — isMyPetUUID backpack+char scan, sequential queue worker, hapus fan throttle 0.5s
 -- v8.811: hapus fan pos check reswap — fan cukup 1x unequip+equip
 -- v8.810: fan throttle + pos check dipisah ke task.spawn — tidak block processHits loop
@@ -4276,7 +4277,7 @@ do
         local _dsFireCnt  = {}  -- [r8] = jumlah kali fire DS event
         local _dsFireLast = {}  -- [r8] = tick() terakhir fire
 
-        -- v8.812: sequential swap queue — port dari up3.8kg (ganti withSwapDebounce+spawn paralel)
+        -- v8.812: sequential swap queue untuk roar/weave/clear — port dari up3.8kg
         local _swapQueue = {}
         local _swapWorkerRunning = false
         local _swapJobN = 0
@@ -4289,6 +4290,22 @@ do
                     if not job then _swapWorkerRunning = false; break end
                     pcall(job)
                 end
+            end)
+        end
+
+        -- v8.813: fan pakai task.spawn sendiri (tidak masuk queue) — perilaku Peacock beda dari roar/weave
+        local _fanInFlight = {}  -- [r8] -> true kalau fan sedang di-swap
+        local function fanSwap(raw, r8, n)
+            if _fanInFlight[r8] then
+                dbgLog("[DS-HIT] fan r8="..r8.." #"..n.." skip: masih in-flight")
+                return
+            end
+            _fanInFlight[r8] = true
+            task.spawn(function()
+                pcall(function() unequipPet(raw) end)
+                pcall(function() equipPet(raw) end)
+                dbgLog("[DS-HIT] fan done r8="..r8.." #"..n)
+                _fanInFlight[r8] = nil
             end)
         end
 
@@ -4322,12 +4339,17 @@ do
                 dbgLog("[DS-HIT] "..capturedAnim.." r8="..capturedR8.." → SWAP #"..capturedN)
                 tsLog("DS "..capturedAnim.." uuid="..capturedR8.." #"..capturedN.." → swap")
 
-                _swapQueue[#_swapQueue+1] = function()
-                    pcall(function() unequipPet(capturedRaw) end)
-                    pcall(function() equipPet(capturedRaw) end)
-                    dbgLog("[DS-HIT] swap done "..capturedAnim.." r8="..capturedR8.." #"..capturedN)
+                -- v8.813: fan → spawn sendiri; roar/weave/clear → queue sequential
+                if capturedAnim == "fan" then
+                    fanSwap(capturedRaw, capturedR8, capturedN)
+                else
+                    _swapQueue[#_swapQueue+1] = function()
+                        pcall(function() unequipPet(capturedRaw) end)
+                        pcall(function() equipPet(capturedRaw) end)
+                        dbgLog("[DS-HIT] swap done "..capturedAnim.." r8="..capturedR8.." #"..capturedN)
+                    end
+                    swapWorkerStart()
                 end
-                swapWorkerStart()
             end
         end
 
