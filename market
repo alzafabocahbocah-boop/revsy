@@ -1,3 +1,4 @@
+-- ZENX MARKET v8.553 — getBaseKg: pakai current KG (BaseWeight×(Level+10)/10) bukan base kg (fix rule 6-6.4 miss)
 -- ZENX MARKET v8.552 — maxInv: tambah getgc scan layer 0 (upkg style) di startup + per-tick detect
 -- ZENX MARKET v8.551 — suplai: guard PlaceId TradeWorld di cekSuplai (gak minta suplai kalau lagi di luar server market)
 -- ZENX MARKET v8.548 — auto ascend: hanya jalan di server garden (bukan market/TradeWorld)
@@ -404,7 +405,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.557"
+local VERSION = "8.553"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -8053,32 +8054,34 @@ local BASE_KG_ATTRS = {
     "StartingWeight","STARTING_KG",
 }
 local function getBaseKg(t)
-    -- v8.245: PRIORITAS 1 — BaseWeight ASLI dari server (via APS: container/API/datastore).
-    -- Ini akurat untuk age BERAPA PUN (35, 70, 100) karena BaseWeight gak tergantung age/mutasi.
-    -- Server simpen base age-0; ×1.1 = normalize ke age-1 (cocok rule).
+    -- v8.553: pakai CURRENT KG (sama kayak up3.8kg) — BaseWeight×(Level+10)/10
+    -- Dulu pakai base kg (BaseWeight×1.1) → hasilnya beda jauh dari KG yang keliatan di UI
+    -- sekarang matching rule berdasarkan KG SEKARANG (display kg = yang user lihat di game)
     local okU, uuid = pcall(function() return t:GetAttribute("PET_UUID") end)
     if okU and uuid and getgenv().ZenxAPS then
-        local bw = getgenv().ZenxAPS.getBaseKg(uuid)
-        if bw and bw > 0 then return bw * 1.1, "APS-age1" end
+        local ZAPS = getgenv().ZenxAPS
+        -- PRIORITAS 1: dari memContainer (paling akurat, sama jalur up3.8kg)
+        if ZAPS.memContainer then
+            local key = "{"..tostring(uuid):gsub("[{}]","").."}"
+            local entry = ZAPS.memContainer[key] or ZAPS.memContainer[tostring(uuid):gsub("[{}]","")]
+            if type(entry) == "table" and entry.PetData then
+                local bw = tonumber(entry.PetData.BaseWeight) or 0
+                local lv = tonumber(entry.PetData.Level) or 0
+                if bw > 0 then return bw * (lv + 10) / 10, "RC-current" end
+            end
+        end
+        -- PRIORITAS 2: getBaseKg APS → konversi ke current pakai age dari getAge
+        local bw = ZAPS.getBaseKg and ZAPS.getBaseKg(uuid)
+        if bw and bw > 0 then
+            -- bw sudah ×1.1 (age-1), balik ke BaseWeight lalu hitung current
+            local rawBw = bw / 1.1
+            local age = getAge(t) or 1
+            return rawBw * (age + 10) / 10, "APS-current"
+        end
     end
-    -- PRIORITAS 2 — kalo BaseWeight server gak ada, hitung dari display + age (kalo age kebaca).
-    -- Akurat juga, asal age-nya bener. Rumus: base = display × 11 / (age+10).
+    -- PRIORITAS 3: display KG langsung dari tool (paling gampang, cocok buat rule user)
     local disp = getCurrentKg(t)
-    local age = getAge(t)
-    if disp and disp > 0 and age and age >= 0 then
-        return disp * 11 / (age + 10), "formula"
-    end
-    -- v8.246: JANGAN pakai getCachedBaseKG di sini. Cache di-index per JENIS (nama),
-    -- jadi SEMUA pet sejenis dapet base yg SAMA (mis. semua Everchanted Mimic = 6.071),
-    -- padahal display tiap pet beda → pet yg harusnya >6.1 ikut lolos. BUG terbukti di log.
-    -- PRIORITAS 3 (jaring terakhir) — age nil & BaseWeight server gak ada (pet mutasi).
-    -- Asumsi mature age-100, hitung PER-PET dari display masing2: base = display × 11/110.
-    -- Ini ngasih base beda tiap pet (61.36->6.136, 62.29->6.229) jadi filter max jalan bener.
-    -- CATATAN: kalo pet sebenernya muda (age<100), hasil under-estimate — tapi mayoritas
-    -- pet mutasi yg di-list udah mature. Idealnya BaseWeight server (PRIORITAS 1) yg kepake.
-    if disp and disp > 0 then
-        return disp * 11 / 110, "formula-mature"
-    end
+    if disp and disp > 0 then return disp, "display" end
     return nil, "unknown"
 end
 
