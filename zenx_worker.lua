@@ -6,7 +6,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.694"
+local VERSION = "9.695"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1899,15 +1899,17 @@ local function build_url(cfg, link_client)
     if cfg._ps_override and cfg._ps_override:find("privateServerLinkCode") then
         lc = cfg._ps_override
     end
+    -- v9.695: cek accessCode DULU sebelum share=http (link panel format "accessCode=xxx|share=https://...")
+    -- dulu share=http dicek duluan → selalu join server lama (share code gak berubah walau accessCode baru)
+    if lc:find("accessCode=") then
+        local code = lc:match("accessCode=([%w%-]+)")
+        if code then return "roblox://placeId=" .. cfg.place_id .. "&accessCode=" .. code end
+    end
     if lc:find("share=http") then
         local shareUrl = lc:match("share=(https?://[^|%s]+)")
         if shareUrl then
             return shareUrl
         end
-    end
-    if lc:find("accessCode=") then
-        local code = lc:match("accessCode=([%w%-]+)")
-        if code then return "roblox://placeId=" .. cfg.place_id .. "&accessCode=" .. code end
     end
     if lc:find("share%?code=") or lc:find("/share%?") then
         local code = lc:match("share%?code=([%w%-]+)")
