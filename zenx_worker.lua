@@ -6,7 +6,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.695"
+local VERSION = "9.696"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6938,6 +6938,10 @@ local function run(cfg)
                     KICK_DIURUS["captcha:" .. pkgG2] = nil
                     KICK_DIURUS["denyut_rejoin:" .. pkgG2] = nil
                     KICK_DIURUS["nofile_since:" .. pkgG2] = nil
+                    -- v9.696: clear move_link SEBELUM open_one, biar link dari panel gak di-override
+                    -- cache move_link lama (bug: semua GOSERVER join server yg sama walau panel kasih accessCode beda)
+                    KICK_DIURUS["move_link:" .. pkgG2] = nil
+                    KICK_DIURUS["move_link_ts:" .. pkgG2] = nil
                     KICK_DIURUS["tembak_ts:" .. pkgG2] = os.time()
                     DENYUT_UMUR[akunG2] = nil
                     open_one(cfg, pkgG2, linkG2, "goserver-panel", true)
