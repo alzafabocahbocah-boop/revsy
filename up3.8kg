@@ -3101,23 +3101,17 @@ do
 
                 if req and req:IsA("RemoteEvent") then pcall(function() req:FireServer() end) end
 
-                -- v2.92: tunggu ZenxSupportKunci terisi (upkg butuh beberapa detik setelah listener ON)
-                task.spawn(function()
-                    local waited = 0
-                    while waited < 30 do
-                        local sk = _G.ZenxSupportKunci
-                        if sk and next(sk) then
-                            ssLog("[CD] support pets (ZenxSupportKunci) setelah "..waited.."s:")
-                            for uid, nm in pairs(sk) do
-                                ssLog("  uuid="..tostring(uid):sub(1,8).." name="..tostring(nm))
-                            end
-                            return
-                        end
-                        task.wait(2)
-                        waited = waited + 2
+                -- v2.93: log ZenxSupportKunci langsung (gak pakai loop — nested spawn+wait bisa silent fail)
+                -- listener per-event sudah baca ZenxSupportKunci live, jadi ini cuma info awal
+                do
+                    local sk = _G.ZenxSupportKunci
+                    if sk and next(sk) then
+                        ssLog("[CD] support pets:")
+                        for uid, nm in pairs(sk) do ssLog("  "..tostring(nm).." uuid="..tostring(uid):sub(1,8)) end
+                    else
+                        ssLog("[CD] ZenxSupportKunci kosong saat ini — listener tetap jalan, baca live tiap event")
                     end
-                    ssLog("[CD] WARN: ZenxSupportKunci masih kosong setelah 30s — upkg gak jalan?")
-                end)
+                end
 
                 pcu.OnClientEvent:Connect(function(uuid, data)
                     local key = tostring(uuid):gsub("[{}]","")
@@ -3125,7 +3119,16 @@ do
                     -- v2.91: cek dari ZenxSupportKunci (bukan hardcode keyword)
                     local sk = _G.ZenxSupportKunci
                     local petNama = sk and sk[key]
-                    if not petNama then return end  -- bukan support pet
+                    if not petNama then
+                        -- v2.93: log sekali per-uuid kalau gak ketemu di supportKunci
+                        if not _cdSkipLogged then _cdSkipLogged = {} end
+                        if not _cdSkipLogged[key] then
+                            _cdSkipLogged[key] = true
+                            local skSize = sk and (function() local n=0; for _ in pairs(sk) do n=n+1 end; return n end)() or -1
+                            ssLog("[CD] skip uuid="..key:sub(1,8).." (bukan support, skSize="..skSize..")")
+                        end
+                        return
+                    end
                     -- v2.90: log semua CD time dari event ini
                     local cdTimes = {}
                     local cdNol = false
