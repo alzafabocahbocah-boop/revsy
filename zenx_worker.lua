@@ -11292,7 +11292,15 @@ _CMD.new = function()  -- v9.685
             else
                 print("[" .. label .. "] " .. math.floor(sz/1048576) .. "MB, install...")
                 local r = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -S " .. sz .. "' 2>&1") or ""
-                print("[" .. label .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
+                if r:find("Success") then
+                    print("[" .. label .. "] OK terinstall")
+                elseif r:find("INSTALL_FAILED_VERSION_DOWNGRADE") or r:find("downgrade") then
+                    print("[" .. label .. "] versi downgrade, coba ulang dengan -d...")
+                    local r2 = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -d -S " .. sz .. "' 2>&1") or ""
+                    print("[" .. label .. "] " .. (r2:find("Success") and "OK terinstall (downgrade)" or ("GAGAL: " .. (r2 == "" and "(output kosong)" or r2:gsub("%s+", " "):sub(1, 120)))))
+                else
+                    print("[" .. label .. "] GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))
+                end
             end
             sh("rm -f '" .. outApk .. "' 2>/dev/null")
         end
@@ -11347,7 +11355,15 @@ _CMD.lite = function()  -- v9.685
             else
                 print("[" .. label .. "] " .. math.floor(sz/1048576) .. "MB, install...")
                 local r = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -S " .. sz .. "' 2>&1") or ""
-                print("[" .. label .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
+                if r:find("Success") then
+                    print("[" .. label .. "] OK terinstall")
+                elseif r:find("INSTALL_FAILED_VERSION_DOWNGRADE") or r:find("downgrade") then
+                    print("[" .. label .. "] versi downgrade, coba ulang dengan -d...")
+                    local r2 = sh("su -c 'cat \"" .. outApk .. "\" | pm install -r -d -S " .. sz .. "' 2>&1") or ""
+                    print("[" .. label .. "] " .. (r2:find("Success") and "OK terinstall (downgrade)" or ("GAGAL: " .. (r2 == "" and "(output kosong)" or r2:gsub("%s+", " "):sub(1, 120)))))
+                else
+                    print("[" .. label .. "] GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))
+                end
             end
             sh("rm -f '" .. outApk .. "' 2>/dev/null")
         end
