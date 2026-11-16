@@ -6,7 +6,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.697"
+local VERSION = "9.698"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -2103,7 +2103,11 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         end
     end
     local _smtSave = SERVER_MOVE_TEMBAK
-    if _moveLink and _moveLink ~= "" then link_client = _moveLink; SERVER_MOVE_TEMBAK = true end
+    if _moveLink and _moveLink ~= "" then
+        -- v9.698: debug log move_link override
+        info(("[open_one] move_link OVERRIDE pkg=%s -> %s"):format(pkg:gsub("com%.roblox%.",""), tostring(_moveLink):sub(1,60)))
+        link_client = _moveLink; SERVER_MOVE_TEMBAK = true
+    end
     -- v9.550: kalau dipanggil eksplisit dari panel (pakai_S=true, misal GOSERVER/TEMBAK) + ada link
     -- -> paksa SERVER_MOVE_TEMBAK=true biar build_url gak force PUBLIC buat place market
     if pakai_S and link_client and link_client ~= "" then SERVER_MOVE_TEMBAK = true end
