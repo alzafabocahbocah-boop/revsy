@@ -1,4 +1,5 @@
--- uplevelnew v8.811
+-- uplevelnew v8.812
+-- v8.812: port swap engine dari up3.8kg — isMyPetUUID backpack+char scan, sequential queue worker, hapus fan throttle 0.5s
 -- v8.811: hapus fan pos check reswap — fan cukup 1x unequip+equip
 -- v8.810: fan throttle + pos check dipisah ke task.spawn — tidak block processHits loop
 -- v8.809: withSwapDebounce — jangan skip kalau UUID sedang swap, tapi queue/tunggu sampai selesai baru jalankan
@@ -4196,27 +4197,6 @@ do
         local SPIDER_CENTER = Vector3.new(10, 3, 12)
         local SPIDER_THRESH = 2.0
 
-        local _debounce = {}  -- [raw8] = tick()
-        -- v8.689: global fan queue — jeda 0.5s antar fan swap (bukan per UUID)
-        local _fanLastSwap = 0
-        -- v8.707: queue roar/weave — jeda 0.1s antar swap biar gak simultan
-        local _roarLastSwap = 0
-        local _weaveLastSwap = 0
-
-        -- v8.684: cek apakah UUID milik sendiri (ada di sesiPool)
-        local function isMyPet(raw)
-            local fmtU = "{"..raw.."}"
-            for s = 1, 5 do
-                local pool = sesiPool[s] or {}
-                for _, slots in pairs(pool) do
-                    for _, p in pairs(slots) do
-                        if p and p.uuid == fmtU then return true end
-                    end
-                end
-            end
-            return false
-        end
-
         -- v8.682: deepFind hanya kumpul hits (pisah dari action) — port pola up3.8kg
         -- cegah duplikat task.spawn kalau uuid muncul di 2 path berbeda dalam 1 event
         local function deepFind(t, depth, out)
@@ -4271,68 +4251,48 @@ do
             return nil
         end
 
-        -- v8.682: proses hits di luar deepFind — 1 event = 1x kumpul, baru loop swap
+        -- v8.812: isMyPetUUID — scan backpack+char langsung (port up3.8kg, lebih reliable dari modelByUuid)
         local function isMyPetUUID(raw)
-            -- v8.759: HANYA cek _kgContainer (RC plr.Name) — sudah filter pet kita saja
-            -- modelByUuid TIDAK dipakai — isinya SEMUA model workspace termasuk pet orang lain
-            if _kgContainer and _kgContainer[raw] then return true end
-            if _kgContainer and _kgContainer["{"..raw.."}"] then return true end
-            -- fallback backpack attribute kalau _kgContainer belum ready
+            -- cek backpack
             local bp = plr:FindFirstChild("Backpack")
             if bp then
                 for _, t in ipairs(bp:GetChildren()) do
                     local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
-                    if u then
-                        local uclean = tostring(u):gsub("[{}]","")
-                        if uclean == raw then return true end
-                    end
+                    if u and tostring(u):gsub("[{}]","") == raw then return true end
                 end
             end
-            -- v8.798: log kalau miss — tunjukkan raw yang dicek vs beberapa key di container
-            pcall(function()
-                local kg = _kgContainer
-                if not kg then dbgLog("[KG-MISS] raw="..raw:sub(1,8).." kg=NIL"); return end
-                -- cek apakah ada prefix match (UUID full vs short)
-                local found = nil
-                for k, _ in pairs(kg) do
-                    if tostring(k):find(raw:sub(1,8), 1, true) then found = tostring(k):sub(1,14); break end
+            -- cek character (pet yang sedang di-equip)
+            local char = plr.Character
+            if char then
+                for _, t in ipairs(char:GetChildren()) do
+                    local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID")
+                    if u and tostring(u):gsub("[{}]","") == raw then return true end
                 end
-                dbgLog("[KG-MISS] raw="..raw:sub(1,8).." kgMatch="..(found or "NONE"))
-            end)
+            end
             return false
         end
-
-        -- v8.758: debounce per-UUID — cegah multiple swap in-flight untuk pet yang sama
-        -- v8.809: jangan skip — kalau UUID sedang swap, tunggu sampai selesai baru jalankan
-        local _swapInFlight = {}  -- r8 -> true kalau sedang swap
-        local function withSwapDebounce(r8, fn)
-            task.spawn(function()
-                -- tunggu sampai swap sebelumnya selesai (max 3s biar gak nunggu selamanya)
-                local t0 = tick()
-                while _swapInFlight[r8] and (tick()-t0) < 3 do
-                    task.wait(0.05)
-                end
-                if _swapInFlight[r8] then
-                    dbgLog("[DS] v8.809 withSwapDebounce timeout r8="..r8.." — jalankan paksa")
-                end
-                _swapInFlight[r8] = true
-                local ok, err = pcall(fn)
-                if not ok then tsLog("swap-err "..r8..": "..tostring(err)) end
-                _swapInFlight[r8] = nil
-            end)
-        end
-
-        -- v8.799: _anyDsLastSwap untuk debounce global any-trigger swap (jeda 2s antar batch swap)
-        local _anyDsLastSwap = 0
 
         -- v8.807: pindah ke sini supaya processHits bisa akses tanpa nil error
         local _dsFireCnt  = {}  -- [r8] = jumlah kali fire DS event
         local _dsFireLast = {}  -- [r8] = tick() terakhir fire
 
+        -- v8.812: sequential swap queue — port dari up3.8kg (ganti withSwapDebounce+spawn paralel)
+        local _swapQueue = {}
+        local _swapWorkerRunning = false
+        local _swapJobN = 0
+        local function swapWorkerStart()
+            if _swapWorkerRunning then return end
+            _swapWorkerRunning = true
+            task.spawn(function()
+                while true do
+                    local job = table.remove(_swapQueue, 1)
+                    if not job then _swapWorkerRunning = false; break end
+                    pcall(job)
+                end
+            end)
+        end
+
         local function processHits(hits)
-            -- v8.799: swap berdasarkan UUID yang muncul di DS event
-            -- Kalau UUID itu ada di modelByUuid (ws kita) + animStr match SWAP_ANIM → swap UUID itu
-            -- Tidak filter mine — UUID dari player lain di-skip otomatis karena tidak ada di modelByUuid kita
             if #hits == 0 then return end
             dbgLog("[DS-HIT] processHits called hits="..#hits)
             local seen = {}
@@ -4340,7 +4300,6 @@ do
                 local raw, animStr = hit[1], hit[2]
                 local anim = animStr and animStr:lower() or "nil"
                 local r8 = raw:sub(1,8)
-                -- v8.779: track fire count per uuid
                 _dsFireCnt[r8]  = (_dsFireCnt[r8] or 0) + 1
                 _dsFireLast[r8] = tick()
                 dbgLog("[DS-HIT] "..anim.." r8="..r8)
@@ -4349,46 +4308,26 @@ do
                 if seen[r8] then continue end
                 seen[r8] = true
 
-                -- v8.799: cek apakah UUID ini ada di workspace kita (modelByUuid)
-                local modelFound = nil
-                pcall(function()
-                    for modelName, m in pairs(modelByUuid) do
-                        local mn = tostring(modelName)
-                        local mn8 = mn:gsub("[{}]",""):gsub("%-",""):sub(1,8)
-                        if mn8 == r8 then modelFound = {raw=mn:gsub("[{}]",""), r8=r8}; break end
-                    end
-                end)
-
-                if not modelFound then
-                    dbgLog("[DS-HIT] "..anim.." r8="..r8.." — NOT in ws, skip")
+                -- v8.812: cek ownership via backpack+char scan (bukan modelByUuid)
+                if not isMyPetUUID(raw) then
+                    dbgLog("[DS-HIT] "..anim.." r8="..r8.." — bukan punya aku, skip")
                     continue
                 end
 
-                local mraw, mr8 = modelFound.raw, modelFound.r8
-                dbgLog("[DS-HIT] "..anim.." r8="..mr8.." — IN ws → swap")
-                tsLog("DS "..anim.." uuid="..mr8.." → swap")
+                _swapJobN = _swapJobN + 1
+                local capturedRaw  = raw
+                local capturedAnim = anim
+                local capturedR8   = r8
+                local capturedN    = _swapJobN
+                dbgLog("[DS-HIT] "..capturedAnim.." r8="..capturedR8.." → SWAP #"..capturedN)
+                tsLog("DS "..capturedAnim.." uuid="..capturedR8.." #"..capturedN.." → swap")
 
-                -- Peacock fan
-                -- v8.811: hapus pos check reswap — fan cukup 1x unequip+equip
-                -- v8.810: throttle dipisah ke task.spawn — tidak block processHits loop
-                if anim == "fan" then
-                    task.spawn(function()
-                        local myTurn = _fanLastSwap + 0.5
-                        local waitNeeded = myTurn - tick()
-                        if waitNeeded > 0 then task.wait(waitNeeded) end
-                        _fanLastSwap = tick()
-                        withSwapDebounce(mr8, function()
-                            pcall(function() unequipPet(mraw) end)
-                            pcall(function() equipPet(mraw) end)
-                        end)
-                    end)
-                -- T-Rex roar atau weave
-                else
-                    withSwapDebounce(mr8, function()
-                        pcall(function() unequipPet(mraw) end)
-                        pcall(function() equipPet(mraw) end)
-                    end)
+                _swapQueue[#_swapQueue+1] = function()
+                    pcall(function() unequipPet(capturedRaw) end)
+                    pcall(function() equipPet(capturedRaw) end)
+                    dbgLog("[DS-HIT] swap done "..capturedAnim.." r8="..capturedR8.." #"..capturedN)
                 end
+                swapWorkerStart()
             end
         end
 
