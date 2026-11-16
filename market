@@ -1,4 +1,4 @@
--- ZENX MARKET v8.556 — getBaseKg: tambah log src di warning (RC-age1/APS-age1/display-est) buat debug
+-- ZENX MARKET v8.558 — findMemoryContainer: ganti rawget ke direct index (fix memContainer gagal di up6kg)
 -- ZENX MARKET v8.552 — maxInv: tambah getgc scan layer 0 (upkg style) di startup + per-tick detect
 -- ZENX MARKET v8.551 — suplai: guard PlaceId TradeWorld di cekSuplai (gak minta suplai kalau lagi di luar server market)
 -- ZENX MARKET v8.548 — auto ascend: hanya jalan di server garden (bukan market/TradeWorld)
@@ -405,7 +405,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.556"
+local VERSION = "8.558"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2108,15 +2108,17 @@ do
             if not _zapsRC then return end
             local data = _zapsRC:GetData(player.Name)
             if type(data) ~= "table" then return end
-            local tbl = rawget(data, "Table")
+            -- v8.558: pakai direct index (bukan rawget) — sama kayak up3.8kg yg terbukti jalan
+            -- rawget skip __index metamethod, bisa return nil kalau data di-expose via metamethod
+            local tbl = data.Table
             if type(tbl) ~= "table" then return end
-            local ppd = rawget(tbl, "PlayerPetData")
+            local ppd = tbl.PlayerPetData
             if type(ppd) ~= "table" then return end
-            local pd = rawget(ppd, player.Name)
+            local pd = ppd[player.Name]
             if type(pd) ~= "table" then return end
-            local pi = rawget(pd, "PetInventory")
+            local pi = pd.PetInventory
             if type(pi) ~= "table" then return end
-            local dat = rawget(pi, "Data")
+            local dat = pi.Data
             if type(dat) ~= "table" then return end
             local out = {}
             for uuid, entry in pairs(dat) do
@@ -8077,7 +8079,12 @@ local function getBaseKg(t)
     -- PRIORITAS 3: estimasi dari display KG → balik ke age-1
     local disp = getCurrentKg(t)
     if disp and disp > 0 then
-        local age = getAge(t) or 1
+        local age = getAge(t)
+        if not age then
+            -- v8.557: kalau age gak diketahui dan display KG > 50, assume age=500
+            -- (pet yang di-sell hampir selalu age 500; age=1 fallback lama bikin estimasi salah)
+            age = (disp > 50) and 500 or 1
+        end
         return disp / ((age + 10) / 10) * 1.1, "display-est"
     end
     return nil, "unknown"
