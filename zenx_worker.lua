@@ -6,7 +6,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.698"
+local VERSION = "9.699"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1859,7 +1859,7 @@ end
 
 local DEBUG_OPEN = false
 
-local function build_url(cfg, link_client)
+local function build_url(cfg, link_client, paksa_link_client)
     if (not SERVER_MOVE_TEMBAK) and tostring(cfg.place_id) == "129954712878723" then
         -- v9.512: up6kg pakai place market tapi bisa punya PS sendiri -> jangan force PUBLIC
         local _sl512 = (cfg.script_label or ""):upper()
@@ -1888,7 +1888,10 @@ local function build_url(cfg, link_client)
         end
     end
     local lc
-    if serverMode == "custom" and cfg._ps_override and cfg._ps_override ~= "" then
+    if paksa_link_client and link_client and link_client ~= "" then
+        -- v9.699: eksplisit dari panel (GOSERVER/TEMBAK) → pakai link_client apa adanya, skip _ps_override
+        lc = link_client
+    elseif serverMode == "custom" and cfg._ps_override and cfg._ps_override ~= "" then
         lc = cfg._ps_override
     else
         lc = link_client
@@ -2111,7 +2114,9 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- v9.550: kalau dipanggil eksplisit dari panel (pakai_S=true, misal GOSERVER/TEMBAK) + ada link
     -- -> paksa SERVER_MOVE_TEMBAK=true biar build_url gak force PUBLIC buat place market
     if pakai_S and link_client and link_client ~= "" then SERVER_MOVE_TEMBAK = true end
-    local url = build_url(cfg, link_client)
+    -- v9.699: kalau pakai_S=true (eksplisit dari panel/GOSERVER) + link_client ada,
+    -- jangan biarkan build_url override dengan cfg._ps_override (serverMode="custom")
+    local url = build_url(cfg, link_client, pakai_S and link_client and link_client ~= "")
     SERVER_MOVE_TEMBAK = _smtSave
     do
         local jenisJoin = url:find("privateServerLinkCode") and "PS-fall"
