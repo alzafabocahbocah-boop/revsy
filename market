@@ -1,4 +1,4 @@
--- ZENX MARKET v8.553 — getBaseKg: pakai current KG (BaseWeight×(Level+10)/10) bukan base kg (fix rule 6-6.4 miss)
+-- ZENX MARKET v8.554 — getBaseKg: balik ke BaseWeight murni (rule di panel berdasarkan base kg, bukan current KG age 500)
 -- ZENX MARKET v8.552 — maxInv: tambah getgc scan layer 0 (upkg style) di startup + per-tick detect
 -- ZENX MARKET v8.551 — suplai: guard PlaceId TradeWorld di cekSuplai (gak minta suplai kalau lagi di luar server market)
 -- ZENX MARKET v8.548 — auto ascend: hanya jalan di server garden (bukan market/TradeWorld)
@@ -8054,34 +8054,30 @@ local BASE_KG_ATTRS = {
     "StartingWeight","STARTING_KG",
 }
 local function getBaseKg(t)
-    -- v8.553: pakai CURRENT KG (sama kayak up3.8kg) — BaseWeight×(Level+10)/10
-    -- Dulu pakai base kg (BaseWeight×1.1) → hasilnya beda jauh dari KG yang keliatan di UI
-    -- sekarang matching rule berdasarkan KG SEKARANG (display kg = yang user lihat di game)
+    -- v8.554: pakai BASE WEIGHT murni (rule di panel diset berdasarkan base kg pet, bukan current KG)
+    -- misal Blood Owl base ~6kg → rule 6-6.4; walau age 500 KG jadi ~177, rule tetap cocok pakai base
     local okU, uuid = pcall(function() return t:GetAttribute("PET_UUID") end)
     if okU and uuid and getgenv().ZenxAPS then
         local ZAPS = getgenv().ZenxAPS
-        -- PRIORITAS 1: dari memContainer (paling akurat, sama jalur up3.8kg)
+        -- PRIORITAS 1: dari memContainer → ambil BaseWeight langsung (bukan dikali level)
         if ZAPS.memContainer then
             local key = "{"..tostring(uuid):gsub("[{}]","").."}"
             local entry = ZAPS.memContainer[key] or ZAPS.memContainer[tostring(uuid):gsub("[{}]","")]
             if type(entry) == "table" and entry.PetData then
                 local bw = tonumber(entry.PetData.BaseWeight) or 0
-                local lv = tonumber(entry.PetData.Level) or 0
-                if bw > 0 then return bw * (lv + 10) / 10, "RC-current" end
+                if bw > 0 then return bw, "RC-base" end
             end
         end
-        -- PRIORITAS 2: getBaseKg APS → konversi ke current pakai age dari getAge
+        -- PRIORITAS 2: getBaseKg APS → udah return base weight (atau ×1.1), normalize ke base
         local bw = ZAPS.getBaseKg and ZAPS.getBaseKg(uuid)
-        if bw and bw > 0 then
-            -- bw sudah ×1.1 (age-1), balik ke BaseWeight lalu hitung current
-            local rawBw = bw / 1.1
-            local age = getAge(t) or 1
-            return rawBw * (age + 10) / 10, "APS-current"
-        end
+        if bw and bw > 0 then return bw / 1.1, "APS-base" end   -- bw ×1.1 (age-1), balik ke BaseWeight
     end
-    -- PRIORITAS 3: display KG langsung dari tool (paling gampang, cocok buat rule user)
+    -- PRIORITAS 3: estimasi dari display KG ÷ ((age+10)/10)
     local disp = getCurrentKg(t)
-    if disp and disp > 0 then return disp, "display" end
+    if disp and disp > 0 then
+        local age = getAge(t) or 1
+        return disp / ((age + 10) / 10), "display-est"
+    end
     return nil, "unknown"
 end
 
