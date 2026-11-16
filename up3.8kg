@@ -1847,6 +1847,7 @@ do
     local CLUSTER = nil
     local supportKunci = {}   -- uuid -> nama (support terkunci)
     _G.ZenxSupportKunci = supportKunci   -- v10.91: expose tim support ASLI (ke-equip) buat petsLolos skip (reference, selalu update)
+    print("[ZSK] ZenxSupportKunci init (ref assigned)")
     local bahanAktif = {}     -- uuid -> tipe (bahan)
     local function kgLog(s) if _G.ZenxKgLog then _G.ZenxKgLog(s) end print("[UpKg] "..s) end
     local function jml(t) local n = 0; for _ in pairs(t) do n = n + 1 end return n end
@@ -1865,7 +1866,7 @@ do
                 if not supportKunci[p.uuid] and not bahanAktif[p.uuid]
                    and cocokSemua(p.tipe, sup.cari) then
                     supportKunci[p.uuid] = sup.nama; perlu = perlu - 1
-                    ssLog("[CD] supportKunci isi: "..sup.nama.." uuid="..tostring(p.uuid):sub(1,8))
+                    print("[ZSK] pilihSupport isi: "..sup.nama.." uuid="..tostring(p.uuid):sub(1,8))
                 end
             end
         end
@@ -2030,7 +2031,7 @@ do
         for _, sup in ipairs(SUPr) do
             local pool = supPool[sup.nama] or {}
             for i = 1, sup.jml do if pool[i] then supportKunci[pool[i]] = sup.nama
-                ssLog("[CD] supportKunci isi (pool): "..sup.nama.." uuid="..tostring(pool[i]):sub(1,8)) end end
+                print("[ZSK] REDO isi (pool): "..sup.nama.." uuid="..tostring(pool[i]):sub(1,8)) end end
         end
         pilihBahan(sesi); equipSemua()
         KG.reset = false
@@ -2310,7 +2311,7 @@ do
         pcall(function() if delfile and isfile and isfile(POOL_FILE) then delfile(POOL_FILE) end end)
         supPool = nil
         for u in pairs(supportKunci) do pcall(function() unequipPet(u) end) end
-        supportKunci = {}
+        supportKunci = {}; _G.ZenxSupportKunci = supportKunci  -- v2.95: sync ref
         kunciSupPool(true)   -- kunci baru (kg terbesar) + simpen
         if KG.aktif then pasangSesi(KG.sesi, false) end
         kgLog("KUNCI SUPPORT BARU dipencet -> support di-pilih ulang (kg terbesar)")
@@ -2385,7 +2386,7 @@ do
         for u in pairs(supportKunci) do
             if not supBaru[u] then pcall(function() unequipPet(u) end) end
         end
-        supportKunci = supBaru
+        supportKunci = supBaru; _G.ZenxSupportKunci = supportKunci  -- v2.95: sync ref
         -- bahan: selalu ganti (copot bahan lama)
         for u in pairs(bahanAktif) do pcall(function() unequipPet(u) end) end
         bahanAktif = {}
@@ -2501,7 +2502,7 @@ do
         KG.sesi = 1
         KG.pickup = 0.25   -- jeda setelah ready sebelum copot (kecil = pickup responsif). spider gak di-swap jadi gak perlu special.
         CLUSTER = farmCenter()   -- v0.73: BALIKIN buat swap (equip ke tengah pas swap = gacor, nentuin posisi). HOLD-loop yg dimatiin (biar gak ditahan terus pas gak swap).
-        supportKunci = {}; bahanAktif = {}
+        supportKunci = {}; bahanAktif = {}; _G.ZenxSupportKunci = supportKunci  -- v2.95: sync ref
         kgLog("START ("..tostring(config)..") pickup="..KG.pickup.."s center="..(CLUSTER and "ada" or "NIL"))
         -- (RESET 3-menit DIHAPUS — HEALER 1s udah jaga visual, gak perlu refresh berkala)
         KG.reset = false
@@ -2742,7 +2743,7 @@ do
         task.spawn(function()
             for u in pairs(supportKunci) do unequipPet(u); task.wait(0.04) end
             for u in pairs(bahanAktif) do unequipPet(u); task.wait(0.04) end
-            supportKunci = {}; bahanAktif = {}
+            supportKunci = {}; bahanAktif = {}; _G.ZenxSupportKunci = supportKunci  -- v2.95: sync ref
             kgLog("STOP + unequip semua")
         end)
     end
