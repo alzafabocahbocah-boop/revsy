@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.702 — up3.8kgv2: fix _ps_override dari /ps override assign-ps saat FORCE/RESTART
 -- zenx_worker v9.701 — up3.8kgv2: broadcast assign-ps link ke semua akun di device (fix beda server)
 -- zenx_worker v9.688 — suplai-antri polling: market minta isi pet → worker arahkan leveling client ke PS market → selesai balik TradeWorld
 -- zenx_worker v9.687 — fix crash "attempt to concatenate a nil value (local 'ak')" saat FORCE (fallback ak ke pkg)
@@ -7,7 +8,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.701"
+local VERSION = "9.702"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -7577,6 +7578,19 @@ local function run(cfg)
                 -- v9.507: refresh_ps DULU sebelum restart_kerjakan, biar mapLink bersih dari link lama
                 -- (refresh_ps() reset mapLink ke {}, lalu isi ulang dari /assign-ps + /ps-list terbaru)
                 refresh_ps(); pcall(refresh_ps_getps); pcall(refresh_hactoto)
+                -- v9.702: up3.8kgv2 -> setelah refresh_ps, override _ps_override ke assign-ps (bukan PS individual /ps)
+                do
+                    local _isUp38v2R = (cfg.game_label or ""):find("UP6KG") and
+                                       (cfg.script_url or ""):find("up3%.8kg", 1, false)
+                    if _isUp38v2R then
+                        local _aLnkR = nil
+                        for _p3, _l3 in pairs(mapLink) do if _l3 and _l3 ~= "" then _aLnkR = _l3; break end end
+                        if _aLnkR and _aLnkR ~= "" then
+                            cfg._ps_override = _aLnkR
+                            info("[RESTART] up3.8kgv2: ps_override diganti ke assign-ps: " .. _aLnkR:sub(1,40))
+                        end
+                    end
+                end
                 info("[RESTART] mapLink di-refresh ulang sebelum buka client")
                 PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                 if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
@@ -7669,6 +7683,20 @@ local function run(cfg)
                     elseif psLinkF ~= "" then
                         cfg._ps_override = psLinkF   -- pastiin selalu fresh walau sama
                         info("[FORCE] ps_override dikonfirm: " .. psLinkF:sub(1,40))
+                    end
+                    -- v9.702: up3.8kgv2 (sc=UP6KG url=up3.8kg) -> _ps_override dari /ps bisa PS individual akun
+                    -- (panel set /ps per device, bukan per slot up6kg) -> kalau assign-ps punya link, pakai itu
+                    local _isUp38v2F = (cfg.game_label or ""):find("UP6KG") and
+                                       (cfg.script_url or ""):find("up3%.8kg", 1, false)
+                    if _isUp38v2F then
+                        local _assignLink = nil
+                        for _p2, _lnk2 in pairs(mapLink) do
+                            if _lnk2 and _lnk2 ~= "" then _assignLink = _lnk2; break end
+                        end
+                        if _assignLink and _assignLink ~= "" then
+                            cfg._ps_override = _assignLink
+                            info("[FORCE] up3.8kgv2: ps_override diganti ke assign-ps: " .. _assignLink:sub(1,40))
+                        end
                     end
                 end
                 info("[FORCE] mapLink+ps_override di-refresh -- server baru dari panel akan kepakai")
