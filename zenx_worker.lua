@@ -4205,6 +4205,7 @@ local function setup_otomatis(namaPreset)
         upkg   = { place = "126884695634066", game = "GAG 1 UPKG",   sc = "UP KG",     url = "upkg"   },
         up6kg  = { place = "126884695634066", game = "GAG 1 UP6KG",  sc = "UP6KG",      url = "up6kg"  },
         ["up3.8kg"] = { place = "126884695634066", game = "GAG 1 UP3.8KG", sc = "UP3.8KG", url = "up3.8kg" },
+        ["up3.8kgv2"] = { place = "126884695634066", game = "GAG 1 UP6KG", sc = "UP6KG", url = "up3.8kg" },   -- up3.8kg masuk slot up6kg di panel
         uplevel = { place = "126884695634066", game = "GAG 1 UPLEVEL", sc = "UPLEVEL", url = "uplevel" },
         uplevelnew = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew" },
         ["uplevelnew-delta"] = { place = "126884695634066", game = "GAG 1 UPLEVELNEW DELTA", sc = "UPLEVELNEW-DELTA", url = "uplevelnew", delta_split = true },  -- v9.590: alias uplevelnew buat split screen kiri-kanan (2 akun per HP, grid 2 kolom 1 baris otomatis) | v9.592: sc+game beda biar panel bisa tampil badge delta
