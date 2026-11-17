@@ -92,6 +92,13 @@ task.spawn(function()
     nextF.Visible = false
     local fpsLbl = Instance.new("TextLabel"); fpsLbl.BackgroundTransparency = 1; fpsLbl.Font = Enum.Font.GothamBold; fpsLbl.TextSize = 13; fpsLbl.TextColor3 = Color3.fromRGB(78,214,204)
     fpsLbl.Position = UDim2.new(1, -68, 1, -25); fpsLbl.Size = UDim2.new(0, 62, 0, 18); fpsLbl.TextXAlignment = Enum.TextXAlignment.Right; fpsLbl.Text = "0 fps"; fpsLbl.Parent = cUdah
+    -- v2.123: coconut counter (plant + buah >=75kg) di card kanan atas (3.8kg+)
+    local cocoLbl = Instance.new("TextLabel"); cocoLbl.BackgroundTransparency = 1
+    cocoLbl.Font = Enum.Font.GothamSemibold; cocoLbl.TextSize = 12
+    cocoLbl.TextColor3 = Color3.fromRGB(255, 220, 100)
+    cocoLbl.AnchorPoint = Vector2.new(1, 1); cocoLbl.Position = UDim2.new(1, -6, 1, -28)
+    cocoLbl.Size = UDim2.new(1, -14, 0, 15); cocoLbl.TextXAlignment = Enum.TextXAlignment.Right
+    cocoLbl.Text = "🥥 -p -b"; cocoLbl.Parent = cUdah
     -- FPS counter
     do
         local RunService = game:GetService("RunService")
@@ -144,6 +151,17 @@ task.spawn(function()
         vUdah.Text = tostring(st.udah or 0)
         vBelum.Text = tostring(st.belum or 0)
         fpsLbl.Text = tostring(_G.ZenxFPS or 0).." fps"
+        -- v2.123: update coconut counter label
+        do
+            local cp = st.cocoPlant or 0; local cb = st.cocoBuah or 0
+            if cp > 0 or cb > 0 then
+                cocoLbl.Text = "🥥 "..cp.."p "..cb.."b"
+                cocoLbl.TextColor3 = Color3.fromRGB(255, 220, 100)
+            else
+                cocoLbl.Text = "🥥 -p -b"
+                cocoLbl.TextColor3 = Color3.fromRGB(90, 80, 40)
+            end
+        end
         -- v10.8: pegang Ele -> overlay MERAH + badge ELE (v10.12: grace 3s anti-kedip pas swap)
         if cekEle() then _eleSeenT = tick() end
         local _timInc = _G.__ZenxTimIncomplete
@@ -732,6 +750,39 @@ do
         return nil
     end
 
+    local COCO_KG_MIN = 75   -- threshold tampil di panel (buah >=75kg dihitung)
+
+    local function scanCocoBuah()
+        -- hitung plant dan buah coconut >=COCO_KG_MIN, simpan ke ZenxKgStat
+        local CS   = game:GetService("CollectionService")
+        local farm = getMyFarm()
+        if not farm then return end
+        local buahCount = 0
+        local plantSet  = {}   -- nama/ref pohon unik yg punya buah >=threshold
+        for _, fruit in ipairs(CS:GetTagged("Harvestable")) do
+            if fruit:IsDescendantOf(farm) then
+                local nm = (fruit.Name or ""):lower()
+                if nm:find("coconut",1,true) or nm:find("cocon",1,true) then
+                    local kg = nil
+                    pcall(function()
+                        local wv = fruit:FindFirstChild("Weight")
+                        if wv and wv:IsA("NumberValue") then kg = tonumber(wv.Value) end
+                    end)
+                    if (kg or 0) >= COCO_KG_MIN then
+                        buahCount = buahCount + 1
+                        -- parent buah = pohon
+                        local tree = fruit.Parent and fruit.Parent.Parent
+                        if tree then plantSet[tree] = true end
+                    end
+                end
+            end
+        end
+        _G.ZenxKgStat = _G.ZenxKgStat or {}
+        _G.ZenxKgStat.cocoPlant = 0
+        for _ in pairs(plantSet) do _G.ZenxKgStat.cocoPlant = _G.ZenxKgStat.cocoPlant + 1 end
+        _G.ZenxKgStat.cocoBuah = buahCount
+    end
+
     local function collectCoconut()
         local RS   = game:GetService("ReplicatedStorage")
         local CS   = game:GetService("CollectionService")
@@ -788,10 +839,15 @@ do
         return #batch
     end
 
+    -- scan coconut saat startup (sebelum whale check pertama)
+    task.spawn(function() task.wait(4); pcall(scanCocoBuah) end)
+
     -- loop utama: cek whale tiap 5 detik
     task.spawn(function()
         while true do
             task.wait(5)
+            -- selalu update coconut counter di panel (meski whale belum ada)
+            pcall(scanCocoBuah)
             local adaWhale = false
             pcall(function()
                 -- cek _kgContainer (cara paling reliable di up3.8kg)
@@ -823,7 +879,10 @@ do
                     while _cocoRunning do
                         local n = 0
                         pcall(function() n = collectCoconut() end)
-                        if n > 0 then print("[COCO] collect "..n.." buah coconut") end
+                        if n > 0 then
+                            print("[COCO] collect "..n.." buah coconut")
+                            pcall(scanCocoBuah)   -- refresh counter setelah harvest
+                        end
                         task.wait(5)
                     end
                     print("[COCO] auto-collect berhenti — whale hilang")
