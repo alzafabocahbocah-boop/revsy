@@ -1,7 +1,7 @@
 -- ============================================================
--- DEBUG COCONUT KG v0.3
--- Cek WeightMulti buah coconut + auto-collect < threshold + auto-sell
--- WeightMulti adalah multiplier berat buah (dari FRUIT_NON_MUTATIONS uplevelnew)
+-- DEBUG COCONUT KG v0.5
+-- Collect coconut berdasarkan KG ASLI (Weight NumberValue child buah)
+-- Weight.Value = kg asli buah, bukan WeightMulti
 -- ============================================================
 local plr = game.Players.LocalPlayer
 local RS  = game:GetService("ReplicatedStorage")
@@ -89,21 +89,24 @@ local function scanCoconutKg()
                             local a = buah:GetAttributes()
                             for k,v in pairs(a) do attrs[k]=v end
                         end)
-                        local wm = tonumber(attrs["WeightMulti"]) or tonumber(attrs["weightmulti"])
-                        -- cek juga semua attr numerik kalau WeightMulti nil
-                        if not wm then
-                            for k, v in pairs(attrs) do
-                                if tonumber(v) and not (v == true or v == false) then
-                                    wm = tonumber(v)
-                                    break
-                                end
+                        -- baca KG asli dari NumberValue child "Weight"
+                        local kg = nil
+                        pcall(function()
+                            local wv = buah:FindFirstChild("Weight")
+                            if wv and wv:IsA("NumberValue") then
+                                kg = tonumber(wv.Value)
                             end
+                        end)
+                        -- fallback: coba WeightMulti atribut
+                        if not kg then
+                            kg = tonumber(attrs["WeightMulti"]) or tonumber(attrs["weightmulti"])
                         end
-                        if wm then wTotal += wm end
+                        if kg then wTotal += kg end
                         table.insert(buahList, {
-                            name   = buah.Name,
-                            wm     = wm,
+                            name      = buah.Name,
+                            kg        = kg,
                             nightmare = attrs["Nightmare"] == true,
+                            variant   = attrs["Variant"] or "",
                             allAttrs  = attrs,
                         })
                     end
@@ -124,7 +127,7 @@ local function scanCoconutKg()
 end
 
 -- ── collect coconut dengan WeightMulti < threshold ───────
-local KG_THRESHOLD = 75  -- default
+local KG_THRESHOLD = 75  -- default (kg asli, bukan WeightMulti)
 
 local _autoRunning  = false
 local _autoThread   = nil
@@ -194,21 +197,23 @@ local function collectCoconutBelow(threshold)
             end
 
             if isCoconut then
-                -- baca WeightMulti
-                local wm = nil
+                -- baca KG asli dari NumberValue child "Weight"
+                local kg = nil
                 pcall(function()
-                    local a = fruit:GetAttributes()
-                    wm = tonumber(a["WeightMulti"]) or tonumber(a["weightmulti"])
-                    if not wm then
-                        for k, v in pairs(a) do
-                            if tonumber(v) and v ~= true and v ~= false then
-                                wm = tonumber(v); break
-                            end
-                        end
+                    local wv = fruit:FindFirstChild("Weight")
+                    if wv and wv:IsA("NumberValue") then
+                        kg = tonumber(wv.Value)
                     end
                 end)
-                -- collect kalau wm nil (tidak tau nilainya, collect aja) ATAU wm < threshold
-                if wm == nil or wm < threshold then
+                -- fallback WeightMulti atribut
+                if not kg then
+                    pcall(function()
+                        local a = fruit:GetAttributes()
+                        kg = tonumber(a["WeightMulti"]) or tonumber(a["weightmulti"])
+                    end)
+                end
+                -- collect kalau kg nil ATAU kg < threshold
+                if kg == nil or kg < threshold then
                     table.insert(toCollect, fruit)
                 end
             end
@@ -216,11 +221,11 @@ local function collectCoconutBelow(threshold)
     end
 
     if #toCollect == 0 then
-        logMsg("tidak ada coconut < " .. threshold .. " WeightMulti")
+        logMsg("tidak ada coconut < " .. threshold .. " kg")
         return 0
     end
 
-    logMsg("collect " .. #toCollect .. " coconut (WM<" .. threshold .. ")...")
+    logMsg("collect " .. #toCollect .. " coconut (KG<" .. threshold .. ")...")
 
     local collected = 0
     local i = 1
@@ -246,7 +251,7 @@ local function startAutoCollect(threshold, interval)
     if _autoRunning then return end
     _autoRunning = true
     _autoThread = task.spawn(function()
-        logMsg("🔄 auto ON — WM<" .. threshold .. ", interval " .. interval .. "s")
+        logMsg("🔄 auto ON — KG<" .. threshold .. ", interval " .. interval .. "s")
         while _autoRunning do
             pcall(function() collectCoconutBelow(threshold) end)
             pcall(doSell)
@@ -280,7 +285,7 @@ strokeMain.Color = Color3.fromRGB(255, 180, 50); strokeMain.Thickness = 1.5
 -- title
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 28); title.BackgroundColor3 = Color3.fromRGB(30, 20, 5)
-title.BorderSizePixel = 0; title.Text = "🥥 Coconut — WeightMulti + Auto Collect + Sell"
+title.BorderSizePixel = 0; title.Text = "🥥 Coconut — KG (Weight.Value) + Auto Collect + Sell"
 title.TextColor3 = Color3.fromRGB(255, 200, 80); title.TextSize = 10
 title.Font = Enum.Font.GothamBold; title.Parent = frame
 Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
@@ -300,7 +305,7 @@ local function mkLbl(parent, txt, x, w, col)
     return l
 end
 
-mkLbl(row1, "WeightMulti <", 0, 90)
+mkLbl(row1, "KG (max) <", 0, 90)
 local threshBox = Instance.new("TextBox")
 threshBox.Size = UDim2.new(0,50,1,-2); threshBox.Position = UDim2.new(0,92,0,1)
 threshBox.BackgroundColor3 = Color3.fromRGB(20,15,5); threshBox.BorderSizePixel = 0
@@ -362,7 +367,7 @@ local function mkDiv(parent, txt, y, bgCol, textCol)
     local p = Instance.new("UIPadding",d); p.PaddingLeft = UDim.new(0,4)
     return d
 end
-mkDiv(frame, "── Info Pohon (WeightMulti) ───────────────────", 107)
+mkDiv(frame, "── Info Pohon (KG asli / Weight.Value) ────────", 107)
 
 local scrollScan = Instance.new("ScrollingFrame")
 scrollScan.Size = UDim2.new(1,-8,0,175); scrollScan.Position = UDim2.new(0,4,0,122)
@@ -488,7 +493,7 @@ scanBtn.MouseButton1Click:Connect(function()
         end
         local avgWM = totalBuah > 0 and (totalWM/totalBuah) or 0
 
-        sumBar.Text = string.format("🥥 %d pohon | %d buah | WM avg=%.1f | total WM=%.1f",
+        sumBar.Text = string.format("🥥 %d pohon | %d buah | KG avg=%.1f | total KG=%.1f",
             totalPohon, totalBuah, avgWM, totalWM)
         sumBar.TextColor3 = Color3.fromRGB(255,220,100)
 
@@ -496,7 +501,7 @@ scanBtn.MouseButton1Click:Connect(function()
             local avgR = r.buahCount > 0 and (r.wTotal/r.buahCount) or 0
             addScanRow(string.format("🌴 Pohon #%d: %s", i, r.treeName),
                 Color3.fromRGB(255,210,80), Color3.fromRGB(28,20,5), true)
-            addScanRow(string.format("   buah=%d | WM avg=%.1f | WM total=%.1f",
+            addScanRow(string.format("   buah=%d | KG avg=%.1f | KG total=%.1f",
                 r.buahCount, avgR, r.wTotal),
                 Color3.fromRGB(220,200,140), Color3.fromRGB(18,14,4))
 
@@ -505,35 +510,20 @@ scanBtn.MouseButton1Click:Connect(function()
             elseif r.buahCount == 0 then
                 addScanRow("   ⚠ Fruits kosong", Color3.fromRGB(255,150,50), Color3.fromRGB(20,12,4))
             else
-                -- dump semua attribute dari buah pertama
-                local b0 = r.buahList[1]
-                if b0 then
-                    local attrStrs = {}
-                    for k, v in pairs(b0.allAttrs) do
-                        table.insert(attrStrs, k.."="..tostring(v))
-                    end
-                    if #attrStrs > 0 then
-                        addScanRow("   [attrs buah1] " .. table.concat(attrStrs, " | "),
-                            Color3.fromRGB(100,180,255), Color3.fromRGB(10,12,20))
-                    else
-                        addScanRow("   ⚠ buah1 tidak punya attribute apapun",
-                            Color3.fromRGB(255,150,50))
-                    end
-                end
-                -- list buah (max 4)
                 local shown = 0
                 for _, buah in ipairs(r.buahList) do
-                    if shown >= 4 then
+                    if shown >= 6 then
                         addScanRow(string.format("   ...+%d buah lagi", r.buahCount-shown),
                             Color3.fromRGB(150,150,150)); break
                     end
-                    local wmTxt  = buah.wm and string.format("WM=%.1f", buah.wm) or "WM=(?)"
+                    local kgTxt  = buah.kg and string.format("%.1f kg", buah.kg) or "kg=(?)"
                     local nmMark = buah.nightmare and " 💀NM" or ""
-                    local below  = buah.wm and buah.wm < thresh
+                    local varMark = (buah.variant and buah.variant ~= "" and buah.variant ~= "Normal") and (" 🌟"..buah.variant) or ""
+                    local below  = buah.kg and buah.kg < thresh
                     local mark   = below and " ← collect" or ""
                     local col    = below and Color3.fromRGB(255,180,60)
-                                or (buah.wm and Color3.fromRGB(180,240,160) or Color3.fromRGB(200,200,200))
-                    addScanRow(string.format("   • %s — %s%s%s", buah.name, wmTxt, nmMark, mark),
+                                or (buah.kg and Color3.fromRGB(180,240,160) or Color3.fromRGB(200,200,200))
+                    addScanRow(string.format("   • %s — %s%s%s%s", buah.name, kgTxt, nmMark, varMark, mark),
                         col, Color3.fromRGB(14,18,10))
                     shown += 1
                 end
@@ -546,15 +536,15 @@ scanBtn.MouseButton1Click:Connect(function()
             print("[COCONUT] " .. msg)
         end
         scanLog("===== SCAN RESULT =====")
-        scanLog(string.format("%d pohon, %d buah, WM avg=%.1f", totalPohon, totalBuah, avgWM))
+        scanLog(string.format("%d pohon, %d buah, KG avg=%.1f", totalPohon, totalBuah, avgWM))
         for _, r in ipairs(res) do
-            scanLog(string.format("POHON: %s — buah=%d WM_total=%.1f", r.treeName, r.buahCount, r.wTotal))
+            scanLog(string.format("POHON: %s — buah=%d KG_total=%.1f", r.treeName, r.buahCount, r.wTotal))
             for bi, b in ipairs(r.buahList) do
                 local attrArr = {}
                 for k,v in pairs(b.allAttrs) do table.insert(attrArr, k.."="..tostring(v)) end
                 local attrStr = #attrArr > 0 and table.concat(attrArr," | ") or "(no attrs)"
-                scanLog(string.format("  buah#%d %s — WM=%s | %s",
-                    bi, b.name, tostring(b.wm), attrStr))
+                scanLog(string.format("  buah#%d %s — KG=%s | %s",
+                    bi, b.name, tostring(b.kg), attrStr))
             end
         end
         scanLog("===== END SCAN =====")
@@ -595,4 +585,4 @@ task.spawn(function()
     end
 end)
 
-print("[COCONUT] debug_coconut_kg v0.3 — panel kuning, WeightMulti threshold default 75")
+print("[COCONUT] debug_coconut_kg v0.5 — KG asli dari Weight.Value, threshold default 75kg")
