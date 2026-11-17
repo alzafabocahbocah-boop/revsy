@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.100 | debug panel anim swap default hidden                                   ║
+-- ║  UP KG — v2.101 | CD loop: filter via ZenxSupportKunci, debug log uuid lengkap tiap 5s   ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.100"
+local VERSION = "up38kg-v2.101"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2860,6 +2860,10 @@ do
                 -- v2.89: pet lagi equipped di world → model namanya {uuid} di workspace
                 local wm = game:GetService("Workspace"):FindFirstChild("{"..raw.."}")
                 if wm then return true end
+                -- v2.101: pet equipped via PetMover — UUID di attribute "UUID" pada child workspace
+                -- pakai _G._ZenxEquippedUUIDs cache (di-refresh tiap 2s oleh CD listener)
+                local eq = _G._ZenxEquippedUUIDs
+                if eq and eq[raw] then return true end
                 return false
             end
 
@@ -3103,55 +3107,48 @@ do
 
                 local cdZeroAt = {}  -- uuid -> tick() saat cd pertama kali nol
 
-                -- v2.97: polling loop — fire RequestPetCooldowns tiap 3s
-                -- (server hanya kirim burst saat equip pertama, perlu di-request ulang)
-                local _cdPollActive = true
-                if req then
-                    task.spawn(function()
-                        local fireCount = 0
-                        while _cdPollActive do
-                            if req:IsA("RemoteEvent") then
-                                pcall(function() req:FireServer() end)
-                            elseif req:IsA("RemoteFunction") then
-                                pcall(function() req:InvokeServer() end)
+                -- v2.101: cache UUID pet yang lagi equipped di workspace (scan tiap 2s)
+                -- PCU event fire terus tiap ~1s — tidak perlu polling RequestPetCooldowns
+                _G._ZenxEquippedUUIDs = {}
+                task.spawn(function()
+                    while true do
+                        local cache = {}
+                        local ok, children = pcall(function() return game:GetService("Workspace"):GetChildren() end)
+                        if ok then
+                            for _, inst in pairs(children) do
+                                local ok2, uAttr = pcall(function() return inst:GetAttribute("UUID") end)
+                                if ok2 and uAttr then
+                                    cache[tostring(uAttr):gsub("[{}]","")] = true
+                                end
                             end
-                            fireCount = fireCount + 1
-                            local sk = _G.ZenxSupportKunci
-                            local skSize = sk and (function() local n=0; for _ in pairs(sk) do n=n+1 end; return n end)() or 0
-                            ssLog("[CD] poll #"..fireCount.." fired (skSize="..skSize..")")
-                            task.wait(3)
                         end
-                    end)
-                else
-                    ssLog("[CD] WARN: RequestPetCooldowns nil — polling skip")
-                end
-
-                -- log support pets saat ini
-                do
-                    local sk = _G.ZenxSupportKunci
-                    if sk and next(sk) then
-                        ssLog("[CD] support pets:")
-                        for uid, nm in pairs(sk) do ssLog("  "..tostring(nm).." uuid="..tostring(uid):sub(1,8)) end
-                    else
-                        ssLog("[CD] ZenxSupportKunci kosong saat ini — polling akan retry tiap 3s")
+                        _G._ZenxEquippedUUIDs = cache
+                        task.wait(2)
                     end
-                end
+                end)
+
+                -- v2.101: debug — log ZenxSupportKunci tiap 5s supaya bisa lihat isinya
+                task.spawn(function()
+                    while true do
+                        task.wait(5)
+                        local sk2 = _G.ZenxSupportKunci
+                        if sk2 and next(sk2) then
+                            ssLog("[CD] ZenxSupportKunci isi:")
+                            for uid, nm in pairs(sk2) do
+                                ssLog("  "..tostring(nm).." uuid="..tostring(uid))
+                            end
+                        else
+                            ssLog("[CD] ZenxSupportKunci kosong")
+                        end
+                    end
+                end)
 
                 pcu.OnClientEvent:Connect(function(uuid, data)
                     local key = tostring(uuid):gsub("[{}]","")
-                    -- v2.97: log semua event masuk (bukan cuma milik sendiri) untuk debug
-                    if not isMyPetUUID(key) then
-                        ssLog("[CD] event uuid="..key:sub(1,8).." (bukan punya sendiri, skip)")
-                        return
-                    end
-                    -- v2.91: cek dari ZenxSupportKunci (bukan hardcode keyword)
+                    -- v2.101: filter hanya dari ZenxSupportKunci — event orang lain otomatis skip
                     local sk = _G.ZenxSupportKunci
                     local petNama = sk and sk[key]
-                    if not petNama then
-                        -- v2.96: jangan cache skip — supportKunci mungkin belum terisi saat event awal
-                        -- (CD burst datang sebelum pasangSesi selesai, jadi tetap return tanpa mark)
-                        return
-                    end
+                    if not petNama then return end
                     -- v2.90: log semua CD time dari event ini
                     local cdTimes = {}
                     local cdNol = false
@@ -3175,21 +3172,19 @@ do
                             local elapsed = tick() - cdZeroAt[key]
                             ssLog("[CD] "..petNama.." uuid="..key:sub(1,8).." cd nol "..string.format("%.1f",elapsed).."s")
                             if elapsed > 1 then
-                                if isMyPetUUID(key) then
-                                    ssLog("[CD] "..petNama.." uuid="..key:sub(1,8).." cd nol "..string.format("%.1f",elapsed).."s — paksa swap!")
-                                    local _u = _G._ZenxUnequipPet
-                                    local _e = _G._ZenxEquipPet
-                                    if _u and _e then
-                                        task.spawn(function()
-                                            pcall(_u, key)
-                                            task.wait(0.05)
-                                            pcall(_e, key)
-                                            ssLog("[CD] "..key:sub(1,8).." swap done")
-                                        end)
-                                        cdZeroAt[key] = nil  -- reset setelah swap
-                                    else
-                                        ssLog("[CD] ERR: fungsi equip nil")
-                                    end
+                                ssLog("[CD] "..petNama.." uuid="..key:sub(1,8).." cd nol "..string.format("%.1f",elapsed).."s — paksa swap!")
+                                local _u = _G._ZenxUnequipPet
+                                local _e = _G._ZenxEquipPet
+                                if _u and _e then
+                                    task.spawn(function()
+                                        pcall(_u, key)
+                                        task.wait(0.05)
+                                        pcall(_e, key)
+                                        ssLog("[CD] "..key:sub(1,8).." swap done")
+                                    end)
+                                    cdZeroAt[key] = nil  -- reset setelah swap
+                                else
+                                    ssLog("[CD] ERR: fungsi equip nil")
                                 end
                             end
                         end
