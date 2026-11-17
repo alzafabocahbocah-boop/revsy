@@ -1,10 +1,42 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.112 | fix kgLog nil (pindah sebelum buatS1ELE)                                 ║
+-- ║  UP KG — v2.113 | global error catcher (semua error ke console)                            ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 local VERSION = "up38kg-v2.108"
+
+-- ============ v2.113: GLOBAL ERROR CATCHER — cetak semua error ke output/console ============
+do
+    local _errFmt = function(msg, lvl)
+        lvl = lvl or 2
+        local info = debug and debug.traceback and debug.traceback(tostring(msg), lvl) or tostring(msg)
+        return "[UP3.8KG ❌ ERROR]\n" .. info
+    end
+    -- wrap task.spawn global supaya error di coroutine juga ke-catch
+    local _origSpawn = task.spawn
+    task.spawn = function(fn, ...)
+        local args = {...}
+        return _origSpawn(function()
+            local ok, err = xpcall(function() fn(table.unpack(args)) end, _errFmt)
+            if not ok then
+                warn(err)
+            end
+        end)
+    end
+    -- wrap task.defer juga
+    local _origDefer = task.defer
+    task.defer = function(fn, ...)
+        local args = {...}
+        return _origDefer(function()
+            local ok, err = xpcall(function() fn(table.unpack(args)) end, _errFmt)
+            if not ok then
+                warn(err)
+            end
+        end)
+    end
+    print("[UP3.8KG] v2.113 global error catcher aktif — semua error task.spawn/defer akan muncul di console")
+end
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
