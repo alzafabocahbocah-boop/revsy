@@ -375,12 +375,42 @@ layoutScan.SortOrder = Enum.SortOrder.LayoutOrder; layoutScan.Padding = UDim.new
 mkDiv(frame, "── Log ────────────────────────────────────────", 300, Color3.fromRGB(8,18,8), Color3.fromRGB(80,160,80))
 
 local scrollLog = Instance.new("ScrollingFrame")
-scrollLog.Size = UDim2.new(1,-8,0,170); scrollLog.Position = UDim2.new(0,4,0,315)
+scrollLog.Size = UDim2.new(1,-8,0,148); scrollLog.Position = UDim2.new(0,4,0,315)
 scrollLog.BackgroundTransparency = 1; scrollLog.BorderSizePixel = 0
 scrollLog.ScrollBarThickness = 3; scrollLog.CanvasSize = UDim2.new(0,0,0,0)
 scrollLog.AutomaticCanvasSize = Enum.AutomaticSize.Y; scrollLog.Parent = frame
 local layoutLog = Instance.new("UIListLayout",scrollLog)
 layoutLog.SortOrder = Enum.SortOrder.LayoutOrder; layoutLog.Padding = UDim.new(0,1)
+
+-- tombol Copy Log (semua log lines termasuk attrs buah)
+local copyBtn = Instance.new("TextButton")
+copyBtn.Size = UDim2.new(1,-8,0,22); copyBtn.Position = UDim2.new(0,4,0,466)
+copyBtn.BackgroundColor3 = Color3.fromRGB(20,20,40); copyBtn.BorderSizePixel = 0
+copyBtn.Text = "📋 Copy All Log (ke clipboard)"; copyBtn.TextColor3 = Color3.fromRGB(160,180,255)
+copyBtn.TextSize = 10; copyBtn.Font = Enum.Font.GothamBold; copyBtn.Parent = frame
+Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0,4)
+Instance.new("UIStroke", copyBtn).Color = Color3.fromRGB(80,100,200)
+
+-- kumpul semua log untuk copy
+local _allLogLines = {}  -- semua raw log string
+
+copyBtn.MouseButton1Click:Connect(function()
+    if #_allLogLines == 0 then
+        copyBtn.Text = "⚠ log kosong"; task.delay(2, function() copyBtn.Text = "📋 Copy All Log (ke clipboard)" end); return
+    end
+    local txt = table.concat(_allLogLines, "\n")
+    local ok = pcall(function() setclipboard(txt) end)
+    if ok then
+        copyBtn.Text = "✅ Copied! (" .. #_allLogLines .. " lines)"
+    else
+        -- fallback: print ke console supaya bisa di-copy manual
+        print("[COCONUT COPY LOG] ===== START =====")
+        for _, l in ipairs(_allLogLines) do print(l) end
+        print("[COCONUT COPY LOG] ===== END =====")
+        copyBtn.Text = "⚠ setclipboard gagal — cek console"
+    end
+    task.delay(3, function() copyBtn.Text = "📋 Copy All Log (ke clipboard)" end)
+end)
 
 -- helper rows
 local scanOrder, logOrder = 0, 0
@@ -417,6 +447,7 @@ end
 
 -- set guiLog setelah GUI siap
 _guiLog = function(msg)
+    table.insert(_allLogLines, msg)
     local col = Color3.fromRGB(180,240,180)
     if msg:find("✅") then col = Color3.fromRGB(100,255,100) end
     if msg:find("💰") then col = Color3.fromRGB(255,220,80) end
@@ -509,17 +540,25 @@ scanBtn.MouseButton1Click:Connect(function()
             end
         end
 
-        -- console
-        print("[COCONUT] ===== SCAN =====")
-        print(string.format("[COCONUT] %d pohon, %d buah, WM avg=%.1f", totalPohon, totalBuah, avgWM))
+        -- masukkan ke _allLogLines supaya bisa di-copy
+        local function scanLog(msg)
+            table.insert(_allLogLines, msg)
+            print("[COCONUT] " .. msg)
+        end
+        scanLog("===== SCAN RESULT =====")
+        scanLog(string.format("%d pohon, %d buah, WM avg=%.1f", totalPohon, totalBuah, avgWM))
         for _, r in ipairs(res) do
-            for _, b in ipairs(r.buahList) do
+            scanLog(string.format("POHON: %s — buah=%d WM_total=%.1f", r.treeName, r.buahCount, r.wTotal))
+            for bi, b in ipairs(r.buahList) do
                 local attrArr = {}
                 for k,v in pairs(b.allAttrs) do table.insert(attrArr, k.."="..tostring(v)) end
-                print(string.format("[COCONUT] %s / %s — WM=%s attrs: %s",
-                    r.treeName, b.name, tostring(b.wm), table.concat(attrArr," | ")))
+                local attrStr = #attrArr > 0 and table.concat(attrArr," | ") or "(no attrs)"
+                scanLog(string.format("  buah#%d %s — WM=%s | %s",
+                    bi, b.name, tostring(b.wm), attrStr))
             end
         end
+        scanLog("===== END SCAN =====")
+        copyBtn.Text = "📋 Copy Log (" .. #_allLogLines .. " lines)"
 
         scanBtn.Text = "▶ SCAN"
     end)
