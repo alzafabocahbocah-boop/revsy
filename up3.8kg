@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.119 | Whale slot di lineup GUI (utama/cadangan)                               ║
+-- ║  UP KG — v2.120 | skip destroy pohon kalau ada Blue Whale                                 ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.119"
+local VERSION = "up38kg-v2.120"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -634,9 +634,31 @@ local KG_CONFIG_PET = { ["Tim Ele"] = "" }   -- up6kg: bahan dari picker, gak di
 -- v0.95: AUTO DESTROY POHON (SELALU ON) — FPS naik (port dari sc panen)
 -- Destroy semua Model di folder "Plants_Physical" (pohon/tanaman). Pet leveling BEDA folder
 -- (model "{uuid}"), jadi GAK ke-destroy. Trigger: sekali start + tiap pohon baru + loop 30s.
+-- v2.119: SKIP destroy kalau akun punya Blue Whale (biar Whale yg kerja di garden)
 -- ============================================================
 do
     local WS = workspace
+    -- v2.119: cek apakah akun ini punya Blue Whale (backpack + equipped)
+    local function cekAdaWhale()
+        local plr = game:GetService("Players").LocalPlayer
+        if not plr then return false end
+        local function scanObj(obj)
+            if not obj then return false end
+            for _, item in ipairs(obj:GetChildren()) do
+                if tostring(item.Name):lower():find("whale", 1, true) then return true end
+            end
+            return false
+        end
+        if scanObj(plr:FindFirstChild("Backpack")) then return true end
+        if plr.Character and scanObj(plr.Character) then return true end
+        -- cek juga _kgContainer kalau sudah siap
+        if _G._kgContainer then
+            for _, p in ipairs(_G._kgContainer) do
+                if tostring(p.tipe or ""):lower():find("whale", 1, true) then return true end
+            end
+        end
+        return false
+    end
     local function semuaFarm()
         -- v1.59: GetDescendants per subfarm (bukan seluruh farm). Plants_Physical bisa nested.
         local roots = {}
@@ -659,6 +681,7 @@ do
         return roots
     end
     local function destroyPohonSemua()
+        if cekAdaWhale() then print("[DL] SKIP destroy pohon — ada Blue Whale"); return 0 end
         local roots = semuaFarm(); local n = 0
         for _, root in ipairs(roots) do
             for _, c in ipairs(root:GetChildren()) do
@@ -673,6 +696,7 @@ do
         if not farm then return end
         farm.DescendantAdded:Connect(function(c)
             if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+                if cekAdaWhale() then return end  -- v2.119: skip kalau ada Whale
                 task.wait(0.05); pcall(function() c:Destroy() end)
             end
         end)
