@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.105 | OPER 3.8KG: trade ticket, auto trade @24 pet 3.8kg+                     ║
+-- ║  UP KG — v2.106 | OPER 3.8KG: multi-picker, random target tiap trade                       ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.105"
+local VERSION = "up38kg-v2.106"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -6312,7 +6312,7 @@ do
     local plr     = Players.LocalPlayer
 
     local MIN_PET_TRADE = 24   -- auto trade kalau >= 24 pet 3.8kg+
-    local OP38 = { target = nil, busy = false, log = {}, tradeCount = 0 }
+    local OP38 = { picks = {}, busy = false, log = {}, tradeCount = 0 }
 
     local function o38Log(msg)
         table.insert(OP38.log, os.date("%H:%M:%S").." "..tostring(msg))
@@ -6505,35 +6505,56 @@ do
     local dbg38H = o38Lbl(dbg38, "LOG OPER 3.8KG", 11, C.accent); dbg38H.Font=FONT_B; dbg38H.Position=UDim2.new(0,12,0,7); dbg38H.Size=UDim2.new(1,-18,0,15)
     local dbg38L = o38Lbl(dbg38, "-", 11, C.textDim); dbg38L.Font=Enum.Font.Code; dbg38L.Position=UDim2.new(0,12,0,26); dbg38L.Size=UDim2.new(1,-18,1,-32); dbg38L.TextWrapped=true; dbg38L.TextXAlignment=Enum.TextXAlignment.Left; dbg38L.TextYAlignment=Enum.TextYAlignment.Top
 
+    -- picks online -> list Player objects (urutan acak tiap panggil)
+    local function getOnlinePicks()
+        local list = {}
+        for nm in pairs(OP38.picks) do
+            local p = Players:FindFirstChild(nm)
+            if p then list[#list+1] = p end
+        end
+        -- fisher-yates shuffle
+        for i = #list, 2, -1 do
+            local j = math.random(1, i)
+            list[i], list[j] = list[j], list[i]
+        end
+        return list
+    end
+
+    local function nPicks()
+        local n = 0; for _ in pairs(OP38.picks) do n = n + 1 end; return n
+    end
+
     local function refresh38()
         local pets = getPet38()
         scReady38.Text = tostring(#pets)
         scSent38.Text  = tostring(OP38.tradeCount or 0)
         dbg38L.Text = table.concat(OP38.log, "\n")
-        local hasTarget = OP38.target and Players:FindFirstChild(OP38.target)
-        if hasTarget then
-            hdr38S.Text = "target: " .. OP38.target .. "  \u{2022}  " .. #pets .. "/" .. MIN_PET_TRADE .. " pet"
+        local np = nPicks()
+        local online = getOnlinePicks()
+        if np > 0 then
+            local names = {}; for nm in pairs(OP38.picks) do names[#names+1] = nm end
+            hdr38S.Text = table.concat(names, ", ") .. "  \u{2022}  " .. #pets .. "/" .. MIN_PET_TRADE .. " pet"
             hdr38S.TextColor3 = (#pets >= MIN_PET_TRADE) and C.accent2 or C.textDim
-            tradeBtn38.BackgroundColor3 = (#pets > 0 and not OP38.busy) and C.accent2 or C.card
-            tradeBtn38.TextColor3 = (#pets > 0 and not OP38.busy) and Color3.fromRGB(0,0,0) or C.textDim
+            tradeBtn38.BackgroundColor3 = (#pets > 0 and #online > 0 and not OP38.busy) and C.accent2 or C.card
+            tradeBtn38.TextColor3 = (#pets > 0 and #online > 0 and not OP38.busy) and Color3.fromRGB(0,0,0) or C.textDim
         else
-            OP38.target = nil
             hdr38S.Text = "pilih target dulu"
             hdr38S.TextColor3 = C.textDim
             tradeBtn38.BackgroundColor3 = C.card
             tradeBtn38.TextColor3 = C.textDim
         end
+        sec38L.Text = "PILIH TARGET (" .. np .. " dipilih)"
         for _, c in ipairs(pick38Holder:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= plr then
                 local nm = p.Name
-                local isPick = (OP38.target == nm)
+                local isPick = OP38.picks[nm] == true
                 local row = mk("TextButton", { Size=UDim2.new(1,0,0,36), BackgroundColor3=isPick and C.accent or C.card, Text="", AutoButtonColor=true, Parent=pick38Holder }); corner(row,9); stroke(row, isPick and C.accent or C.border, 1)
                 local dot = mk("Frame", { Size=UDim2.new(0,8,0,8), Position=UDim2.new(0,12,0.5,-4), BackgroundColor3=isPick and Color3.fromRGB(0,0,0) or C.textDim, BorderSizePixel=0, Parent=row }); corner(dot,4)
                 local nl = o38Lbl(row, (isPick and "\u{2714}  " or "   ") .. nm, 13, isPick and Color3.fromRGB(0,0,0) or C.text); nl.Font=FONT_B; nl.Position=UDim2.new(0,10,0,0); nl.Size=UDim2.new(1,-20,1,0)
                 row.MouseButton1Click:Connect(function()
-                    if isPick then OP38.target = nil; o38Log("target dibatalin")
-                    else OP38.target = nm; o38Log("target dipilih: "..nm) end
+                    if isPick then OP38.picks[nm] = nil; o38Log("remove: "..nm)
+                    else OP38.picks[nm] = true; o38Log("add: "..nm) end
                     pcall(refresh38)
                 end)
             end
@@ -6551,19 +6572,20 @@ do
             local sent = tradeAll38(targetPlayer, pets)
             if sent > 0 then OP38.tradeCount = (OP38.tradeCount or 0) + sent end
             OP38.busy = false
-            o38Log("== selesai. total traded: " .. tostring(OP38.tradeCount))
+            o38Log("== selesai. total: " .. tostring(OP38.tradeCount))
             pcall(refresh38)
         end)
     end
 
-    -- tombol TRADE MANUAL
+    -- tombol TRADE MANUAL — random pilih 1 dari picks online
     tradeBtn38.MouseButton1Click:Connect(function()
         if OP38.busy then return end
-        local targetPlayer = OP38.target and Players:FindFirstChild(OP38.target)
-        if not targetPlayer then o38Log("X gak ada target"); pcall(refresh38); return end
+        local online = getOnlinePicks()
+        if #online == 0 then o38Log("X picks gak ada yang online"); pcall(refresh38); return end
         local pets = getPet38()
         if #pets == 0 then o38Log("X gak ada pet 3.8kg+"); pcall(refresh38); return end
-        doTrade38(targetPlayer, pets)
+        local pick = online[math.random(1, #online)]
+        doTrade38(pick, pets)
     end)
 
     -- AUTO TRADE + REFRESH tiap 3s
@@ -6573,12 +6595,13 @@ do
             pcall(function()
                 if oper38Content.Visible then refresh38() end
                 if OP38.busy then return end
-                local targetPlayer = OP38.target and Players:FindFirstChild(OP38.target)
-                if not targetPlayer then return end
+                local online = getOnlinePicks()
+                if #online == 0 then return end
                 local pets = getPet38()
                 if #pets >= MIN_PET_TRADE then
-                    o38Log("auto-trade trigger: "..#pets.." >= "..MIN_PET_TRADE)
-                    doTrade38(targetPlayer, pets)
+                    local pick = online[math.random(1, #online)]
+                    o38Log("auto-trade trigger: "..#pets.." >= "..MIN_PET_TRADE.." -> "..pick.Name)
+                    doTrade38(pick, pets)
                 end
             end)
         end
