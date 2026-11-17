@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.104 | OPER 3.8KG: picker target + auto gift @15 pet                           ║
+-- ║  UP KG — v2.105 | OPER 3.8KG: trade ticket, auto trade @24 pet 3.8kg+                     ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.104"
+local VERSION = "up38kg-v2.105"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -6305,45 +6305,101 @@ do
 end  -- tutup do REDUCLAG
 
 -- ============ OPER 3.8KG (tab sidebar kiri) ============
--- Picker target di server + gift pet 3.8kg+ ke target yang dipilih (tanpa scan inventory).
+-- Picker target di server + auto trade (trade ticket) ketika >= 24 pet 3.8kg+
 do
     local Players = game:GetService("Players")
     local RS      = game:GetService("ReplicatedStorage")
     local plr     = Players.LocalPlayer
 
-    local OP38 = { target = nil, busy = false, log = {}, giftCount = 0 }
+    local MIN_PET_TRADE = 24   -- auto trade kalau >= 24 pet 3.8kg+
+    local OP38 = { target = nil, busy = false, log = {}, tradeCount = 0 }
 
     local function o38Log(msg)
         table.insert(OP38.log, os.date("%H:%M:%S").." "..tostring(msg))
         while #OP38.log > 20 do table.remove(OP38.log, 1) end
     end
-    o38Log("== OPER 3.8KG siap ==")
-
-    -- ambil PetGiftingService remote
-    local function getGiftRE()
-        local GE = RS:FindFirstChild("GameEvents")
-        local re = GE and GE:FindFirstChild("PetGiftingService")
-        if not re then re = RS:FindFirstChild("PetGiftingService", true) end
-        return re
-    end
+    o38Log("== OPER 3.8KG siap (trade @"..MIN_PET_TRADE..") ==")
 
     local function fmtU38(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.."}" end return s end
+
+    -- TradeEvents remotes
+    local function getTrade38RE()
+        local GE = RS:FindFirstChild("GameEvents")
+        local te = GE and GE:FindFirstChild("TradeEvents")
+        if not te then return nil end
+        return {
+            send    = te:FindFirstChild("SendRequest"),
+            addItem = te:FindFirstChild("AddItem"),
+            accept  = te:FindFirstChild("Accept"),
+            confirm = te:FindFirstChild("Confirm"),
+        }
+    end
+
+    -- cari trade ticket di backpack/char
+    local function findTicket38()
+        local char = plr.Character
+        local bp   = plr:FindFirstChild("Backpack")
+        local function scanCont(cont)
+            if not cont then return nil end
+            for _, t in ipairs(cont:GetChildren()) do
+                if t:IsA("Tool") then
+                    local n = t.Name:lower()
+                    if (n:find("trading") and n:find("ticket")) or n:find("trade ticket") then return t end
+                end
+            end
+        end
+        return scanCont(char) or scanCont(bp)
+    end
+
+    -- equip trade ticket
+    local function holdTicket38()
+        local char = plr.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        local bp   = plr:FindFirstChild("Backpack")
+        if not (char and hum and bp) then return false end
+        local function scanCont(cont)
+            if not cont then return nil end
+            for _, t in ipairs(cont:GetChildren()) do
+                if t:IsA("Tool") then local n=t.Name:lower(); if (n:find("trading") and n:find("ticket")) or n:find("trade ticket") then return t end end
+            end
+        end
+        if scanCont(char) then return true end   -- udah equipped
+        local tk = scanCont(bp); if not tk then return false end
+        pcall(function() hum:UnequipTools() end); task.wait(0.1)
+        pcall(function() hum:EquipTool(tk) end); task.wait(0.15)
+        return scanCont(char) ~= nil
+    end
+
+    -- unfav satu tool (Favorite_Item = toggle, cek dulu)
+    local function unfav38(tool)
+        if not tool then return end
+        if tool:GetAttribute("d") ~= true then return end   -- udah gak fav, skip
+        pcall(function()
+            local GE = RS:FindFirstChild("GameEvents")
+            local fRE = GE and GE:FindFirstChild("Favorite_Item")
+            if fRE then fRE:FireServer(tool) end
+        end)
+        task.wait(0.04)
+    end
 
     -- kumpulkan pet 3.8kg+ di backpack/tangan (bukan support, bukan fav)
     local function getPet38()
         local out = {}
-        local bp = plr:FindFirstChild("Backpack")
+        local bp   = plr:FindFirstChild("Backpack")
         local char = plr.Character
         local supAll = _G.ZenxSupportUuids or {}
+        local sk     = _G.ZenxSupportKunci or {}
+        local pr     = _G.__ZenxSupProtect or {}
         local scan = {}
-        if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end end
+        if bp   then for _, t in ipairs(bp:GetChildren())   do if t:IsA("Tool") then scan[#scan+1] = t end end end
         if char then for _, t in ipairs(char:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end end
         for _, t in ipairs(scan) do
             pcall(function()
                 local uuid = tostring(t:GetAttribute("PET_UUID") or "")
                 if uuid == "" then return end
-                if supAll[uuid] or supAll["{"..uuid.."}"] then return end   -- skip support
-                if t:GetAttribute("d") == true then return end              -- skip fav
+                local fu = fmtU38(uuid)
+                if supAll[uuid] or supAll[fu] or sk[uuid] or sk[fu] or pr[uuid] or pr[fu] then return end
+                if t:GetAttribute("d") == true then return end   -- fav -> skip
                 local bw = tonumber(t:GetAttribute("BaseWeight") or t:GetAttribute("bw") or 0) or 0
                 if bw >= 3.8 then out[#out+1] = { tool = t, uuid = uuid, bw = bw } end
             end)
@@ -6352,24 +6408,67 @@ do
         return out
     end
 
-    -- gift SATU pet ke target
-    local function giftOnePet38(targetPlayer, petInfo)
-        local re = getGiftRE()
-        if not re then o38Log("X PetGiftingService gak ada"); return false end
-        local char = plr.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not hum then o38Log("X gak ada hum"); return false end
-        local t = petInfo.tool
-        pcall(function() hum:EquipTool(t) end); task.wait(0.2)
-        if t.Parent ~= char then pcall(function() hum:EquipTool(t) end); task.wait(0.2) end
-        pcall(function() re:FireServer("GivePet", targetPlayer, fmtU38(petInfo.uuid)) end); task.wait(0.4)
-        if not t.Parent then
-            OP38.giftCount = (OP38.giftCount or 0) + 1
-            o38Log("OK gift " .. string.format("%.2f",petInfo.bw) .. "kg -> " .. targetPlayer.Name)
-            return true
+    -- auto accept trade dari sisi kita (cek GUI lalu FireServer)
+    local function autoAccept38()
+        pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui"); if not pg then return end
+            local tui = pg:FindFirstChild("TradingUI")
+            local lt  = tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible and tui and tui.Enabled then
+                local opts = lt:FindFirstChild("Options")
+                local acc  = opts and opts:FindFirstChild("Accept")
+                if acc then
+                    if firesignal then pcall(function() firesignal(acc.Activated) end) end
+                    if getconnections then for _, c in ipairs(getconnections(acc.Activated)) do pcall(function() c:Fire() end) end end
+                end
+            end
+        end)
+        local GE = RS:FindFirstChild("GameEvents")
+        local te = GE and GE:FindFirstChild("TradeEvents")
+        if te then
+            local confirmRE = te:FindFirstChild("Confirm"); local acceptRE = te:FindFirstChild("Accept")
+            if confirmRE then pcall(function() confirmRE:FireServer() end) end
+            if acceptRE  then pcall(function() acceptRE:FireServer() end) end
         end
-        o38Log("X gift gagal (pet masih ada)")
-        return false
+    end
+
+    -- kirim trade ke target (semua pet sekaligus, maks 4 per trade Roblox)
+    local function tradeAll38(targetPlayer, pets)
+        local re = getTrade38RE()
+        if not (re and re.send and re.addItem) then o38Log("X TradeEvents remote gak ada"); return 0 end
+        if not findTicket38() then
+            local ok = holdTicket38()
+            if not ok then o38Log("X trade ticket gak ada di backpack"); return 0 end
+        end
+        -- unfav semua dulu
+        for _, p in ipairs(pets) do unfav38(p.tool) end
+        task.wait(0.15)
+        -- kirim request trade
+        pcall(function() re.send:FireServer(targetPlayer) end)
+        task.wait(0.5)
+        -- cek "can't add more"
+        local function cantAdd()
+            local found = false
+            pcall(function()
+                local pg = plr:FindFirstChild("PlayerGui"); if not pg then return end
+                for _, d in ipairs(pg:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible then
+                        local tx = (d.Text or ""):lower()
+                        if tx:find("can't add more") or tx:find("cant add more") then found=true; break end
+                    end
+                end
+            end)
+            return found
+        end
+        local added = 0
+        for _, p in ipairs(pets) do
+            if cantAdd() then break end
+            pcall(function() re.addItem:FireServer("Pet", fmtU38(p.uuid)) end)
+            added = added + 1; task.wait(0.12)
+        end
+        o38Log("  addItem: " .. added .. " pet masuk trade")
+        for _ = 1, 4 do autoAccept38(); task.wait(0.3) end
+        return added
     end
 
     -- === UI ===
@@ -6377,10 +6476,10 @@ do
 
     -- HEADER
     local hdr38 = mk("Frame", { Size=UDim2.new(1,0,0,54), BackgroundColor3=C.card, BorderSizePixel=0, LayoutOrder=1, Parent=oper38Scroll }); corner(hdr38,11); stroke(hdr38, C.border, 1)
-    local hdr38T = o38Lbl(hdr38, "OPER PET 3.8KG+  \u{2192}  auto gift @15", 13, C.text); hdr38T.Font=FONT_B; hdr38T.Position=UDim2.new(0,13,0,8); hdr38T.Size=UDim2.new(1,-20,0,18)
+    local hdr38T = o38Lbl(hdr38, "OPER PET 3.8KG+  \u{2192}  auto trade @"..MIN_PET_TRADE, 13, C.text); hdr38T.Font=FONT_B; hdr38T.Position=UDim2.new(0,13,0,8); hdr38T.Size=UDim2.new(1,-20,0,18)
     local hdr38S = o38Lbl(hdr38, "pilih target dulu", 11, C.textDim); hdr38S.Position=UDim2.new(0,13,0,28); hdr38S.Size=UDim2.new(1,-20,0,16)
 
-    -- STAT: jumlah pet ready + total dikirim
+    -- STAT
     local statRow38 = mk("Frame", { Size=UDim2.new(1,0,0,52), BackgroundTransparency=1, LayoutOrder=2, Parent=oper38Scroll })
     mk("UIListLayout", { FillDirection=Enum.FillDirection.Horizontal, Padding=UDim.new(0,7), Parent=statRow38 })
     local function sc38(lblTxt, col)
@@ -6390,15 +6489,14 @@ do
         return v
     end
     local scReady38 = sc38("pet 3.8kg+ siap", C.accent3)
-    local scSent38  = sc38("total dikirim",   C.accent2)
+    local scSent38  = sc38("total trade",     C.accent2)
 
-    -- TOMBOL GIFT
-    local giftBtn38 = mk("TextButton", { Size=UDim2.new(1,0,0,42), BackgroundColor3=C.card, Text="GIFT SEMUA KE TARGET", Font=FONT_B, TextSize=13, TextColor3=C.textDim, BorderSizePixel=0, LayoutOrder=3, Parent=oper38Scroll }); corner(giftBtn38,10); stroke(giftBtn38, C.border, 1)
+    -- TOMBOL TRADE MANUAL
+    local tradeBtn38 = mk("TextButton", { Size=UDim2.new(1,0,0,42), BackgroundColor3=C.card, Text="TRADE SEMUA KE TARGET", Font=FONT_B, TextSize=13, TextColor3=C.textDim, BorderSizePixel=0, LayoutOrder=3, Parent=oper38Scroll }); corner(tradeBtn38,10); stroke(tradeBtn38, C.border, 1)
 
-    -- SECTION: target di server
+    -- SECTION picker
     local sec38 = mk("Frame", { Size=UDim2.new(1,0,0,20), BackgroundTransparency=1, LayoutOrder=4, Parent=oper38Scroll })
     local sec38L = o38Lbl(sec38, "PILIH TARGET (se-server)", 11, C.accent); sec38L.Font=FONT_B; sec38L.Size=UDim2.new(1,0,1,0)
-
     local pick38Holder = mk("Frame", { Size=UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=5, Parent=oper38Scroll })
     mk("UIListLayout", { Padding=UDim.new(0,6), Parent=pick38Holder })
 
@@ -6410,22 +6508,21 @@ do
     local function refresh38()
         local pets = getPet38()
         scReady38.Text = tostring(#pets)
-        scSent38.Text  = tostring(OP38.giftCount or 0)
+        scSent38.Text  = tostring(OP38.tradeCount or 0)
         dbg38L.Text = table.concat(OP38.log, "\n")
-        -- update header
-        if OP38.target and Players:FindFirstChild(OP38.target) then
-            hdr38S.Text = "target: " .. OP38.target .. " \u{2022} " .. #pets .. " pet siap"
-            hdr38S.TextColor3 = C.accent2
-            giftBtn38.BackgroundColor3 = (#pets > 0 and not OP38.busy) and C.accent2 or C.card
-            giftBtn38.TextColor3 = (#pets > 0 and not OP38.busy) and Color3.fromRGB(0,0,0) or C.textDim
+        local hasTarget = OP38.target and Players:FindFirstChild(OP38.target)
+        if hasTarget then
+            hdr38S.Text = "target: " .. OP38.target .. "  \u{2022}  " .. #pets .. "/" .. MIN_PET_TRADE .. " pet"
+            hdr38S.TextColor3 = (#pets >= MIN_PET_TRADE) and C.accent2 or C.textDim
+            tradeBtn38.BackgroundColor3 = (#pets > 0 and not OP38.busy) and C.accent2 or C.card
+            tradeBtn38.TextColor3 = (#pets > 0 and not OP38.busy) and Color3.fromRGB(0,0,0) or C.textDim
         else
             OP38.target = nil
             hdr38S.Text = "pilih target dulu"
             hdr38S.TextColor3 = C.textDim
-            giftBtn38.BackgroundColor3 = C.card
-            giftBtn38.TextColor3 = C.textDim
+            tradeBtn38.BackgroundColor3 = C.card
+            tradeBtn38.TextColor3 = C.textDim
         end
-        -- render daftar player se-server
         for _, c in ipairs(pick38Holder:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= plr then
@@ -6443,38 +6540,33 @@ do
         end
     end
 
-    local MIN_PET_GIFT = 15   -- auto gift kalau udah >= 15 pet 3.8kg+
-
-    local function doGift38(targetPlayer, pets)
+    local function doTrade38(targetPlayer, pets)
         if OP38.busy then return end
         OP38.busy = true
-        giftBtn38.Text = "GIFTING..."
-        giftBtn38.BackgroundColor3 = C.card
-        giftBtn38.TextColor3 = C.textDim
+        tradeBtn38.Text = "TRADING..."
+        tradeBtn38.BackgroundColor3 = C.card
+        tradeBtn38.TextColor3 = C.textDim
         task.spawn(function()
-            o38Log("== auto-gift " .. #pets .. " pet -> " .. targetPlayer.Name)
-            for _, p in ipairs(pets) do
-                if not Players:FindFirstChild(targetPlayer.Name) then o38Log("X target disconnect"); break end
-                giftOnePet38(targetPlayer, p)
-                task.wait(0.1)
-            end
+            o38Log("== trade " .. #pets .. " pet -> " .. targetPlayer.Name)
+            local sent = tradeAll38(targetPlayer, pets)
+            if sent > 0 then OP38.tradeCount = (OP38.tradeCount or 0) + sent end
             OP38.busy = false
-            o38Log("== selesai. total: "..tostring(OP38.giftCount))
+            o38Log("== selesai. total traded: " .. tostring(OP38.tradeCount))
             pcall(refresh38)
         end)
     end
 
-    -- tombol GIFT MANUAL (fallback)
-    giftBtn38.MouseButton1Click:Connect(function()
+    -- tombol TRADE MANUAL
+    tradeBtn38.MouseButton1Click:Connect(function()
         if OP38.busy then return end
         local targetPlayer = OP38.target and Players:FindFirstChild(OP38.target)
         if not targetPlayer then o38Log("X gak ada target"); pcall(refresh38); return end
         local pets = getPet38()
         if #pets == 0 then o38Log("X gak ada pet 3.8kg+"); pcall(refresh38); return end
-        doGift38(targetPlayer, pets)
+        doTrade38(targetPlayer, pets)
     end)
 
-    -- AUTO GIFT + REFRESH tiap 3s
+    -- AUTO TRADE + REFRESH tiap 3s
     task.spawn(function()
         while true do
             task.wait(3)
@@ -6484,9 +6576,9 @@ do
                 local targetPlayer = OP38.target and Players:FindFirstChild(OP38.target)
                 if not targetPlayer then return end
                 local pets = getPet38()
-                if #pets >= MIN_PET_GIFT then
-                    o38Log("auto-gift trigger: " .. #pets .. " >= " .. MIN_PET_GIFT)
-                    doGift38(targetPlayer, pets)
+                if #pets >= MIN_PET_TRADE then
+                    o38Log("auto-trade trigger: "..#pets.." >= "..MIN_PET_TRADE)
+                    doTrade38(targetPlayer, pets)
                 end
             end)
         end
