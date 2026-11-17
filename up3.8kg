@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.118 | debug log Whale detect di S1/S2                                          ║
+-- ║  UP KG — v2.119 | Whale slot di lineup GUI (utama/cadangan)                               ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.118"
+local VERSION = "up38kg-v2.119"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -3777,8 +3777,42 @@ local function renderLineup()
     _G.__ZenxLineupDbg = "ran:" .. tostring(math.floor(tick())) .. " tim:" .. tostring(lineupTim) .. " cfgSlot:" .. #cfg .. " cfgAda:" .. tostring(_G.ZenxSupportConfig ~= nil)
     local pool = _G.ZenxSupportPool or {}
     local order = 0
+
+    -- v2.119: Whale slot — cek apakah Whale aktif di lineup ini
+    local whaleUtama = false
+    for _, sup in ipairs(cfg) do
+        if sup.nama == "Blue Whale" then whaleUtama = true; break end
+    end
+    do
+        local WHALE_COL = Color3.fromRGB(80, 160, 230)  -- biru laut
+        local whaleBg   = whaleUtama and WHALE_COL or C.border
+        local whaleText = whaleUtama and "🐋 UTAMA" or "🐋 CADANGAN"
+        local whaleSubt = whaleUtama and "aktif di lineup" or "belum ada / tidak aktif"
+        order = order + 1
+        local wCard = mk("Frame", { BackgroundColor3 = C.card, LayoutOrder = order, Parent = lineupHolder })
+        corner(wCard, 10)
+        stroke(wCard, whaleBg, whaleUtama and 2 or 1)
+        mk("Frame", { Size = UDim2.new(0,3,1,-16), Position = UDim2.new(0,0,0,8), BackgroundColor3 = whaleBg, BorderSizePixel = 0, Parent = wCard })
+        -- label nama + status
+        local wTy = lbl(wCard, "Blue Whale", 9, whaleBg); wTy.Font = FONT_B; wTy.Position = UDim2.new(0,11,0,7); wTy.Size = UDim2.new(1,-16,0,12); wTy.TextXAlignment = Enum.TextXAlignment.Left
+        local wSt = lbl(wCard, whaleText, 13, whaleUtama and Color3.fromRGB(120,210,255) or C.textDim)
+        wSt.Font = FONT_B; wSt.Position = UDim2.new(0,11,0,21); wSt.Size = UDim2.new(1,-16,0,18); wSt.TextXAlignment = Enum.TextXAlignment.Left
+        local wSb = lbl(wCard, whaleSubt, 9, C.textDim)
+        wSb.Position = UDim2.new(0,11,0,39); wSb.Size = UDim2.new(1,-16,0,14); wSb.TextXAlignment = Enum.TextXAlignment.Left
+        -- kalau utama: tampil uuid+kg dari pool
+        if whaleUtama then
+            local wEntry = (pool["Blue Whale"] or {})[1]
+            if wEntry then
+                wSt.Text = "🐋 UTAMA  #" .. tostring(wEntry.uuid):sub(2,5)
+                wSb.Text = string.format("%.1f kg — aktif", wEntry.kg or 0)
+            end
+        end
+    end
+
+    -- slot biasa (skip Blue Whale karena sudah ditampilkan di atas)
     for _, sup in ipairs(cfg) do
         local nm = sup.nama
+        if nm == "Blue Whale" then goto continueWhale end
         local col = TIPE_COL[nm] or C.accent
         for i = 1, sup.jml do
             order = order + 1
@@ -3794,6 +3828,7 @@ local function renderLineup()
             end
             card.MouseButton1Click:Connect(function() openPetPicker(nm, i, sup.cari) end)
         end
+        ::continueWhale::
     end
 end
 
