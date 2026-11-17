@@ -705,6 +705,138 @@ do
 end
 
 -- ============================================================
+-- v2.123: COCONUT AUTO-COLLECT — auto ON kalau whale ada, auto OFF kalau whale pergi
+-- Collect semua buah coconut dgn KG >= threshold (default: semua, threshold = 0)
+-- Pakai RemoteEvent Crops.Collect:FireServer(batch) batch max 40
+-- Sell otomatis tiap loop kalau ada hasil collect
+-- ============================================================
+do
+    local _cocoRunning = false   -- flag loop aktif
+
+    local function getMyFarm()
+        local plr = game:GetService("Players").LocalPlayer
+        if not plr then return nil end
+        local farmWS = workspace:FindFirstChild("Farm")
+        if not farmWS then return nil end
+        for _, sf in ipairs(farmWS:GetChildren()) do
+            local found = false
+            pcall(function()
+                local imp  = sf:FindFirstChild("Important")
+                local data = imp and imp:FindFirstChild("Data")
+                local own  = data and data:FindFirstChild("Owner")
+                if own and own.Value == plr.Name then found = true end
+                if sf.Name == plr.Name then found = true end
+            end)
+            if found then return sf end
+        end
+        return nil
+    end
+
+    local function collectCoconut()
+        local RS   = game:GetService("ReplicatedStorage")
+        local CS   = game:GetService("CollectionService")
+        local farm = getMyFarm()
+        if not farm then return 0 end
+
+        -- kumpulkan buah coconut dari farm sendiri
+        local batch = {}
+        for _, fruit in ipairs(CS:GetTagged("Harvestable")) do
+            if fruit:IsDescendantOf(farm) then
+                local nm = (fruit.Name or ""):lower()
+                if nm:find("coconut",1,true) or nm:find("cocon",1,true) then
+                    -- baca KG asli dari NumberValue child "Weight"
+                    local kg = nil
+                    pcall(function()
+                        local wv = fruit:FindFirstChild("Weight")
+                        if wv and wv:IsA("NumberValue") then kg = tonumber(wv.Value) end
+                    end)
+                    -- fallback: cek nama tree parent
+                    if not kg then
+                        pcall(function()
+                            local a = fruit:GetAttributes()
+                            kg = tonumber(a and (a["WeightMulti"] or a["weightmulti"])) or 0
+                        end)
+                    end
+                    table.insert(batch, fruit)
+                    if #batch >= 40 then break end
+                end
+            end
+        end
+
+        if #batch == 0 then return 0 end
+
+        -- fire collect
+        local ok = false
+        pcall(function()
+            local crops = RS:FindFirstChild("Crops")
+            local ev = crops and crops:FindFirstChild("Collect")
+            if ev then ev:FireServer(batch); ok = true end
+        end)
+        if not ok then
+            pcall(function()
+                local ev = RS:WaitForChild("Crops", 2):WaitForChild("Collect", 2)
+                ev:FireServer(batch)
+            end)
+        end
+
+        -- sell
+        pcall(function()
+            local ev = RS:FindFirstChild("Sell_Inventory")
+            if ev then ev:FireServer() end
+        end)
+
+        return #batch
+    end
+
+    -- loop utama: cek whale tiap 5 detik
+    task.spawn(function()
+        while true do
+            task.wait(5)
+            local adaWhale = false
+            pcall(function()
+                -- cek _kgContainer (cara paling reliable di up3.8kg)
+                if _G._kgContainer then
+                    for _, p in ipairs(_G._kgContainer) do
+                        if tostring(p.tipe or ""):lower():find("whale",1,true) then
+                            adaWhale = true; return
+                        end
+                    end
+                end
+                -- fallback: cek backpack + karakter
+                local plr = game:GetService("Players").LocalPlayer
+                if plr then
+                    local function scanObj(obj)
+                        if not obj then return end
+                        for _, item in ipairs(obj:GetChildren()) do
+                            if tostring(item.Name):lower():find("whale",1,true) then adaWhale = true end
+                        end
+                    end
+                    scanObj(plr:FindFirstChild("Backpack"))
+                    if plr.Character then scanObj(plr.Character) end
+                end
+            end)
+
+            if adaWhale and not _cocoRunning then
+                _cocoRunning = true
+                print("[COCO] Whale terdeteksi — mulai auto-collect coconut")
+                task.spawn(function()
+                    while _cocoRunning do
+                        local n = 0
+                        pcall(function() n = collectCoconut() end)
+                        if n > 0 then print("[COCO] collect "..n.." buah coconut") end
+                        task.wait(5)
+                    end
+                    print("[COCO] auto-collect berhenti — whale hilang")
+                end)
+            elseif not adaWhale and _cocoRunning then
+                _cocoRunning = false
+                -- loop akan berhenti sendiri di iterasi berikutnya
+            end
+        end
+    end)
+end
+
+-- ============================================================
 -- v1.08: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
 -- biar karakter aktif pas awal masuk tanpa resiko salah-mencet UI (beli/jual/dll).
 -- ============================================================
