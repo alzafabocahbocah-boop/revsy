@@ -1,12 +1,13 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.701 — up3.8kgv2: broadcast assign-ps link ke semua akun di device (fix beda server)
 -- zenx_worker v9.688 — suplai-antri polling: market minta isi pet → worker arahkan leveling client ke PS market → selesai balik TradeWorld
 -- zenx_worker v9.687 — fix crash "attempt to concatenate a nil value (local 'ak')" saat FORCE (fallback ak ke pkg)
 -- zenx_worker v9.686 — bump (versi sebelumnya tidak di-commit dengan benar)
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.700"
+local VERSION = "9.701"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5167,6 +5168,34 @@ local function run(cfg)
         end
     end
     refresh_ps()
+    -- v9.701: up3.8kgv2 (sc=UP6KG url=up3.8kg) -> semua akun di device WAJIB ikut PS yang di-assign
+    -- Masalah: panel hanya assign-ps ke 1 akun, sisanya fallback ke PS individual via getps -> beda server
+    -- Fix: setelah refresh_ps, broadcast link yang sudah ada ke semua akun yang belum punya link
+    do
+        local _isUp38v2 = (cfg.game_label or ""):find("UP6KG") and
+                          (cfg.script_url or ""):find("up3%.8kg", 1, false)
+        if _isUp38v2 then
+            local _firstLink, _firstNama = nil, nil
+            for _p, _lnk in pairs(mapLink) do
+                if _lnk and _lnk ~= "" then
+                    _firstLink = _lnk; _firstNama = mapPsNama[_p] or ""; break
+                end
+            end
+            if _firstLink then
+                local _n38 = 0
+                for _pkg in ((cfg.pkgs or "")):gmatch("[^,]+") do
+                    if not (mapLink[_pkg] and mapLink[_pkg] ~= "") then
+                        mapLink[_pkg] = _firstLink
+                        if _firstNama ~= "" then mapPsNama[_pkg] = _firstNama end
+                        _n38 = _n38 + 1
+                    end
+                end
+                if _n38 > 0 then
+                    info(("[up3.8kgv2] broadcast assign-ps ke %d akun belum punya link (ikut server yang sama)"):format(_n38))
+                end
+            end
+        end
+    end
     local function refresh_ps_getps()
         if tostring(cfg.place_id) == "129954712878723" then return end
         if cfg.pakai_ps == false then return end
