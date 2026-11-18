@@ -4475,8 +4475,28 @@ do
         -- lagi mati/fetch gagal, load data TERAKHIR yg berhasil dari file lokal (lebih baik daripada
         -- nil/kosong total). Tiap fetch SUKSES, cache di-update.
         local LVLMAX_CACHE_FILE = "zenx_lvlmax_cache_" .. tostring((game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.Name) or "x") .. ".json"
-        -- v10.278: hapus load cache lvlmax lokal — cache lama bisa isi akun up6kg (data salah)
-        -- ZenxLvlMax akan di-isi dari /lvlmax-tim (panel) di fetch loop bawah
+        -- v10.279: load cache lvlmax-tim lokal (JSON format) buat fallback awal sebelum fetch panel
+        do
+            pcall(function()
+                if isfile and isfile(LVLMAX_CACHE_FILE) then
+                    local raw = readfile(LVLMAX_CACHE_FILE)
+                    local ok2, decoded = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
+                    if ok2 and type(decoded) == "table" and type(decoded.leveling) == "table" then
+                        local m, mc = {}, {}
+                        for _, tim in ipairs(decoded.leveling) do
+                            if type(tim.akun) == "table" then
+                                for _, nm in ipairs(tim.akun) do
+                                    if type(nm) == "string" and nm ~= "" then
+                                        m[nm] = 200; mc[nm] = tonumber(tim.age500) or 0
+                                    end
+                                end
+                            end
+                        end
+                        if next(m) then _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; print("[up6kg] load cache lvlmax-tim lokal ("..tostring(#decoded.leveling).." tim)") end
+                    end
+                end
+            end)
+        end
         local _LVLMAX_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"  -- v10.130: kunci buat /lvlmax-tim (sama kayak up3.8kg)
         local LVLMAX_TIM_URL = LVLMAX_URL:gsub("/lvlmax$", "/lvlmax-tim")  -- v10.130: endpoint per-tim (merge dari semua panel)
         task.spawn(function()
@@ -4509,38 +4529,20 @@ do
                             end
                             if next(m) then
                                 _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; haveLvl = true
+                                pcall(function() if writefile then writefile(LVLMAX_CACHE_FILE, rawTim) end end)  -- v10.279: simpan cache JSON /lvlmax-tim
                                 print("[up6kg] load lvlmax dari /lvlmax-tim: "..tostring(#(decoded.leveling or {})).." tim")
                             else
                                 print("[up6kg] /lvlmax-tim leveling ada tapi akun semua kosong, jumlah tim: "..tostring(#decoded.leveling))
                             end
                             return  -- v10.277: return di luar if next(m) supaya gak fallback ke /lvlmax lama walau akun kosong
                         else
-                            print("[up6kg] /lvlmax-tim parse gagal, fallback ke /lvlmax")
+                            print("[up6kg] /lvlmax-tim parse gagal, skip (gak fallback ke /lvlmax)")
                         end
+                    else
+                        print("[up6kg] /lvlmax-tim response kosong, skip")
                     end
-                    -- FALLBACK: baca /lvlmax lama (kalau /lvlmax-tim kosong/gagal)
-                    local raw
-                    pcall(function() raw = game:HttpGet(LVLMAX_URL) end)
-                    if (not raw or raw == "") then
-                        local req = request or http_request or (syn and syn.request)
-                        if req then local ok, res = pcall(function() return req({ Url = LVLMAX_URL, Method = "GET" }) end); if ok and res and res.Body then raw = res.Body end end
-                    end
-                    if raw and raw ~= "" then
-                        local m, mc = {}, {}
-                        for pair in tostring(raw):gmatch("[^,]+") do
-                            local k, mx, cn = pair:match("^%s*(.-)%s*=%s*(%d+):(%d+)")   -- "akun=max:count" (toleran :age500 di belakang)
-                            if k and mx then
-                                m[k] = tonumber(mx); mc[k] = tonumber(cn)
-                            else
-                                local k2, v2 = pair:match("^%s*(.-)%s*=%s*(%d+)%s*$")          -- backward: max doang
-                                if k2 and v2 then m[k2] = tonumber(v2) end
-                            end
-                        end
-                        if next(m) then
-                            _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; haveLvl = true
-                            -- v10.278: gak nulis cache lagi (cache lama bisa isi akun up6kg -> data salah)
-                        end
-                    end
+                    -- v10.279: hapus fallback /lvlmax lama — isinya semua akun termasuk up6kg -> target trade salah
+                    -- kalau /lvlmax-tim gagal/kosong, tunggu retry berikutnya aja
                 end)
                 -- v10.94: BARENGAN fetch bahan global /up6kg-bahan (1 loop, bukan 2)
                 pcall(function()
