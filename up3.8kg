@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.147 | sesi1+Whale: Whale+Peacock+Lion+RainbowDilop+2Gilded                   ║
+-- ║  UP KG — v2.148 | sesi1+Whale: Whale+Peacock+Lion+RainbowDilop+2Gilded                   ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.147"
+local VERSION = "up38kg-v2.148"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -967,21 +967,32 @@ do
             end
         end
 
-        if #batch == 0 then return 0 end
+        if #batch == 0 then print("[COCO] collect: batch kosong (0 buah coconut ditemukan)"); return 0 end
+        print("[COCO] collect: batch="..#batch.." buah, cari Crops.Collect RE...")
 
-        -- fire collect
+        -- fire collect — coba GameEvents dulu (sama kayak uplevelnew), fallback RS langsung
         local ok = false
+        local reLog = "?"
         pcall(function()
-            local crops = RS:FindFirstChild("Crops")
+            local GE = RS:FindFirstChild("GameEvents")
+            local crops = GE and GE:FindFirstChild("Crops")
             local ev = crops and crops:FindFirstChild("Collect")
-            if ev then ev:FireServer(batch); ok = true end
+            if ev then ev:FireServer(batch); ok = true; reLog = "GameEvents.Crops.Collect" end
         end)
         if not ok then
             pcall(function()
-                local ev = RS:WaitForChild("Crops", 2):WaitForChild("Collect", 2)
-                ev:FireServer(batch)
+                local crops = RS:FindFirstChild("Crops")
+                local ev = crops and crops:FindFirstChild("Collect")
+                if ev then ev:FireServer(batch); ok = true; reLog = "RS.Crops.Collect" end
             end)
         end
+        if not ok then
+            pcall(function()
+                local ev = RS:WaitForChild("Crops", 2):WaitForChild("Collect", 2)
+                ev:FireServer(batch); ok = true; reLog = "RS.WaitForChild.Crops.Collect"
+            end)
+        end
+        print("[COCO] collect: "..(ok and "OK via "..reLog or "GAGAL — Crops.Collect tidak ditemukan"))
 
         -- sell
         pcall(function()
