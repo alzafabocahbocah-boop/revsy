@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.140"
+local VERSION = "up38kg-v2.141"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -740,14 +740,40 @@ do
     end
     -- v2.138: cekAdaWhale di dalam spawn + wait(1) biar RC siap dulu
     local _skipDestroy = false
+    -- v2.141: hitung pohon di kebun sendiri
+    local function hitungPohonKebun()
+        local n = 0
+        pcall(function()
+            local plrName = game:GetService("Players").LocalPlayer.Name
+            local farm = WS:FindFirstChild("Farm")
+            if not farm then return end
+            for _, sf in ipairs(farm:GetChildren()) do
+                pcall(function()
+                    local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                    local owner = sign and sign:GetAttribute("_owner")
+                    if owner ~= plrName then return end
+                    local imp = sf:FindFirstChild("Important")
+                    local pp = imp and imp:FindFirstChild("Plants_Physical")
+                    if pp then for _, c in ipairs(pp:GetChildren()) do if c:IsA("Model") then n = n + 1 end end end
+                end)
+            end
+        end)
+        return n
+    end
     task.spawn(function()
         task.wait(1)
         _skipDestroy = cekAdaWhale()
-        if _skipDestroy then print("[DL] ada Blue Whale (RC) -> skip destroy pohon selamanya")
-        else print("[DL] tidak ada Blue Whale -> destroy pohon aktif") end
+        local jml = hitungPohonKebun()
+        if _skipDestroy then
+            print("[DL] ada Blue Whale (RC) -> destroy OFF | pohon kebun: "..jml)
+        else
+            print("[DL] tidak ada Blue Whale -> destroy ON | pohon kebun: "..jml)
+        end
     end)
     local function destroyPohonSemua()
         if _skipDestroy then return 0 end
+        local jml = hitungPohonKebun()
+        print("[DL] destroyPohonSemua jalan | pohon kebun sebelum destroy: "..jml)
         local roots = semuaFarm(); local n = 0
         for _, root in ipairs(roots) do
             for _, c in ipairs(root:GetChildren()) do
@@ -767,7 +793,16 @@ do
             end
         end)
     end)
-    task.spawn(function() while true do task.wait(30); destroyPohonSemua() end end)
+    task.spawn(function()
+        while true do
+            task.wait(30)
+            if not _skipDestroy then
+                local jml = hitungPohonKebun()
+                print("[DL] destroy loop 30s | pohon kebun: "..jml)
+            end
+            destroyPohonSemua()
+        end
+    end)
 
     -- v2.123f/g: destroy Whale Waters VFX biar gak lag + detect aktif/tidak
     local _wwVfxNames = {"WeatherVisuals","WeatherObjects","Whale","Kelp","Clam","SpottedEffect"}
