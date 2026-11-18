@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.288 (ganti modelByUuid → _equippedSet RC cache 10 lokasi)            ║
+-- ║  UP KG — v10.289 | fix copot untracked: reset timer + ENFORCE 1x pakai _equippedSet ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -2950,25 +2950,25 @@ do
         bahanAktif = {}
         pilihBahan(sesi)
         equipSemua()          -- equip yg baru aja (ke-keep udah ke-equip -> skip)
-        -- ENFORCE: copot SEMUA pet equipped yg UNTRACKED (gak di supportKunci & bahanAktif).
-        -- Fix: bahan 4 (bahan lama nyangkut), Ele masuk sesi 1, Dilop 3, dst. Ulang 3x biar pasti.
+        -- reset untrackSince timer biar pet yg baru di-equip gak langsung kena copot
+        _G.__untrackSince = {}; _G.__dbgUntrackT = {}
+        -- ENFORCE: copot pet equipped yg UNTRACKED (gak di supportKunci & bahanAktif).
+        -- Cukup 1x setelah _equippedSet refresh (2.5s) — gak perlu scan modelByUuid terus-terusan.
         task.spawn(function()
-            for rep = 1, 3 do
-                task.wait(2)
-                if (KG.sesi or 1) ~= sesi then return end
-                for uuid in pairs(_equippedSet) do
-                    if not supportKunci[uuid] and not bahanAktif[uuid] then
-                        -- v10.51: SESI 2 -> Ele untracked JANGAN copot, malah TRACK (supportKunci) biar
-                        -- ke-re-equip. Bug: eleUuids telat refresh pas pasangSesi -> Ele gak ke-track ->
-                        -- ENFORCE copot -> Ele KELEPAS gak balik ke kebun.
-                        local tp = tostring(tipeDariUuid(uuid) or "")
-                        if sesi == 2 and tp:lower():find("rainbow elephant", 1, true) then
-                            supportKunci[uuid] = "Rainbow Elephant"
-                            eleUuids[uuid] = true
-                        else
-                            pcall(function() unequipPet(uuid) end)
-                            kgLog("copot UNTRACKED: " .. (tp ~= "" and tp or "?"))
-                        end
+            task.wait(2.5) -- tunggu _equippedSet cycle berikutnya update
+            if (KG.sesi or 1) ~= sesi then return end
+            for uuid in pairs(_equippedSet) do
+                if not supportKunci[uuid] and not bahanAktif[uuid] then
+                    -- v10.51: SESI 2 -> Ele untracked JANGAN copot, malah TRACK (supportKunci) biar
+                    -- ke-re-equip. Bug: eleUuids telat refresh pas pasangSesi -> Ele gak ke-track ->
+                    -- ENFORCE copot -> Ele KELEPAS gak balik ke kebun.
+                    local tp = tostring(tipeDariUuid(uuid) or "")
+                    if sesi == 2 and tp:lower():find("rainbow elephant", 1, true) then
+                        supportKunci[uuid] = "Rainbow Elephant"
+                        eleUuids[uuid] = true
+                    else
+                        pcall(function() unequipPet(uuid) end)
+                        kgLog("copot UNTRACKED: " .. (tp ~= "" and tp or "?"))
                     end
                 end
             end
