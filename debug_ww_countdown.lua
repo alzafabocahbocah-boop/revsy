@@ -1,134 +1,254 @@
 -- ============================================================
--- DEBUG WHALE WATERS COUNTDOWN v1.0
--- Monitor timer Whale Waters event secara realtime
--- Print kapan mulai, sisa detik, kapan selesai
+-- DEBUG WHALE WATERS COUNTDOWN v2.0
+-- Berdasarkan hasil scan GUI: EasterEggHuntUI punya TextLabel countdown
+-- Pattern yang sama kemungkinan ada untuk Whale Waters
 -- ============================================================
 local RS = game:GetService("ReplicatedStorage")
 local WS = workspace
+local plr = game.Players.LocalPlayer
 
--- cari sumber countdown — cek beberapa kandidat
-local function getWWTimer()
-    -- kandidat 1: Event_Notification/Event_String + atribut timer
-    local en = RS:FindFirstChild("Event_Notification")
-    if en then
-        -- cek atribut langsung
-        local ok, attrs = pcall(function() return en:GetAttributes() end)
-        if ok then
-            for k, v in pairs(attrs) do
-                if tostring(k):lower():find("time",1,true) or tostring(k):lower():find("timer",1,true)
-                   or tostring(k):lower():find("duration",1,true) or tostring(k):lower():find("end",1,true) then
-                    print("[WW-ATTR] Event_Notification."..tostring(k).." = "..tostring(v))
-                end
+-- =====================================================
+-- BAGIAN 1: Scan PlayerGui — cari TextLabel dengan kata
+-- "whale", "water", "weather", "ends", "starts", "until"
+-- (sama kayak GlobalEasterEggHuntCountdown)
+-- =====================================================
+local function scanGuiCountdown()
+    print("[WW-GUI] === Scan PlayerGui untuk countdown text ===")
+    local pg = plr:FindFirstChild("PlayerGui")
+    if not pg then print("[WW-GUI] PlayerGui nil"); return end
+
+    for _, gui in ipairs(pg:GetDescendants()) do
+        local ok, tx = pcall(function() return tostring(gui.Text) end)
+        if ok and #tx > 0 and #tx < 120 then
+            local txl = tx:lower()
+            if txl:find("whale",1,true) or txl:find("water",1,true)
+               or txl:find("ends!",1,true) or txl:find("until",1,true)
+               or txl:find("starts in",1,true) or txl:find("weather",1,true) then
+                local vis = "?"; pcall(function() vis = tostring(gui.Visible) end)
+                print("[WW-GUI] "..tostring(gui:GetFullName()).." vis="..vis..' text="'..tx..'"')
             end
-        end
-        -- cek children
-        for _, c in ipairs(en:GetChildren()) do
-            local nm = tostring(c.Name):lower()
-            print("[WW-EN] "..tostring(c.Name).." ["..c.ClassName.."] = "..tostring(pcall(function() return c.Value end) and c.Value or "?"))
         end
     end
 
-    -- kandidat 2: WeatherClient / WeatherData di RS
-    for _, nm in ipairs({"WeatherData","WeatherClient","WeatherService","ActiveWeather","CurrentWeather","EventData","Events"}) do
-        local obj = RS:FindFirstChild(nm, true)
-        if obj then
-            print("[WW-RS] ketemu: "..tostring(obj:GetFullName()))
+    -- cek khusus ScreenGui yang namanya mengandung "whale"/"weather"/"event"
+    for _, sg in ipairs(pg:GetChildren()) do
+        local nm = tostring(sg.Name):lower()
+        if nm:find("whale",1,true) or nm:find("weather",1,true) or nm:find("event",1,true) then
+            local en = "?"; pcall(function() en = tostring(sg.Enabled) end)
+            print("[WW-GUI-SG] ScreenGui: "..tostring(sg.Name).." enabled="..en)
+            -- dump semua descendants dengan text
             pcall(function()
-                for _, c in ipairs(obj:GetDescendants()) do
-                    local cn = tostring(c.Name):lower()
-                    if cn:find("whale",1,true) or cn:find("time",1,true) or cn:find("timer",1,true)
-                       or cn:find("end",1,true) or cn:find("active",1,true) or cn:find("duration",1,true) then
-                        local val = ""
-                        pcall(function() val = tostring(c.Value) end)
-                        print("[WW-RS-child] "..tostring(c:GetFullName()).." ["..c.ClassName.."] = "..val)
+                for _, d in ipairs(sg:GetDescendants()) do
+                    local t = ""; pcall(function() t = tostring(d.Text) end)
+                    if #t > 0 then
+                        print("  > "..tostring(d.Name).." ["..d.ClassName..'] text="'..t..'"')
+                    end
+                end
+            end)
+        end
+    end
+end
+
+-- =====================================================
+-- BAGIAN 2: Scan Workspace.Interaction untuk WeatherTimer
+-- (pola dari AnubisWeatherTimer)
+-- =====================================================
+local function scanWSInteraction()
+    print("[WW-WS] === Scan Workspace.Interaction untuk WeatherTimer ===")
+    local interaction = WS:FindFirstChild("Interaction")
+    if not interaction then print("[WW-WS] Workspace.Interaction tidak ada"); return end
+
+    for _, child in ipairs(interaction:GetChildren()) do
+        local nm = tostring(child.Name):lower()
+        if nm:find("whale",1,true) or nm:find("water",1,true)
+           or nm:find("weather",1,true) or nm:find("timer",1,true) then
+            print("[WW-WS] ketemu: "..tostring(child.Name))
+            -- dump descendants untuk cari timer text
+            pcall(function()
+                for _, d in ipairs(child:GetDescendants()) do
+                    local t = ""; pcall(function() t = tostring(d.Text) end)
+                    if #t > 0 then
+                        print("  > "..tostring(d:GetFullName())..' text="'..t..'"')
+                    end
+                    -- cek atribut timer
+                    local ok, attrs = pcall(function() return d:GetAttributes() end)
+                    if ok then
+                        for k, v in pairs(attrs) do
+                            print("  > ATTR "..tostring(d.Name).."."..tostring(k).."="..tostring(v))
+                        end
                     end
                 end
             end)
         end
     end
 
-    -- kandidat 3: scan WS atribut
-    local ok2, wsAttrs = pcall(function() return WS:GetAttributes() end)
-    if ok2 then
-        for k, v in pairs(wsAttrs) do
-            local ks = tostring(k):lower()
-            if ks:find("whale",1,true) or ks:find("weather",1,true) or ks:find("event",1,true)
-               or ks:find("time",1,true) or ks:find("timer",1,true) then
-                print("[WW-WS-ATTR] WS."..tostring(k).." = "..tostring(v))
+    -- juga print semua child Interaction yang belum kita kenal
+    print("[WW-WS] Semua child Workspace.Interaction:")
+    for _, child in ipairs(interaction:GetChildren()) do
+        print("  - "..tostring(child.Name).." ["..tostring(child.ClassName).."]")
+    end
+end
+
+-- =====================================================
+-- BAGIAN 3: Cari BillboardGui berteks "Whale" / "Water"
+-- =====================================================
+local function scanBillboard()
+    print("[WW-BB] === Scan BillboardGui di Workspace ===")
+    for _, obj in ipairs(WS:GetDescendants()) do
+        if obj:IsA("BillboardGui") then
+            local tx = ""
+            pcall(function()
+                for _, c in ipairs(obj:GetDescendants()) do
+                    local t = ""; pcall(function() t = tostring(c.Text) end)
+                    if #t > 0 then tx = tx..t.." | " end
+                end
+            end)
+            local txl = tx:lower()
+            if txl:find("whale",1,true) or txl:find("water",1,true)
+               or txl:find("weather",1,true) or txl:find("until",1,true) then
+                print("[WW-BB] "..tostring(obj:GetFullName())..' text="'..tx..'"')
             end
         end
     end
-
-    -- kandidat 4: cek GUI player — badge "Whale Waters" biasanya ada di PlayerGui
-    local plr = game.Players.LocalPlayer
-    pcall(function()
-        for _, gui in ipairs(plr.PlayerGui:GetDescendants()) do
-            local nm = tostring(gui.Name):lower()
-            local tx = ""
-            pcall(function() tx = tostring(gui.Text):lower() end)
-            if (nm:find("whale",1,true) or nm:find("weather",1,true) or nm:find("event",1,true)
-                or tx:find("whale",1,true) or tx:find("2m",1,true)) then
-                local fullTx = ""
-                pcall(function() fullTx = tostring(gui.Text) end)
-                print("[WW-GUI] "..tostring(gui:GetFullName()).." text="..fullTx)
-            end
-        end
-    end)
 end
 
-print("[WW] === SCAN AWAL ===")
-getWWTimer()
+-- =====================================================
+-- BAGIAN 4: Scan Event_Notification di RS
+-- =====================================================
+local function scanRS()
+    print("[WW-RS] === Scan ReplicatedStorage Event_Notification ===")
+    local en = RS:FindFirstChild("Event_Notification")
+    if not en then print("[WW-RS] Event_Notification tidak ada"); return end
 
--- monitor loop — print tiap 5s kalau ada perubahan
-print("\n[WW] === MONITOR LOOP (tiap 5s) ===")
-local lastVal = ""
+    -- atribut
+    local ok, attrs = pcall(function() return en:GetAttributes() end)
+    if ok then
+        for k, v in pairs(attrs) do
+            print("[WW-RS-ATTR] "..tostring(k).."="..tostring(v))
+        end
+    end
+
+    -- children
+    for _, c in ipairs(en:GetChildren()) do
+        local val = ""; pcall(function() val = tostring(c.Value) end)
+        print("[WW-RS-CHILD] "..tostring(c.Name).." ["..c.ClassName.."] = "..val)
+    end
+end
+
+-- =====================================================
+-- RUN SCAN
+-- =====================================================
+print("=== DEBUG WHALE WATERS v2.0 @ "..os.date("%H:%M:%S").." ===")
+scanGuiCountdown()
+print("")
+scanWSInteraction()
+print("")
+scanBillboard()
+print("")
+scanRS()
+
+-- =====================================================
+-- MONITOR: Poll tiap 3s untuk perubahan countdown
+-- =====================================================
+print("\n[WW] === MONITOR LOOP (poll 3s) ===")
+print("[WW] Jalankan saat Whale Waters countdown aktif!")
+
+local function getCountdownText()
+    local result = {}
+    -- cek semua TextLabel di PlayerGui
+    local pg = plr:FindFirstChild("PlayerGui")
+    if not pg then return result end
+    for _, gui in ipairs(pg:GetDescendants()) do
+        local ok, tx = pcall(function() return tostring(gui.Text) end)
+        if ok and #tx > 0 and #tx < 120 then
+            local txl = tx:lower()
+            if txl:find("whale",1,true) or txl:find("water",1,true)
+               or (txl:find("until",1,true) and txl:find("end",1,true))
+               or txl:find("weather ends",1,true) then
+                table.insert(result, tostring(gui:GetFullName())..'="'..tx..'"')
+            end
+        end
+    end
+    -- cek Workspace.Interaction BillboardGui
+    local interaction = WS:FindFirstChild("Interaction")
+    if interaction then
+        for _, obj in ipairs(interaction:GetDescendants()) do
+            if obj:IsA("BillboardGui") then
+                for _, c in ipairs(obj:GetDescendants()) do
+                    local ok2, tx2 = pcall(function() return tostring(c.Text) end)
+                    if ok2 and #tx2 > 0 then
+                        local txl2 = tx2:lower()
+                        if txl2:find("whale",1,true) or txl2:find("water",1,true) then
+                            table.insert(result, tostring(obj:GetFullName())..'="'..tx2..'"')
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return result
+end
+
+local lastResults = {}
 task.spawn(function()
     while true do
-        task.wait(5)
-        -- cek Event_String berubah
-        local cur = ""
-        pcall(function()
-            local en = RS:FindFirstChild("Event_Notification")
-            if en then
-                local es = en:FindFirstChild("Event_String")
-                if es then cur = tostring(es.Value) end
+        task.wait(3)
+        local cur = getCountdownText()
+        -- bandingkan
+        local curStr = table.concat(cur, " | ")
+        local lastStr = table.concat(lastResults, " | ")
+        if curStr ~= lastStr then
+            if #cur > 0 then
+                print("[WW-TICK @ "..os.date("%H:%M:%S").."] "..curStr)
             end
-        end)
-        if cur ~= lastVal then
-            print("[WW-CHANGE] Event_String: '"..lastVal.."' -> '"..cur.."'")
-            lastVal = cur
+            lastResults = cur
         end
-
-        -- cek _G._wwAktif
-        local aktif = _G._wwAktif == true
-        local flag  = _G._wwActiveFlag == true
-        print("[WW-STATUS] aktif="..tostring(aktif).." flag="..tostring(flag).." Event_String='"..cur.."'")
     end
 end)
 
 -- ChildAdded WS — tangkap kapan Whale/WeatherVisuals spawn
 WS.ChildAdded:Connect(function(c)
     local nm = tostring(c.Name):lower()
-    if nm:find("whale",1,true) or nm:find("weather",1,true) or nm:find("kelp",1,true) or nm:find("clam",1,true) then
-        print("[WW-SPAWN] ChildAdded WS: "..tostring(c.Name).." @ "..os.date("%H:%M:%S"))
-        -- dump atribut object ini
+    if nm:find("whale",1,true) or nm:find("water",1,true) or nm:find("weather",1,true)
+       or nm:find("kelp",1,true) or nm:find("clam",1,true) then
+        print("[WW-SPAWN @ "..os.date("%H:%M:%S").."] ChildAdded WS: "..tostring(c.Name))
         pcall(function()
             for k, v in pairs(c:GetAttributes()) do
-                print("[WW-SPAWN-ATTR] "..tostring(c.Name).."."..tostring(k).." = "..tostring(v))
+                print("  ATTR "..tostring(k).."="..tostring(v))
             end
             for _, ch in ipairs(c:GetChildren()) do
                 local val = ""; pcall(function() val = tostring(ch.Value) end)
-                print("[WW-SPAWN-CHILD] "..tostring(ch.Name).." ["..ch.ClassName.."] = "..val)
+                print("  CHILD "..tostring(ch.Name).." ["..ch.ClassName.."] = "..val)
+            end
+        end)
+        -- dump descendants TextLabel
+        pcall(function()
+            for _, d in ipairs(c:GetDescendants()) do
+                if d:IsA("TextLabel") or d:IsA("TextBox") then
+                    local t = ""; pcall(function() t = tostring(d.Text) end)
+                    if #t > 0 then print("  TEXT "..tostring(d.Name)..'="'..t..'"') end
+                end
             end
         end)
     end
 end)
 
-WS.ChildRemoved:Connect(function(c)
-    local nm = tostring(c.Name):lower()
-    if nm:find("whale",1,true) or nm:find("weather",1,true) then
-        print("[WW-REMOVED] ChildRemoved WS: "..tostring(c.Name).." @ "..os.date("%H:%M:%S"))
-    end
-end)
+-- listener ScreenGui baru di PlayerGui (kalau ada WhaleWatersUI yang muncul)
+local pg2 = plr:FindFirstChild("PlayerGui")
+if pg2 then
+    pg2.ChildAdded:Connect(function(c)
+        local nm = tostring(c.Name):lower()
+        if nm:find("whale",1,true) or nm:find("water",1,true) or nm:find("weather",1,true) then
+            print("[WW-GUI-NEW @ "..os.date("%H:%M:%S").."] ScreenGui baru: "..tostring(c.Name))
+            pcall(function()
+                for _, d in ipairs(c:GetDescendants()) do
+                    local t = ""; pcall(function() t = tostring(d.Text) end)
+                    if #t > 0 then print("  "..tostring(d.Name)..'="'..t..'"') end
+                end
+            end)
+        end
+    end)
+end
 
-print("[WW] listener aktif — tunggu event Whale Waters...")
+print("[WW] listener aktif. Jalankan saat Whale Waters countdown keliatan di layar!")
+print("[WW] Countdown akan muncul di output setiap 3 detik kalau ketemu.")
