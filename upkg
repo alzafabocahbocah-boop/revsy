@@ -1101,10 +1101,20 @@ do
         { nama = "Mimic Octopus",   cari = { "mimic" },              jml = 4 },
         { nama = "Peacock",         cari = { "peacock" },            jml = 1 },
     }
+    -- v2.132: SESI 1 saat Whale Waters aktif (_G._wwAktif) — 7 support + 1 bahan
+    local SUPPORT_S1_WHALE = {
+        { nama = "Blue Whale",          cari = { "blue", "whale" },      jml = 1 },
+        { nama = "Dilop",               cari = { "dilo" },               jml = 1 },
+        { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" },  jml = 2 },
+        { nama = "Lion",                cari = { "lion" },               jml = 1 },
+        { nama = "Peacock",             cari = { "peacock" },            jml = 1 },
+        { nama = "Eyeball Monster",     cari = { "eyeball" },            jml = 1 },
+    }
     local AGE_TARGET = 50     -- sesi 1: bahan sampe age ini
     local AGE_DROP   = 30     -- sesi 2: KG-up kelar kalau age turun <= ini
     local BAHAN_S1   = 2
     local BAHAN_S2   = 1
+    local BAHAN_S1_WHALE = 1  -- saat WW aktif, 7 support jadi cuma 1 bahan
     -- cocok kalau pet type mengandung SEMUA kata di cari
     local function cocokSemua(ptype, kws)
         ptype = tostring(ptype):lower()
@@ -1122,9 +1132,21 @@ do
     local function kgLog(s) if _G.ZenxKgLog then _G.ZenxKgLog(s) end print("[UpKg] "..s) end
     local function jml(t) local n = 0; for _ in pairs(t) do n = n + 1 end return n end
 
+    -- v2.132: helper pilih SUP S1 — kalau WW aktif pakai SUPPORT_S1_WHALE
+    local function getSupS1()
+        if _G._wwAktif == true then return SUPPORT_S1_WHALE end
+        if _G.ZenxKgConfig == "Tim Dilop"   then return SUPPORT_S1_DILOP   end
+        if _G.ZenxKgConfig == "Tim Peacock" then return SUPPORT_S1_PEACOCK end
+        return SUPPORT_S1
+    end
+    local function getMaxBS1()
+        return (_G._wwAktif == true) and BAHAN_S1_WHALE or
+               ((_G.ZenxKgConfig == "Tim Dilop" or _G.ZenxKgConfig == "Tim Peacock") and 3 or BAHAN_S1)
+    end
+
     -- pilih support (PALING GEDE per tipe, kunci) — tim sesuai SESI
     local function pilihSupport(sesi)
-        local SUP = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S1_PEACOCK or SUPPORT_S1))
+        local SUP = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or getSupS1()
         local pets = listPetsEngine()
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local ada = {}
@@ -1144,7 +1166,7 @@ do
     local function pilihBahan(sesi)
         local target = _G.ZenxKgUpTipe
         if type(target) ~= "table" or not next(target) then return end
-        local maxB = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or (((_G.ZenxKgConfig == "Tim Dilop") or (_G.ZenxKgConfig == "Tim Peacock")) and 3 or BAHAN_S1)
+        local maxB = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or getMaxBS1()
         local pets = listPetsEngine()
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local n = jml(bahanAktif)
@@ -1170,10 +1192,10 @@ do
     -- v0.94: VERIFIKASI PLACEMENT -- support 1 tipe > config ATAU bahan > max ATAU ada pet EXTRA
     -- ke-equip (tipe support tapi gak di-track) -> placement SALAH -> redo sesi (out semua, masukin lagi).
     local function getSUP(sesi)
-        return (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S1_PEACOCK or SUPPORT_S1))
+        return (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or getSupS1()
     end
     local function getMaxB(sesi)
-        return (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or (((_G.ZenxKgConfig == "Tim Dilop") or (_G.ZenxKgConfig == "Tim Peacock")) and 3 or BAHAN_S1)
+        return (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or getMaxBS1()
     end
     local function tipeDariUuid(uuid)
         local c = _kgContainer
@@ -1333,7 +1355,7 @@ do
         pilihSupport(sesi)
         pilihBahan(sesi)
         equipSemua()
-        local SUP = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S1_PEACOCK or SUPPORT_S1))
+        local SUP = getSUP(sesi)
         local perT = {}
         for _, nm in pairs(supportKunci) do perT[nm] = (perT[nm] or 0) + 1 end
         local ss = ""; for _, sup in ipairs(SUP) do ss = ss..sup.nama.."="..(perT[sup.nama] or 0).."/"..sup.jml.." " end
@@ -1493,7 +1515,7 @@ do
                         end
                     end
                     -- isi ulang bahan
-                    local maxB = (KG.sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or (((_G.ZenxKgConfig == "Tim Dilop") or (_G.ZenxKgConfig == "Tim Peacock")) and 3 or BAHAN_S1)
+                    local maxB = getMaxB(KG.sesi)
                     if jml(bahanAktif) < maxB then
                         pilihBahan(KG.sesi)
                         for u in pairs(bahanAktif) do
