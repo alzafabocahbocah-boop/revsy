@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.181"
+local VERSION = "up38kg-v2.182"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -3075,6 +3075,63 @@ do
                         end
                     end
                     if healed > 0 then kgLog("HEAL: " .. healed .. " pet model ilang -> paksa re-equip") end
+                end
+            end
+        end)
+        -- v2.182: WW WHALE SWAP — WW aktif -> whale out, bahan masuk. Balik setelah 15s.
+        task.spawn(function()
+            local _wwSwapActive = false   -- true = whale lagi di-swap keluar
+            local _wwSwapTick = 0         -- kapan WW pertama terdeteksi (untuk 15s timer)
+            local _wwWhaleUuid = nil      -- uuid whale yg lagi di-swap keluar
+            local _wwBahanUuid = nil      -- uuid bahan ekstra yg masuk saat WW
+            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
+                task.wait(1)
+                if not KG.aktif or KG.reset then continue end
+                local wwOn = _G._wwAktif == true
+                local now = tick()
+                if wwOn and not _wwSwapActive then
+                    -- WW baru aktif — cari whale di supportKunci
+                    local wUuid = nil
+                    for u, nm in pairs(supportKunci) do
+                        if tostring(nm):lower():find("whale", 1, true) then wUuid = u; break end
+                    end
+                    if wUuid then
+                        _wwSwapActive = true
+                        _wwSwapTick = now
+                        _wwWhaleUuid = wUuid
+                        -- keluarkan whale
+                        supportKunci[wUuid] = nil
+                        pcall(function() unequipPet(wUuid) end)
+                        kgLog("[WW-SWAP] WW aktif → whale out, cari bahan ekstra")
+                        -- masukkan 1 bahan ekstra
+                        task.wait(0.5)
+                        local pets = listPetsEngine()
+                        local target = _G.ZenxKgUpTipe
+                        for _, p in ipairs(pets) do
+                            if not supportKunci[p.uuid] and not bahanAktif[p.uuid]
+                               and (not target or not next(target) or target[p.tipe]) then
+                                bahanAktif[p.uuid] = p.tipe
+                                pcall(function() equipPet(p.uuid, CLUSTER) end)
+                                _wwBahanUuid = p.uuid
+                                kgLog("[WW-SWAP] bahan ekstra: " .. tostring(p.tipe))
+                                break
+                            end
+                        end
+                    end
+                elseif _wwSwapActive and (now - _wwSwapTick) >= 15 then
+                    -- 15s lewat → kembalikan whale, copot bahan ekstra
+                    _wwSwapActive = false
+                    kgLog("[WW-SWAP] 15s habis → whale balik")
+                    if _wwBahanUuid then
+                        bahanAktif[_wwBahanUuid] = nil
+                        pcall(function() unequipPet(_wwBahanUuid) end)
+                        _wwBahanUuid = nil
+                    end
+                    if _wwWhaleUuid then
+                        supportKunci[_wwWhaleUuid] = "Blue Whale"
+                        pcall(function() equipPet(_wwWhaleUuid, CLUSTER) end)
+                        _wwWhaleUuid = nil
+                    end
                 end
             end
         end)
