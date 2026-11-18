@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.159 | sesi1+Whale: Whale+Peacock+Lion+RainbowDilop+2Gilded                   ║
+-- ║  UP KG — v2.160 | sesi1+Whale: Whale+Peacock+Lion+RainbowDilop+2Gilded                   ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.159"
+local VERSION = "up38kg-v2.160"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -6848,24 +6848,39 @@ do
     -- kumpulkan pet 3.8kg+ di backpack/tangan (bukan support, bukan fav)
     local function getPet38()
         local out = {}
-        local bp   = plr:FindFirstChild("Backpack")
-        local char = plr.Character
         local supAll = _G.ZenxSupportUuids or {}
         local sk     = _G.ZenxSupportKunci or {}
         local pr     = _G.__ZenxSupProtect or {}
-        local scan = {}
-        if bp   then for _, t in ipairs(bp:GetChildren())   do if t:IsA("Tool") then scan[#scan+1] = t end end end
-        if char then for _, t in ipairs(char:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end end
-        for _, t in ipairs(scan) do
-            pcall(function()
-                local uuid = tostring(t:GetAttribute("PET_UUID") or "")
-                if uuid == "" then return end
-                local fu = fmtU38(uuid)
-                if supAll[uuid] or supAll[fu] or sk[uuid] or sk[fu] or pr[uuid] or pr[fu] then return end
-                if t:GetAttribute("d") == true then return end   -- fav -> skip
-                local bw = tonumber(t:GetAttribute("BaseWeight") or t:GetAttribute("bw") or 0) or 0
-                if bw >= 3.8 then out[#out+1] = { tool = t, uuid = uuid, bw = bw } end
-            end)
+        -- baca dari _kgContainer (RC data, sama kayak panel atas kanan) — lebih akurat dari backpack scan
+        local container = _kgContainer
+        if container then
+            for cuuid, entry in pairs(container) do
+                pcall(function()
+                    if type(entry) ~= "table" or not entry.PetType or type(entry.PetData) ~= "table" then return end
+                    local uuid = tostring(cuuid)
+                    local fu = fmtU38(uuid)
+                    if supAll[uuid] or supAll[fu] or sk[uuid] or sk[fu] or pr[uuid] or pr[fu] then return end
+                    -- cek fav dari backpack tool
+                    local bw = tonumber(entry.PetData.BaseWeight) or 0
+                    if bw < 3.8 then return end
+                    -- cari tool di backpack/char buat trade (kalau ada)
+                    local tool = nil
+                    local bp = plr:FindFirstChild("Backpack")
+                    local char = plr.Character
+                    local scanT = {}
+                    if bp   then for _, t in ipairs(bp:GetChildren())   do if t:IsA("Tool") then scanT[#scanT+1] = t end end end
+                    if char then for _, t in ipairs(char:GetChildren()) do if t:IsA("Tool") then scanT[#scanT+1] = t end end end
+                    for _, t in ipairs(scanT) do
+                        local tu = tostring(t:GetAttribute("PET_UUID") or "")
+                        if tu == uuid or fmtU38(tu) == fu then
+                            if t:GetAttribute("d") == true then return end  -- fav -> skip
+                            tool = t; break
+                        end
+                    end
+                    if not tool then return end  -- tidak di backpack = tidak bisa di-trade
+                    out[#out+1] = { tool = tool, uuid = uuid, bw = bw }
+                end)
+            end
         end
         table.sort(out, function(a,b) return (a.bw or 0) > (b.bw or 0) end)
         return out
