@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.194 | WW-SWAP skip sesi 2 (whale tetap, gak nambah bahan)                       ║
+-- ║  UP KG — v2.195 | WW-SWAP sesi 2: whale copot tapi gak tambah bahan                         ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.194"
+local VERSION = "up38kg-v2.195"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -3121,8 +3121,8 @@ do
                 local wwOn = _G._wwAktif == true
                 local sisa = wwOn and getWwSisa() or 0
                 local curTim = _G._cocoLineupTim or 1
-                -- whale OUT kalau WW aktif dan cd di range 15s-180s (3 menit), skip kalau Tim 3 atau sesi 2
-                local shouldSwapOut = wwOn and sisa >= 15 and sisa <= 180 and curTim ~= 3 and KG.sesi ~= 2
+                -- whale OUT kalau WW aktif dan cd di range 15s-180s (3 menit), skip kalau Tim 3
+                local shouldSwapOut = wwOn and sisa >= 15 and sisa <= 180 and curTim ~= 3
                 if shouldSwapOut and not _wwSwapActive then
                     -- masuk range → whale out, bahan ekstra in
                     local wUuid = nil
@@ -3136,23 +3136,26 @@ do
                         -- v2.190: exclude whale dari isiKurang check selama WW-SWAP aktif
                         _G._wwSwapExclude = {["Blue Whale"] = true}
                         pcall(function() unequipPet(wUuid) end)
-                        kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out, tambah bahan ke-2")
-                        -- v2.193: whale keluar = slot kosong → tambah bahan ke-2 (jadi 2 bahan total)
-                        -- naikkan limit sementara supaya TRIM gak copot bahan ke-2
-                        _G._wwBahanMax = 2
-                        task.wait(0.5)
-                        local pets = listPetsEngine()
-                        local target = _G.ZenxKgUpTipe
-                        for _, p in ipairs(pets) do
-                            if not supportKunci[p.uuid] and not bahanAktif[p.uuid]
-                               and (not target or not next(target) or target[p.tipe])
-                               and p.kgBase < (3.8 - 0.005) and p.age < AGE_TARGET then
-                                bahanAktif[p.uuid] = p.tipe
-                                pcall(function() equipPet(p.uuid, CLUSTER) end)
-                                _wwBahanUuid = p.uuid
-                                kgLog("[WW-SWAP] bahan ke-2: " .. tostring(p.tipe))
-                                break
+                        -- v2.195: sesi 1 → tambah bahan ke-2; sesi 2 → copot whale doang
+                        if KG.sesi == 1 then
+                            kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out, tambah bahan ke-2")
+                            _G._wwBahanMax = 2  -- v2.193: naikkan limit supaya TRIM gak copot
+                            task.wait(0.5)
+                            local pets = listPetsEngine()
+                            local target = _G.ZenxKgUpTipe
+                            for _, p in ipairs(pets) do
+                                if not supportKunci[p.uuid] and not bahanAktif[p.uuid]
+                                   and (not target or not next(target) or target[p.tipe])
+                                   and p.kgBase < (3.8 - 0.005) and p.age < AGE_TARGET then
+                                    bahanAktif[p.uuid] = p.tipe
+                                    pcall(function() equipPet(p.uuid, CLUSTER) end)
+                                    _wwBahanUuid = p.uuid
+                                    kgLog("[WW-SWAP] bahan ke-2: " .. tostring(p.tipe))
+                                    break
+                                end
                             end
+                        else
+                            kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out (sesi 2, gak tambah bahan)")
                         end
                     end
                 elseif _wwSwapActive and not shouldSwapOut then
