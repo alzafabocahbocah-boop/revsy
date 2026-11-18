@@ -2878,26 +2878,9 @@ do
         local resetGen = _G.__ZenxKgResetGen
         -- REFRESH cooldown cache periodik (2s, BACKGROUND) — biar petReady selalu dari cache (non-block).
         -- Ini yg bikin swap TETEP gacor (gak makin lambat): cache gak pernah basi -> gak ada InvokeServer di hot-loop.
-        task.spawn(function()
-            local ge2 = RS:FindFirstChild("GameEvents")
-            local req2 = ge2 and ge2:FindFirstChild("RequestPetCooldowns")
-            local lastInvoke = 0
-            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
-                if req2 then pcall(function() req2:FireServer() end) end   -- SERING (0.5s, cheap/non-block) = cache fresh, readiness cepet = GACOR
-                if getCooldownRF and (tick() - lastInvoke) >= 2 then       -- InvokeServer fallback JARANG (2s) buat pet yg cache masih basi
-                    lastInvoke = tick()
-                    for u in pairs(supportKunci) do
-                        local key = tostring(u):gsub("[{}]", "")
-                        local e = cdEventCache[key]
-                        if not (e and tick() - e.at <= 8) then
-                            local ok, res = pcall(function() return getCooldownRF:InvokeServer(fmtUUID(u)) end)
-                            if ok then cdEventCache[key] = { ready = (readyDariData(res) == true), at = tick() } end
-                        end
-                    end
-                end
-                task.wait(0.5)
-            end
-        end)
+        -- v2.127: loop RequestPetCooldowns dimatiin — server udah fire PetCooldownsUpdated tiap ~1s otomatis
+        -- swap anim pakai DS event langsung, gak perlu spam FireServer tiap 0.5s
+        -- task.spawn(function() ... end)
         -- v2.24: animStr swap dipindah ke luar kgStart — jalan terus walau upkg di-stop
         -- v1.66: CD WATCHDOG support — tiap 2s scan supportKunci, kalau cdEventCache nil/stale >1.5s → pickup
         task.spawn(function()
