@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.188 | Tim 3: getSUP/getMaxB/pasangSesi pakai S3 lineup, bahan=0            ║
+-- ║  UP KG — v2.189 | fix COCO scope (setLineupTim via _G), filter ActivePetsService noise  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -10,8 +10,16 @@ local VERSION = "up38kg-v2.187"
 do
     -- task table Roblox = readonly, tidak bisa override task.spawn/task.defer
     -- pakai ScriptContext.Error + LogService.MessageOut
+    -- v2.189: filter error dari Roblox internals (ActivePetsService, dll) — bukan bug script kita
+    local function isNoiseError(msg)
+        local s = tostring(msg)
+        if s:find("ActivePetsService", 1, true) then return true end
+        if s:find("attempt to index nil with 'Anchored'", 1, true) then return true end
+        return false
+    end
     local ok1 = pcall(function()
         game:GetService("ScriptContext").Error:Connect(function(msg, trace)
+            if isNoiseError(msg) then return end
             warn("━━━━━━━━━━━━━━━━━━━━━━━━━━")
             warn("[UP3.8KG ❌ ERROR] " .. tostring(msg))
             warn("TRACE: " .. tostring(trace))
@@ -21,6 +29,7 @@ do
     local ok2 = pcall(function()
         game:GetService("LogService").MessageOut:Connect(function(msg, msgType)
             if msgType == Enum.MessageType.MessageError then
+                if isNoiseError(msg) then return end
                 warn("━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 warn("[UP3.8KG ❌ LOG ERROR] " .. tostring(msg))
                 warn("━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -1079,12 +1088,14 @@ do
                     print("[COCO-DBG] whale="..tostring(adaW).." buah="..buahBesar.." tim="..tostring(curTim))
                     if not adaW then return end
                     -- v2.180: b=0 → langsung Tim 3 walau sesi 1/2 masih jalan
+                    -- v2.189: pakai _G._setLineupTim (setLineupTim ada di UI scope, COCO loop di kgStart scope)
+                    local doSwitch = _G._setLineupTim or function() end
                     if buahBesar == 0 and curTim ~= 3 then
                         print("[COCO] buah 75kg+ = 0 → auto switch Tim 3")
-                        setLineupTim(3)
+                        doSwitch(3)
                     elseif buahBesar >= 300 and curTim == 3 then
                         print("[COCO] buah 75kg+ >= 300 → auto switch Tim 1")
-                        setLineupTim(1)
+                        doSwitch(1)
                     end
                 end)
             end
@@ -4317,6 +4328,8 @@ local function setLineupTim(t)
     tim3Btn.BackgroundColor3 = (t==3) and C.accent or C.input; tim3Btn.TextColor3 = (t==3) and Color3.fromRGB(0,0,0) or C.textDim
     renderLineup()
 end
+-- v2.189: expose via _G supaya COCO loop (scope berbeda, dalam kgStart) bisa panggil
+_G._setLineupTim = setLineupTim
 tim1Btn.MouseButton1Click:Connect(function() setLineupTim(1) end)
 tim2Btn.MouseButton1Click:Connect(function() setLineupTim(2) end)
 tim3Btn.MouseButton1Click:Connect(function() setLineupTim(3) end)
