@@ -1140,24 +1140,55 @@ do
     local function kgLog(s) if _G.ZenxKgLog then _G.ZenxKgLog(s) end print("[UpKg] "..s) end
     local function jml(t) local n = 0; for _ in pairs(t) do n = n + 1 end return n end
 
-    -- v2.132: helper pilih SUP sesuai sesi + WW state
+    -- v2.132: flag cek Whale SEKALI pas kgStart — tidak berubah selama sesi
+    local _adaWhale = false
+    local function cekWhaleAwal()
+        local plr = game:GetService("Players").LocalPlayer
+        if not plr then return false end
+        -- cek backpack
+        local bp = plr:FindFirstChild("Backpack")
+        if bp then
+            for _, item in ipairs(bp:GetChildren()) do
+                if tostring(item.Name):lower():find("whale",1,true) then return true end
+            end
+        end
+        -- cek character (di-equip)
+        if plr.Character then
+            for _, item in ipairs(plr.Character:GetChildren()) do
+                if tostring(item.Name):lower():find("whale",1,true) then return true end
+            end
+        end
+        -- cek support upkg (dari sesi sebelumnya, whale sudah di-equip ke cluster)
+        for _, nm in pairs(supportKunci) do
+            if tostring(nm):lower():find("whale",1,true) then return true end
+        end
+        -- cek _kgContainer (memory container)
+        if _kgContainer then
+            for _, p in pairs(_kgContainer) do
+                if type(p) == "table" and tostring(p.PetType or ""):lower():find("whale",1,true) then return true end
+            end
+        end
+        return false
+    end
+
+    -- v2.132: helper pilih SUP sesuai sesi + flag _adaWhale (di-set sekali pas kgStart)
     local function getSupS1()
-        if _G._wwAktif == true then return SUPPORT_S1_WHALE end
+        if _adaWhale then return SUPPORT_S1_WHALE end
         if _G.ZenxKgConfig == "Tim Dilop"   then return SUPPORT_S1_DILOP   end
         if _G.ZenxKgConfig == "Tim Peacock" then return SUPPORT_S1_PEACOCK end
         return SUPPORT_S1
     end
     local function getSupS2()
-        if _G._wwAktif == true then return SUPPORT_S2_WHALE end
+        if _adaWhale then return SUPPORT_S2_WHALE end
         if _G.ZenxKgConfig == "Tim Peacock" then return SUPPORT_S2_PEACOCK end
         return SUPPORT_S2
     end
     local function getMaxBS1()
-        return (_G._wwAktif == true) and BAHAN_S1_WHALE or
+        return _adaWhale and BAHAN_S1_WHALE or
                ((_G.ZenxKgConfig == "Tim Dilop" or _G.ZenxKgConfig == "Tim Peacock") and 3 or BAHAN_S1)
     end
     local function getMaxBS2()
-        return (_G._wwAktif == true) and BAHAN_S2_WHALE or
+        return _adaWhale and BAHAN_S2_WHALE or
                ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2)
     end
 
@@ -1404,6 +1435,9 @@ do
         KG.pickup = 0.25   -- jeda setelah ready sebelum copot (kecil = pickup responsif). spider gak di-swap jadi gak perlu special.
         CLUSTER = farmCenter()   -- v0.73: BALIKIN buat swap (equip ke tengah pas swap = gacor, nentuin posisi). HOLD-loop yg dimatiin (biar gak ditahan terus pas gak swap).
         supportKunci = {}; bahanAktif = {}
+        -- v2.132: cek Whale SEKALI di awal — lineup Whale aktif kalau ada, tidak berubah selama sesi
+        _adaWhale = cekWhaleAwal()
+        kgLog("cekWhale awal: "..((_adaWhale) and "ADA -> lineup Whale" or "tidak ada -> lineup normal"))
         kgLog("START ("..tostring(config)..") pickup="..KG.pickup.."s center="..(CLUSTER and "ada" or "NIL"))
         -- (RESET 3-menit DIHAPUS — HEALER 1s udah jaga visual, gak perlu refresh berkala)
         KG.reset = false
