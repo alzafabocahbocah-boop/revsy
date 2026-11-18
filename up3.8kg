@@ -5025,36 +5025,7 @@ do
         local LVLMAX_URL = "https://dry-glitter-63e4.petagee5.workers.dev/lvlmax"   -- akun leveling (sama kayak up6kg)
         local BAHAN_URL = "https://dry-glitter-63e4.petagee5.workers.dev/up6kg-bahan"   -- v10.94: bahan global, di-fetch barengan
         local _LVLMAX_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"  -- v10.96: kunci buat /lvlmax-tim (HttpGet gak bisa set header)
-        -- v1.49: CACHE LOKAL per-akun (mirror fix up6kg v10.127) -- fallback kalau panel lagi mati
-        local LVLMAX_CACHE_FILE = "zenx_lvlmax_cache38_" .. tostring((game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.Name) or "x") .. ".json"
-        -- v2.126: load cache lvlmax-tim lokal (JSON format) buat fallback awal sebelum fetch panel
-        do
-            pcall(function()
-                if isfile and isfile(LVLMAX_CACHE_FILE) then
-                    local raw = readfile(LVLMAX_CACHE_FILE)
-                    local ok2, decoded = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
-                    if not ok2 or type(decoded) ~= "table" or type(decoded.leveling) ~= "table" then
-                        -- format lama (string /lvlmax) atau invalid -> hapus cache, jangan dipakai
-                        pcall(function() if delfile then delfile(LVLMAX_CACHE_FILE) end end)
-                        pcall(function() if removefile then removefile(LVLMAX_CACHE_FILE) end end)
-                        print("[up38kg] cache lvlmax lama (format string) dihapus")
-                        return
-                    end
-                    local m, mc = {}, {}
-                    for _, tim in ipairs(decoded.leveling) do
-                        if type(tim.akun) == "table" then
-                            for _, nm in ipairs(tim.akun) do
-                                if type(nm) == "string" and nm ~= "" then
-                                    m[nm] = 200
-                                    mc[nm] = tonumber(tim.age500) or 0
-                                end
-                            end
-                        end
-                    end
-                    if next(m) then _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; print("[up38kg] load cache lvlmax-tim lokal (fallback awal, sblm fetch panel)") end
-                end
-            end)
-        end
+        -- v2.145: hapus cache lokal — langsung fetch /lvlmax-tim tiap loop, gak pakai file
         task.spawn(function()
             local haveLvl = false   -- v10.60: pas awal execute, retry cepet (10s) sampe dapet; abis dapet -> 30s
             local LVLMAX_TIM_URL = LVLMAX_URL:gsub("/lvlmax$", "/lvlmax-tim")  -- v10.95: baca per-tim (merge dari semua panel)
@@ -5097,7 +5068,6 @@ do
                             if next(m) then
                                 _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; haveLvl = true
                                 print("[up38kg] load lvlmax dari /lvlmax-tim: "..tostring(#(decoded.leveling or {})).." tim")
-                                pcall(function() if writefile then writefile(LVLMAX_CACHE_FILE, rawTim) end end)  -- v2.126: simpan cache JSON /lvlmax-tim
                             else
                                 print("[up38kg] /lvlmax-tim leveling ada tapi akun semua kosong, jumlah tim: "..tostring(#decoded.leveling))
                             end
