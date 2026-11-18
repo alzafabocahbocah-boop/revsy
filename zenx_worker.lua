@@ -6849,14 +6849,14 @@ local function run(cfg)
             end
         end
 
-        -- v9.700: drop_caches berkala tiap 30 menit — bebaskan page cache Termux/Android biar RAM gak ngumpet
+        -- v9.703: am kill-all berkala tiap 30 menit — kill proses background Android biar RAM bebas
         if (now - lastDropCache) >= 1800 then
             lastDropCache = now
-            sh_silent("su -c 'sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null'")
+            sh_silent("su -c 'am kill-all 2>/dev/null'")
             local mi = sh("cat /proc/meminfo 2>/dev/null") or ""
             local avail = tonumber(mi:match("MemAvailable:%s+(%d+)")) or 0
             local mb = math.floor(avail / 1024)
-            info(("[auto-dropcache] drop_caches selesai — RAM tersedia: %d MB"):format(mb))
+            info(("[auto-killbg] am kill-all selesai — RAM tersedia: %d MB"):format(mb))
         end
 
         if false and mati and (now - lastCookieStandby) >= 300 then
