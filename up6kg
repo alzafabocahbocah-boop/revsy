@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.286 (swap anim engine port dari up3.8kg — queue+ssLog+isMyPetUUID)  ║
+-- ║  UP KG — v10.287 (swap anim engine port dari up3.8kg — queue+ssLog+isMyPetUUID)  ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -2148,32 +2148,53 @@ do
             end
         end
 
-        -- deepFind: kumpul hits dari DS event
-        local function deepFind(t, depth, out)
-            depth = depth or 0; out = out or {}
-            if depth > 12 or type(t) ~= "table" then return out end
-            for _, v in pairs(t) do
+        -- v10.287: flat parser (port dari up3.8kg) — ganti deepFind rekursif depth 12
+        -- Format entry DS ActivePets: {v[1]=path, v[2]=value}
+        local function parseDS(data)
+            local hits = {}
+            for _, v in pairs(data) do
                 if type(v) == "table" then
-                    local v1 = tostring(v[1] or "")
-                    if v1:find("CustomAnimationState",1,true) then
-                        if v[2] ~= nil then
-                            local uuid = v1:match("{([^}]+)}") or v1:match("/([^/]+)/CustomAnimationState") or "?"
-                            local raw = uuid:gsub("[{}]","")
-                            out[#out+1] = {raw, tostring(v[2]), "F1"}
+                    local path = tostring(v[1] or "")
+                    local val  = v[2]
+                    -- F1: path langsung berisi CustomAnimationState
+                    if path:find("CustomAnimationState",1,true) and val ~= nil then
+                        local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)/")
+                        if uuid then
+                            hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(val), "F1"}
                         end
-                    else
-                        deepFind(v, depth+1, out)
+                    elseif path:find("ActivePetStates",1,true) and type(val)=="table" then
+                        local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)$") or path:match("ActivePetStates/([^/]+)/")
+                        if uuid then
+                            uuid = uuid:gsub("[{}]","")
+                            -- F2: val = {CustomAnimationState=animStr,...}
+                            local animStr = val.CustomAnimationState or val.AnimationState or val.animationState
+                            if animStr then hits[#hits+1] = {uuid, tostring(animStr), "F2"} end
+                            -- F3: val = {Arguments={CustomAnimationState=animStr,...},...}
+                            if not animStr and type(val.Arguments)=="table" then
+                                animStr = val.Arguments.CustomAnimationState or val.Arguments.AnimationState or val.Arguments.animationState
+                                if animStr then hits[#hits+1] = {uuid, tostring(animStr), "F3"} end
+                            end
+                            -- F4: val = {PetAction={...}}
+                            if not animStr and type(val.PetAction)=="table" then
+                                local pa = val.PetAction
+                                animStr = pa.CustomAnimationState or pa.AnimationState
+                                if not animStr and type(pa.Arguments)=="table" then
+                                    animStr = pa.Arguments.CustomAnimationState or pa.Arguments.AnimationState
+                                end
+                                if animStr then hits[#hits+1] = {uuid, tostring(animStr), "F4"} end
+                            end
+                        end
                     end
                 end
             end
-            return out
+            return hits
         end
 
         ssLog("DS listener ON")
         ds.OnClientEvent:Connect(function(_, service, data)
             if not tostring(service):find("ActivePets", 1, true) then return end
             if type(data) ~= "table" then return end
-            local hits = deepFind(data)
+            local hits = parseDS(data)
             if #hits > 0 then
                 processHits(hits)
             end
