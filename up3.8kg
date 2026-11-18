@@ -3256,29 +3256,32 @@ do
                 end
             end
 
-            local swapQueue = {}
-            local swapWorkerRunning = false
+            -- v2.127: per-uuid queue — tiap UUID punya worker sendiri, tidak saling nunggu
+            local swapQueues = {}       -- [uuid] = {job, job, ...}
+            local swapWorkers = {}      -- [uuid] = true kalau worker lagi jalan
             local swapJobN = 0
-            local function swapWorkerStart()
-                if swapWorkerRunning then
-                    ssLog("[WRK] skip: worker masih jalan, queue="..#swapQueue)
+            local function swapWorkerStart(uuid)
+                if swapWorkers[uuid] then
+                    ssLog("[WRK] skip: worker "..uuid:sub(1,8).." masih jalan, queue="..#(swapQueues[uuid] or {}))
                     return
                 end
-                swapWorkerRunning = true
-                ssLog("[WRK] spawn worker, queue="..#swapQueue)
+                swapWorkers[uuid] = true
+                local q = swapQueues[uuid]
+                ssLog("[WRK] spawn worker "..uuid:sub(1,8)..", queue="..#q)
                 task.spawn(function()
                     local drained = 0
                     while true do
-                        local job = table.remove(swapQueue, 1)
+                        local job = table.remove(q, 1)
                         if not job then
-                            ssLog("[WRK] queue kosong setelah drain "..drained.." job, stop")
-                            swapWorkerRunning = false
+                            ssLog("[WRK] "..uuid:sub(1,8).." queue kosong setelah drain "..drained.." job, stop")
+                            swapWorkers[uuid] = nil
+                            swapQueues[uuid] = nil
                             break
                         end
                         drained = drained + 1
-                        ssLog("[WRK] mulai job #"..drained..", sisa queue="..#swapQueue)
+                        ssLog("[WRK] "..uuid:sub(1,8).." mulai job #"..drained..", sisa="..#q)
                         pcall(job)
-                        ssLog("[WRK] selesai job #"..drained..", sisa queue="..#swapQueue)
+                        ssLog("[WRK] "..uuid:sub(1,8).." selesai job #"..drained..", sisa="..#q)
                     end
                 end)
             end
@@ -3342,7 +3345,9 @@ do
                     local capturedUnequip, capturedEquip = _unequip, _equip
                     local capturedN = swapJobN
                     ssLog("→ SWAP "..capturedAnim.." "..capturedRaw8.." #"..capturedN.." ["..fmt.."]")
-                    swapQueue[#swapQueue+1] = function()
+                    -- v2.127: enqueue ke per-uuid queue
+                    if not swapQueues[raw] then swapQueues[raw] = {} end
+                    swapQueues[raw][#swapQueues[raw]+1] = function()
                         local ok, err = pcall(function()
                             if capturedAnim == "trumpet" then task.wait(0.8) end
                             capturedUnequip(capturedRaw)
@@ -3353,7 +3358,7 @@ do
                         end)
                         if not ok then ssLog("ERR swap "..capturedAnim.." "..capturedRaw8.." #"..capturedN..": "..tostring(err):sub(1,40)) end
                     end
-                    swapWorkerStart()
+                    swapWorkerStart(raw)
                 end
             end
 
