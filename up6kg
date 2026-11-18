@@ -1,11 +1,11 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.298 | fix HEAL: jangan unequip dulu, freeze RC merge setelah equip        ║
+-- ║  UP KG — v10.299 | revert RC ganti modelByUuid, fix ENFORCE/bersih normalize UUID ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.298"
+local VERSION = "up6kg-v10.299"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1884,65 +1884,16 @@ do
         end
         return nil
     end
-    -- placed pet ({uuid} model) tracking — hanya untuk kasus butuh model object (posisi/Parent)
+    -- placed pet ({uuid} model) tracking
     local modelByUuid = {}
-    -- v10.288: _equippedSet — cache RC EquippedPets tiap 2s, gantikan modelByUuid untuk cek equipped
-    -- jauh lebih ringan: RC fetch 2s sekali vs DescendantAdded flood tiap object spawn
-    local _equippedSet = {}
-    local _equippedSetFrozen = 0  -- timestamp: kalau > tick() -> skip RC overwrite (merge saja)
-    local function refreshEquippedSet()
-        local ok, newSet = pcall(function()
-            local RS2 = game:GetService("ReplicatedStorage")
-            local plr2 = game:GetService("Players").LocalPlayer
-            local mod2 = RS2:FindFirstChild("Modules") and RS2.Modules:FindFirstChild("ReplicationClass")
-            if not mod2 then return nil end
-            local rc2 = require(mod2).new("ActivePetsService_Replicator")
-            local d2 = rc2:GetData(plr2.Name)
-            local eq = d2.Table.PlayerPetData[plr2.Name].EquippedPets
-            local s = {}
-            if type(eq) == "table" then
-                for _, u in ipairs(eq) do
-                    local clean = tostring(u):gsub("[{}]","")
-                    s[clean] = true
-                    s["{"..clean.."}"] = true
-                end
-            end
-            return s
-        end)
-        if ok and newSet then
-            if tick() < _equippedSetFrozen then
-                -- frozen: merge saja (tambah yg baru dari RC, tapi jangan hapus optimistic entries)
-                for k in pairs(newSet) do _equippedSet[k] = true end
-            else
-                _equippedSet = newSet
-            end
-        end
-    end
-    refreshEquippedSet() -- isi langsung saat startup, jangan tunggu 2s
-    task.spawn(function()
-        while true do
-            task.wait(2)
-            refreshEquippedSet()
-        end
-    end)
     -- up6kg: set uuid pet ELE (Rainbow Elephant) -> CUMA ini yg auto-tengah (diem buat reset).
     -- Sisanya (Dilop/Peacock/Gilded/bahan) di-SWAP skill. Refresh di bawah (listPetsEngine dulu).
     local eleUuids = {}
     local function isPetModel(m) return m:IsA("Model") and tostring(m.Name):sub(1,1) == "{" end
-    local function regModel(m)
-        if isPetModel(m) then
-            modelByUuid[m.Name] = m
-            if _G.ZenxKgLog then _G.ZenxKgLog("[dbg-mbu] +reg uuid="..tostring(m.Name):sub(1,16)) end
-        end
-    end
+    local function regModel(m) if isPetModel(m) then modelByUuid[m.Name] = m end end
     pcall(function() for _, d in ipairs(workspace:GetDescendants()) do regModel(d) end end)
-    if _G.ZenxKgLog then task.defer(function()
-        local cnt = 0; for _ in pairs(modelByUuid) do cnt = cnt + 1 end
-        _G.ZenxKgLog("[dbg-mbu] init scan selesai, total="..cnt)
-        for uuid in pairs(modelByUuid) do _G.ZenxKgLog("[dbg-mbu] found uuid="..tostring(uuid):sub(1,24)) end
-    end) end
     workspace.DescendantAdded:Connect(function(d) task.defer(function() pcall(regModel, d) end) end)
-    workspace.DescendantRemoving:Connect(function(d) if isPetModel(d) and modelByUuid[d.Name] == d then modelByUuid[d.Name] = nil; if _G.ZenxKgLog then _G.ZenxKgLog("[dbg-mbu] -rem uuid="..tostring(d.Name):sub(1,16)) end end end)
+    workspace.DescendantRemoving:Connect(function(d) if isPetModel(d) and modelByUuid[d.Name] == d then modelByUuid[d.Name] = nil end end)
 
     -- baca age (Level) + kg + tipe dari container/backpack
     local function getAge(uuid)
@@ -2393,8 +2344,8 @@ do
     local function equipSemua()
         -- up6kg: SKIP pet yg UDAH ke-equip (transisi smart -> yg ke-keep gak di-equip ulang).
         local dly = 0.06
-        for u in pairs(supportKunci) do if not _equippedSet[u] then equipPet(u, CLUSTER); task.wait(dly) end end
-        for u in pairs(bahanAktif) do if not _equippedSet[u] then equipPet(u, CLUSTER); task.wait(dly) end end
+        for u in pairs(supportKunci) do if not modelByUuid[u] then equipPet(u, CLUSTER); task.wait(dly) end end
+        for u in pairs(bahanAktif) do if not modelByUuid[u] then equipPet(u, CLUSTER); task.wait(dly) end end
         -- v10.101: PERSISTENT support-protect. supportKunci di-clear in-place pas REDO -> ada window KOSONG
         -- -> petsLolos gak skip support -> support KEKIRIM. Set ini SNAPSHOT support (gak ikut ke-clear),
         -- jadi petsLolos aman walau supportKunci lagi kosong pas REDO. Cuma di-update kalo supportKunci ADA.
@@ -2465,7 +2416,7 @@ do
         -- 2. bahan LEBIH dari max?
         if jml(bahanAktif) > maxB then return "bahan "..jml(bahanAktif).."/"..maxB end
         -- 3. pet EXTRA ke-equip (punya gua, di cluster, tipe support config, TAPI gak di-track)
-        for uuid in pairs(_equippedSet) do
+        for uuid in pairs(modelByUuid) do
             if not supportKunci[uuid] and not bahanAktif[uuid] then
                 local tipe = tipeDariUuid(uuid)   -- nil = bukan pet gua (pet player lain)
                 if tipe then
@@ -2499,15 +2450,14 @@ do
             if bc > maxB then pcall(function() unequipPet(u) end); bahanAktif[u] = nil; kgLog("copot bahan lebih") end
         end
         -- 3. pet EXTRA/UNTRACKED ke-equip (gak di supportKunci & bahanAktif) -> copot
-        for uuid in pairs(_equippedSet) do
+        -- v10.299: normalize UUID format (clean/braced)
+        for uuid in pairs(modelByUuid) do
             local cleanU = tostring(uuid):gsub("[{}]","")
             local bracedU = "{"..cleanU.."}"
             local inSup = supportKunci[uuid] or supportKunci[cleanU] or supportKunci[bracedU]
             local inBahan = bahanAktif[uuid] or bahanAktif[cleanU] or bahanAktif[bracedU]
             if not inSup and not inBahan then
                 local tipe = tipeDariUuid(uuid)
-                -- v10.52: Ele di-protect CUMA sesi 2 (dipegang buat up-kg). Sesi 1 -> copot
-                -- (masuk backpack, gak makan slot pet leveling).
                 if tipe and not (sesi == 2 and tostring(tipe):lower():find("rainbow elephant", 1, true)) then
                     pcall(function() unequipPet(uuid) end); kgLog("copot untracked: " .. tipe)
                 end
@@ -2518,7 +2468,7 @@ do
     local function redoSesi(sesi, alasan)
         KG.reset = true   -- v0.94: pause HEAL/swap selama redo biar gak rebutan
         kgLog("PLACEMENT SALAH ("..tostring(alasan)..") -> OUT SEMUA + masukin lagi")
-        for uuid in pairs(_equippedSet) do
+        for uuid in pairs(modelByUuid) do
             if tipeDariUuid(uuid) then unequipPet(uuid); task.wait(0.04) end   -- cuma pet gua
         end
         for u in pairs(supportKunci) do unequipPet(u); task.wait(0.03) end
@@ -2601,7 +2551,7 @@ do
         while _G.__ZenxKgEngineGen == engGen do
             task.wait(0.3)
             if KG.aktif and not KG.reset then
-                for uuid in pairs(_equippedSet) do
+                for uuid in pairs(modelByUuid) do
                     -- lepas busy yg NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
                     if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
                     -- up6kg: BAHAN -> swap (gacor) TAPI cek age tiap 0.05s. Age >= 40 -> COPOT
@@ -2692,7 +2642,7 @@ do
                 -- skip kalo lagi gift Ele (dipegang buat dikirim) biar gak lawan transfer
                 if not (_G.__up6kgGiftBusy and (tick() - _G.__up6kgGiftBusy) < 5) then
                     local eleEquipped = false
-                    for eu in pairs(eleUuids) do if _equippedSet[eu] then eleEquipped = true; break end end
+                    for eu in pairs(eleUuids) do if modelByUuid[eu] then eleEquipped = true; break end end
                     if not eleEquipped then
                         for eu in pairs(eleUuids) do
                             if eu:sub(1,1) ~= "{" then
@@ -2712,7 +2662,7 @@ do
         while _G.__ZenxKgEngineGen == engGen do
             task.wait(0.1)
             if _G.ZenxAutoSwapSkill and not KG.aktif then   -- cuma pas engine utama GAK jalan
-                for uuid in pairs(_equippedSet) do
+                for uuid in pairs(modelByUuid) do
                     if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
                     local supNmSw = supportKunci[uuid]
                     local isWhaleSw = supNmSw and tostring(supNmSw):lower():find("blue whale", 1, true)
@@ -2736,9 +2686,8 @@ do
             if _G.ZenxAutoTengah and not KG.aktif then   -- up kg OFF -> hold standalone (kalau up kg ON, HOLD engine yg jalan)
                 local center = farmCenter()
                 if center then
-                    for uuid in pairs(_equippedSet) do
+                    for uuid, m in pairs(modelByUuid) do
                         -- up6kg: GAK ada yg ditahan tengah
-                        local m = modelByUuid[uuid]
                         if false and m and m.Parent then
                             local ok, p = pcall(function() return m:GetPivot().Position end)
                             if ok and (p - center).Magnitude > 3 then pcall(function() m:PivotTo(CFrame.new(center)) end) end
@@ -2754,7 +2703,7 @@ do
         local np = 0
         for tri = 1, 3 do
             local uuids = {}
-            for uuid in pairs(_equippedSet) do uuids[uuid] = true end
+            for uuid in pairs(modelByUuid) do uuids[uuid] = true end
             pcall(function()
                 for _, d in ipairs(workspace:GetDescendants()) do
                     if d:IsA("Model") and tostring(d.Name):sub(1,1) == "{" then uuids[d.Name] = true end
@@ -2959,7 +2908,7 @@ do
         -- v-fix: copot juga pet di workspace yg TIDAK masuk supBaru (Gilded dll yg modelByUuid ada tapi supportKunci stale)
         if sesi == 2 then
             task.wait(0.3)
-            for uuid in pairs(_equippedSet) do
+            for uuid in pairs(modelByUuid) do
                 if not supBaru[uuid] and not bahanAktif[uuid] then
                     local tp = tostring(tipeDariUuid(uuid) or "")
                     if tp ~= "" and not tp:lower():find("rainbow elephant", 1, true) then
@@ -2977,24 +2926,17 @@ do
         bahanAktif = {}
         pilihBahan(sesi)
         equipSemua()          -- equip yg baru aja (ke-keep udah ke-equip -> skip)
-        -- reset untrackSince timer biar pet yg baru di-equip gak langsung kena copot
-        _G.__untrackSince = {}; _G.__dbgUntrackT = {}
         -- ENFORCE: copot pet equipped yg UNTRACKED (gak di supportKunci & bahanAktif).
-        -- Cukup 1x setelah _equippedSet refresh (2.5s) — gak perlu scan modelByUuid terus-terusan.
+        -- v10.299: 1x setelah 5s (bukan 3x tiap 2s), normalize UUID format
         task.spawn(function()
-            task.wait(5) -- tunggu equip + bahan LEBIH copot + RC refresh selesai
-            refreshEquippedSet() -- force refresh sebelum cek
+            task.wait(5) -- tunggu equip + bahan LEBIH copot selesai
             if (KG.sesi or 1) ~= sesi then return end
-            for uuid in pairs(_equippedSet) do
-                -- normalize: cek kedua format (clean dan braced) di supportKunci & bahanAktif
+            for uuid in pairs(modelByUuid) do
                 local cleanU = tostring(uuid):gsub("[{}]","")
                 local bracedU = "{"..cleanU.."}"
                 local inSup = supportKunci[uuid] or supportKunci[cleanU] or supportKunci[bracedU]
                 local inBahan = bahanAktif[uuid] or bahanAktif[cleanU] or bahanAktif[bracedU]
                 if not inSup and not inBahan then
-                    -- v10.51: SESI 2 -> Ele untracked JANGAN copot, malah TRACK (supportKunci) biar
-                    -- ke-re-equip. Bug: eleUuids telat refresh pas pasangSesi -> Ele gak ke-track ->
-                    -- ENFORCE copot -> Ele KELEPAS gak balik ke kebun.
                     local tp = tostring(tipeDariUuid(uuid) or "")
                     if sesi == 2 and tp:lower():find("rainbow elephant", 1, true) then
                         supportKunci[uuid] = "Rainbow Elephant"
@@ -3106,7 +3048,7 @@ do
             while KG.aktif and _G.__ZenxKgResetGen == resetGen do
                 task.wait(0.25)
                 if _G.ZenxAutoTengah and KG.aktif and not KG.reset and CLUSTER then   -- v0.76: HOLD-ke-tengah lewat toggle "AUTO TENGAH"
-                    for uuid in pairs(_equippedSet) do
+                    for uuid in pairs(modelByUuid) do
                         -- up6kg: GAK ada yg ditahan tengah (semua swap skill termasuk Ele)
                         if false and not busy[uuid] then
                             local m = modelByUuid[uuid]
@@ -3124,7 +3066,7 @@ do
         -- (server nganggep udah equip -> equip biasa no-op. copot dulu baru equip = model spawn lagi)
         task.spawn(function()
             while KG.aktif and _G.__ZenxKgResetGen == resetGen do
-                task.wait(3)
+                task.wait(1)
                 if KG.aktif and not KG.reset and _G.__ZenxKgResetGen == resetGen then
                     local team = {}
                     for u in pairs(supportKunci) do team[u] = true end
@@ -3137,16 +3079,9 @@ do
                         local supNmH = supportKunci[u]
                         local isEleH = supNmH and tostring(supNmH):lower():find("elephant", 1, true)
                         local isBahanH = bahanAktif[u] ~= nil
-                        local cleanH = tostring(u):gsub("[{}]","")
-                        local rcEqH = _equippedSet[u] or _equippedSet[cleanH] or _equippedSet["{"..cleanH.."}"]
-                        -- JANGAN pakai modelByUuid: SS swap bikin pet despawn sebentar -> false alarm
-                        if not rcEqH and not busy[u] and idle > 3 and (isEleH or isBahanH) then
-                            -- v10.298: JANGAN unequip dulu — langsung equip saja
+                        if not modelByUuid[u] and not busy[u] and idle > 3 and (isEleH or isBahanH) then
+                            -- v10.299: langsung equip tanpa unequip dulu
                             equipPet(u, CLUSTER); task.wait(0.15)
-                            -- optimistic update + freeze RC overwrite 10s
-                            _equippedSet[cleanH] = true
-                            _equippedSet["{"..cleanH.."}"] = true
-                            _equippedSetFrozen = tick() + 10
                             healed = healed + 1
                         end
                     end
