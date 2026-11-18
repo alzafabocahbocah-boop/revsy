@@ -1,11 +1,11 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.300 | matiin loop auto-tengah (was if false, dead code)               ║
+-- ║  UP KG — v10.301 | SS ANIM STR SWAP aktif (port dari up3.8kg, sama persis)         ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.300"
+local VERSION = "up6kg-v10.301"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3226,6 +3226,455 @@ do
     _G.ZenxKgStart = kgStart
     _G.ZenxKgStop = kgStop
 end
+
+-- ============ ANIM STR SWAP — jalan terus walau upkg di-stop ============
+-- v2.24: dipindah keluar dari kgStart
+-- SEBELUM: di dalam kgStart, exit saat KG.aktif = false → swap mati kalau upkg di-stop
+-- SESUDAH: di luar kgStart, pakai inject-once guard _G._ZenxAnimSwapStarted — jalan terus
+-- v2.28: pakai _G._ZenxUnequipPet/_G._ZenxEquipPet (expose dari do-scope)
+-- SEBELUM: unequipPet/equipPet dipanggil dari luar scope → nil → pcall silent fail → gak swap
+-- SESUDAH: pakai _G wrapper → akses valid walau upkg off
+-- v2.28: isMyPetUUID — scan backpack + character (equipped), gak butuh _kgContainer
+-- SEBELUM: kalau _kgContainer nil (upkg belum jalan), isMyPetUUID return false → semua skip
+-- SESUDAH: langsung scan backpack + char → kerja walau _kgContainer nil
+do
+    if not _G._ZenxAnimSwapStarted then
+        _G._ZenxAnimSwapStarted = true
+        task.spawn(function()
+            -- v2.33: ssLog tulis langsung ke _G.ZenxAnimDbgLog (bukan via ZenxSuppDebug)
+            -- SEBELUM: ssLog cek _G.ZenxSuppDebug — panel belum dibuat → nil → log awal hilang
+            -- SESUDAH: tulis ke _G.ZenxAnimDbgLog langsung (ada sejak top-level), panel baca dari sana
+            local function ssLog(msg)
+                local s="[SS] "..tostring(msg)
+                print(s)
+                local ts = os.date("%H:%M:%S")..string.format(".%03d", math.floor((tick()%1)*1000))
+                local line = ts.." | "..s
+                table.insert(_G.ZenxAnimDbgLog, 1, line)
+                if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
+                _G.ZenxAnimDbgLogAll[#_G.ZenxAnimDbgLogAll+1] = line
+            end
+            -- v2.36: RS tidak ada di scope ini (hanya ada di do-block kgStart) — definisikan lokal
+            local RS = game:GetService("ReplicatedStorage")
+            ssLog("animStr init")
+            local ge2 = RS:WaitForChild("GameEvents", 15)
+            if not ge2 then ssLog("ERR: ge2 nil"); _G._ZenxAnimSwapStarted = false; return end
+            ssLog("ge2 OK")
+            -- v2.35: scan SEMUA RemoteEvent di GameEvents paralel — diagnosa DS mana yang kirim CustomAnimationState
+            -- Jalankan di background agar tidak block connectDS ke DataStream biasa
+            -- v2.38: background scanner — cari path lengkap CustomAnimationState di DataStream
+            task.spawn(function()
+                -- deepSearchPath: return path string saat ketemu "CustomAnimationState" sebagai KEY
+                local function deepSearchPath(tbl, depth, path)
+                    if depth > 5 or type(tbl) ~= "table" then return nil end
+                    for k, v in pairs(tbl) do
+                        local ks = tostring(k)
+                        local curPath = path.."."..ks
+                        if ks:find("CustomAnimationState",1,true) or ks:find("AnimationState",1,true) then
+                            return curPath.."="..tostring(v):sub(1,20)
+                        end
+                        if type(v) == "string" and v:find("CustomAnimationState",1,true) then
+                            return curPath.."(val="..v:sub(1,20)..")"
+                        end
+                        if type(v) == "table" then
+                            local r = deepSearchPath(v, depth+1, curPath)
+                            if r then return r end
+                        end
+                    end
+                    return nil
+                end
+                local reported = {}
+                local ds = ge2:WaitForChild("DataStream", 15)
+                if not ds then return end
+                ds.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    local dsKey = type(args[2])=="string" and args[2] or ""
+                    if not dsKey:find("ActivePets",1,true) then return end
+                    local data = type(args[3])=="table" and args[3] or nil
+                    if not data then return end
+                    for _, v in pairs(data) do
+                        if type(v)=="table" then
+                            local path = tostring(v[1] or "?")
+                            local val = v[2]
+                            if type(val)=="table" then
+                                local found = deepSearchPath(val, 0, path)
+                                if found and not reported[found:sub(1,30)] then
+                                    reported[found:sub(1,30)] = true
+                                    ssLog("[BG] path CA: "..found:sub(1,60))
+                                end
+                            end
+                        end
+                    end
+                end)
+                ssLog("[SCAN] bg CA-path finder ON")
+            end)
+            local ds2 = ge2:WaitForChild("DataStream", 15)
+            if not ds2 then ssLog("ERR: DataStream nil"); _G._ZenxAnimSwapStarted = false; return end
+            ssLog("ds2 OK")
+
+            local SWAP_ANIM = { frill=true, fan=true, roar=true, pee=true, pew=true, screech=true, trumpet=true, gaze=true }  -- v2.124: +gaze (Eyeball Monster)
+            -- v2.39: hapus LOOKUP_KW — pee/pew UUID sudah langsung dari DS (sama kayak frill/fan/roar)
+            -- hotdog punya 2 skill (pee + pew), keduanya swap langsung via UUID tanpa lookup backpack
+            local LOOKUP_KW = {}
+
+            -- v2.28: scan backpack + character — gak butuh _kgContainer, kerja walau upkg off
+            -- v2.89: tambah scan workspace — detect pet yang lagi equipped di world (model {uuid})
+            local function isMyPetUUID(raw)
+                -- v2.129: cek supportKunci dulu — O(1), UUID support tidak berubah selama sesi
+                if supportKunci and (supportKunci[raw] or supportKunci["{"..raw.."}"]) then return true end
+                -- cek _kgContainer (semua pet milik kita)
+                if _kgContainer and (_kgContainer[raw] or _kgContainer["{"..raw.."}"]) then return true end
+                return false
+            end
+
+            -- v2.40: isMyHotdog — cek di backpack+char apakah UUID ini adalah hotdog milik kita
+            local function isMyHotdog(raw)
+                local ok, result = pcall(function()
+                    local bp = plr:FindFirstChild("Backpack")
+                    local ch = plr.Character
+                    for _, container in ipairs({bp, ch}) do
+                        if not container then continue end
+                        for _, t in ipairs(container:GetChildren()) do
+                            local ok2, u = pcall(function() return t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") end)
+                            if ok2 and u and tostring(u):gsub("[{}]","") == raw then
+                                local f = tostring(t:GetAttribute("f") or t.Name or ""):lower()
+                                if f:find("hotdog",1,true) then return true end
+                            end
+                        end
+                    end
+                    return false
+                end)
+                return ok and result or false
+            end
+
+            -- v2.85: ssLog2, swapQueue, swapWorkerStart HARUS sebelum processHits
+            -- processHits capture upvalue saat definisi — kalau didefine setelah, dapat nil
+            local function ssLog(msg)
+                local s="[SS] "..tostring(msg)
+                print(s)
+                local ts = os.date("%H:%M:%S")..string.format(".%03d", math.floor((tick()%1)*1000))
+                local line = ts.." | "..s
+                if _G.ZenxAnimDbgLog then
+                    table.insert(_G.ZenxAnimDbgLog, 1, line)
+                    if #_G.ZenxAnimDbgLog > 60 then table.remove(_G.ZenxAnimDbgLog) end
+                end
+                if _G.ZenxAnimDbgLogAll then
+                    _G.ZenxAnimDbgLogAll[#_G.ZenxAnimDbgLogAll+1] = line
+                end
+            end
+
+            -- v2.127: per-uuid queue — tiap UUID punya worker sendiri, tidak saling nunggu
+            local swapQueues = {}       -- [uuid] = {job, job, ...}
+            local swapWorkers = {}      -- [uuid] = true kalau worker lagi jalan
+            local swapJobN = 0
+            local function swapWorkerStart(uuid)
+                if swapWorkers[uuid] then
+                    ssLog("[WRK] skip: worker "..uuid:sub(1,8).." masih jalan, queue="..#(swapQueues[uuid] or {}))
+                    return
+                end
+                swapWorkers[uuid] = true
+                local q = swapQueues[uuid]
+                ssLog("[WRK] spawn worker "..uuid:sub(1,8)..", queue="..#q)
+                task.spawn(function()
+                    local drained = 0
+                    while true do
+                        local job = table.remove(q, 1)
+                        if not job then
+                            ssLog("[WRK] "..uuid:sub(1,8).." queue kosong setelah drain "..drained.." job, stop")
+                            swapWorkers[uuid] = nil
+                            swapQueues[uuid] = nil
+                            break
+                        end
+                        drained = drained + 1
+                        ssLog("[WRK] "..uuid:sub(1,8).." mulai job #"..drained..", sisa="..#q)
+                        pcall(job)
+                        ssLog("[WRK] "..uuid:sub(1,8).." selesai job #"..drained..", sisa="..#q)
+                    end
+                end)
+            end
+
+            -- v2.80: processHits dipindah kembali ke dalam task.spawn — supaya bisa akses SWAP_ANIM, isMyPetUUID, dll
+            local function processHits(hits)
+                local seen = {}
+                -- v2.83: log jumlah hits masuk processHits
+                if #hits > 0 then
+                    ssLog("[PH] masuk "..#hits.." hits")
+                end
+                for _, hit in ipairs(hits) do
+                    local r, animStr, fmt = hit[1], hit[2], (hit[3] or "F?")
+                    local anim = tostring(animStr):lower()
+                    local r8 = r:sub(1,8)
+                    -- v2.83: log setiap hit untuk debug
+                    ssLog("[PH] hit "..r8.." anim="..anim.." fmt="..fmt.." supp="..(tostring(_G.ZenxSuppSwapOn)))
+                    if not _G.ZenxSuppSwapOn then ssLog("[PH] skip: SuppSwapOn off"); continue end
+                    if not isMyPetUUID(r) then ssLog("[PH] skip: bukan punya aku "..r8); continue end
+                    local hotdog = isMyHotdog(r)
+                    if not hotdog and not SWAP_ANIM[anim] then ssLog("[PH] skip: anim "..anim.." bukan target"); continue end
+                    animDbgPush(r, animStr)
+                    if not _G.ZenxSuppSwapOn then
+                        ssLog("skip: SUPP SWAP ANIM toggle OFF")
+                        continue
+                    end
+                    local targetR = r
+                    local kw = LOOKUP_KW[anim]
+                    if kw then
+                        local found = nil
+                        for _, container in ipairs({plr:FindFirstChild("Backpack"), plr.Character}) do
+                            if not container then continue end
+                            for _, t in ipairs(container:GetChildren()) do
+                                if t:IsA("Tool") then
+                                    local uuid = t:GetAttribute("PET_UUID")
+                                    local f = tostring(t:GetAttribute("f") or ""):lower()
+                                    if uuid then for _, k in ipairs(kw) do if f:find(k,1,true) then found=tostring(uuid); break end end end
+                                end
+                                if found then break end
+                            end
+                            if found then break end
+                        end
+                        if not found then
+                            ssLog("skip: "..anim.." "..r8.." perlu hotdog di backpack/equip tapi gak ketemu")
+                            continue
+                        end
+                        targetR = found
+                    end
+                    local raw = targetR:gsub("[{}]","")
+                    local raw8 = raw:sub(1,8)
+                    local _unequip = _G._ZenxUnequipPet
+                    local _equip   = _G._ZenxEquipPet
+                    -- v2.84: log state sebelum swap
+                    ssLog("[PH] pre-swap "..raw8.." unequip="..(type(_unequip)).." equip="..(type(_equip)))
+                    if not _unequip or not _equip then
+                        ssLog("ERR: fungsi equip nil — coba re-inject script")
+                        continue
+                    end
+                    swapJobN = swapJobN + 1
+                    local capturedRaw, capturedRaw8, capturedAnim = raw, raw8, anim
+                    local capturedUnequip, capturedEquip = _unequip, _equip
+                    local capturedN = swapJobN
+                    ssLog("→ SWAP "..capturedAnim.." "..capturedRaw8.." #"..capturedN.." ["..fmt.."]")
+                    -- v2.127: enqueue ke per-uuid queue
+                    if not swapQueues[raw] then swapQueues[raw] = {} end
+                    swapQueues[raw][#swapQueues[raw]+1] = function()
+                        local ok, err = pcall(function()
+                            if capturedAnim == "trumpet" then task.wait(0.8) end
+                            capturedUnequip(capturedRaw)
+                            ssLog("unequip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
+                            task.wait(0.05)
+                            capturedEquip(capturedRaw)
+                            ssLog("equip OK "..capturedAnim.." "..capturedRaw8.." #"..capturedN)
+                        end)
+                        if not ok then ssLog("ERR swap "..capturedAnim.." "..capturedRaw8.." #"..capturedN..": "..tostring(err):sub(1,40)) end
+                    end
+                    swapWorkerStart(raw)
+                end
+            end
+
+            local function connectDS(ds)
+                local conn = ds.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    -- v2.35: log tiap DS event + isi partial tiap arg
+                    local argParts = {}
+                    for i=1,math.min(#args,6) do
+                        local t = type(args[i])
+                        if t=="table" then
+                            argParts[i] = "tbl#"..tostring(#args[i] > 0 and #args[i] or "?")
+                        elseif t=="string" then
+                            argParts[i] = '"'..tostring(args[i]):sub(1,12)..'"'
+                        elseif t=="number" or t=="boolean" then
+                            argParts[i] = tostring(args[i])
+                        else
+                            argParts[i] = t:sub(1,4)
+                        end
+                    end
+                    -- v2.38: hanya proses DS dari "ActivePetsSe", skip DS lain (SaveSlots, dll)
+                    local dsKey = type(args[2])=="string" and args[2] or ""
+                    if not dsKey:find("ActivePets",1,true) then return end
+                    local data = type(args[3])=="table" and args[3] or (type(args[4])=="table" and args[4] or nil)
+                    if not data then return end
+                    -- v2.38: parse format DS ActivePetStates
+                    -- Format entry: {v[1]="ROOT/ActivePetStates/{uuid}/KEY", v[2]=value}
+                    -- KEY yang relevan:
+                    --   CustomAnimationState → value = animStr langsung (string)
+                    --   PetAction           → value = table {Arguments={CustomAnimationState=animStr,...},...}
+                    --   (top-level tbl)     → value = table {CustomAnimationState=animStr,...}
+                    local hits = {}
+                    for _, v in pairs(data) do
+                        if type(v)=="table" then
+                            local path = tostring(v[1] or "")
+                            local val  = v[2]
+                            -- Format 1: path langsung berisi CustomAnimationState
+                            if path:find("CustomAnimationState",1,true) and val ~= nil then
+                                local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)/")
+                                if uuid then
+                                    hits[#hits+1] = {uuid:gsub("[{}]",""), tostring(val), "F1"}
+                                end
+                            elseif path:find("ActivePetStates",1,true) and type(val)=="table" then
+                                local uuid = path:match("{([^}]+)}") or path:match("ActivePetStates/([^/]+)$") or path:match("ActivePetStates/([^/]+)/")
+                                if uuid then
+                                    uuid = uuid:gsub("[{}]","")
+                                    -- Format 2: val = {CustomAnimationState=animStr,...}
+                                    local animStr = val.CustomAnimationState or val.AnimationState or val.animationState
+                                    if animStr then
+                                        hits[#hits+1] = {uuid, tostring(animStr), "F2"}
+                                    end
+                                    -- Format 3: val = {Arguments={CustomAnimationState=animStr,...},...} (PetAction)
+                                    if not animStr and type(val.Arguments)=="table" then
+                                        local a = val.Arguments
+                                        animStr = a.CustomAnimationState or a.AnimationState or a.animationState
+                                        if animStr then
+                                            hits[#hits+1] = {uuid, tostring(animStr), "F3"}
+                                        end
+                                    end
+                                    -- Format 4: PetAction nested lebih dalam
+                                    if not animStr and type(val.PetAction)=="table" then
+                                        local pa = val.PetAction
+                                        animStr = pa.CustomAnimationState or pa.AnimationState
+                                        if not animStr and type(pa.Arguments)=="table" then
+                                            animStr = pa.Arguments.CustomAnimationState or pa.Arguments.AnimationState
+                                        end
+                                        if animStr then
+                                            hits[#hits+1] = {uuid, tostring(animStr), "F4"}
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    processHits(hits)
+                end)
+                ds.AncestryChanged:Connect(function()
+                    if ds.Parent == nil then
+                        ssLog("DS DEAD — reconnect...")
+                        pcall(function() conn:Disconnect() end)
+                        task.spawn(function()
+                            task.wait(1)
+                            local dsNew = ge2 and ge2:WaitForChild("DataStream", 30)
+                            if dsNew then connectDS(dsNew); ssLog("DS reconnect OK")
+                            else ssLog("ERR: DS reconnect FAIL") end
+                        end)
+                    end
+                end)
+                ssLog("DS listener ON")
+                return conn
+            end
+
+            local activeConn = connectDS(ds2)
+
+            -- v2.127: CD watch dimatiin — per-uuid queue sudah cukup
+            -- init _ZenxEquippedUUIDs di sini supaya isMyPetUUID tetap bisa pakai
+            if not _G._ZenxEquippedUUIDs then _G._ZenxEquippedUUIDs = {} end
+            if false then -- DISABLED
+            task.spawn(function()
+                local ge3 = RS:WaitForChild("GameEvents", 15)
+                if not ge3 then ssLog("[CD] ERR: GameEvents nil"); return end
+                local pcu = ge3:FindFirstChild("PetCooldownsUpdated")
+                local req = ge3:FindFirstChild("RequestPetCooldowns")
+                if not pcu then ssLog("[CD] ERR: PetCooldownsUpdated nil"); return end
+                ssLog("[CD] listener ON")
+
+                local cdZeroAt = {}  -- uuid -> tick() saat cd pertama kali nol
+
+                -- v2.101: cache UUID pet yang lagi equipped di workspace (scan tiap 2s)
+                -- PCU event fire terus tiap ~1s — tidak perlu polling RequestPetCooldowns
+                _G._ZenxEquippedUUIDs = {}
+                task.spawn(function()
+                    while true do
+                        local cache = {}
+                        local ok, children = pcall(function() return game:GetService("Workspace"):GetChildren() end)
+                        if ok then
+                            for _, inst in pairs(children) do
+                                local ok2, uAttr = pcall(function() return inst:GetAttribute("UUID") end)
+                                if ok2 and uAttr then
+                                    cache[tostring(uAttr):gsub("[{}]","")] = true
+                                end
+                            end
+                        end
+                        _G._ZenxEquippedUUIDs = cache
+                        task.wait(2)
+                    end
+                end)
+
+                -- v2.101: debug — log ZenxSupportKunci tiap 5s supaya bisa lihat isinya
+                task.spawn(function()
+                    while true do
+                        task.wait(5)
+                        local sk2 = _G.ZenxSupportKunci
+                        if sk2 and next(sk2) then
+                            ssLog("[CD] ZenxSupportKunci isi:")
+                            for uid, nm in pairs(sk2) do
+                                ssLog("  "..tostring(nm).." uuid="..tostring(uid))
+                            end
+                        else
+                            ssLog("[CD] ZenxSupportKunci kosong")
+                        end
+                    end
+                end)
+
+                pcu.OnClientEvent:Connect(function(uuid, data)
+                    local key = tostring(uuid):gsub("[{}]","")
+                    -- v2.102: ZenxSupportKunci mungkin simpan key dengan atau tanpa {}
+                    -- coba plain dulu, kalau nil coba {fmt}
+                    local sk = _G.ZenxSupportKunci
+                    local petNama = sk and (sk[key] or sk["{"..key.."}"])
+                    if not petNama then return end
+                    -- v2.90: log semua CD time dari event ini
+                    local cdTimes = {}
+                    local cdNol = false
+                    if type(data) == "table" then
+                        for _, v in ipairs(data) do
+                            if type(v) == "table" and type(v.Time) == "number" then
+                                local p = tostring(v.Passive or ""):lower()
+                                cdTimes[#cdTimes+1] = string.format("%s=%.1fs", p~="" and p:sub(1,8) or "skill", v.Time)
+                                if not p:find("mutation") and v.Time <= 0 then
+                                    cdNol = true
+                                end
+                            end
+                        end
+                    end
+                    ssLog("[CD] "..petNama.." uuid="..key:sub(1,8).." | "..table.concat(cdTimes, " | "))
+                    if cdNol then
+                        if not cdZeroAt[key] then
+                            cdZeroAt[key] = tick()
+                            ssLog("[CD] "..petNama.." uuid="..key:sub(1,8).." cd NOL pertama kali")
+                        else
+                            local elapsed = tick() - cdZeroAt[key]
+                            ssLog("[CD] "..petNama.." uuid="..key:sub(1,8).." cd nol "..string.format("%.1f",elapsed).."s")
+                            if elapsed > 1 then
+                                ssLog("[CD] "..petNama.." uuid="..key:sub(1,8).." cd nol "..string.format("%.1f",elapsed).."s — paksa swap!")
+                                local _u = _G._ZenxUnequipPet
+                                local _e = _G._ZenxEquipPet
+                                if _u and _e then
+                                    task.spawn(function()
+                                        pcall(_u, key)
+                                        task.wait(0.08)
+                                        pcall(_e, key)
+                                        ssLog("[CD] "..key:sub(1,8).." swap done")
+                                    end)
+                                    cdZeroAt[key] = nil  -- reset setelah swap
+                                else
+                                    ssLog("[CD] ERR: fungsi equip nil")
+                                end
+                            end
+                        end
+                    else
+                        cdZeroAt[key] = nil  -- cd udah > 0 lagi, reset
+                    end
+                end)
+            end)
+            end -- DISABLED
+
+            local _lastDsId = ds2
+            ge2.ChildAdded:Connect(function(child)
+                if child.Name ~= "DataStream" or child == _lastDsId then return end
+                ssLog("DS baru via ChildAdded — reconnect")
+                _lastDsId = child
+                pcall(function() activeConn:Disconnect() end)
+                activeConn = connectDS(child)
+            end)
+            -- tidak ada exit condition — jalan terus walau upkg di-stop
+        end)
+    end
+end
+
 
 -- ============ TEMA ============
 local C = {
