@@ -4475,12 +4475,20 @@ do
         -- lagi mati/fetch gagal, load data TERAKHIR yg berhasil dari file lokal (lebih baik daripada
         -- nil/kosong total). Tiap fetch SUKSES, cache di-update.
         local LVLMAX_CACHE_FILE = "zenx_lvlmax_cache_" .. tostring((game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.Name) or "x") .. ".json"
-        -- v10.279: load cache lvlmax-tim lokal (JSON format) buat fallback awal sebelum fetch panel
+        -- v10.280: load cache lvlmax-tim lokal (JSON format) buat fallback awal sebelum fetch panel
+        -- kalau cache isinya format lama (/lvlmax string, bukan JSON leveling) -> buang, jangan dipakai
         do
             pcall(function()
                 if isfile and isfile(LVLMAX_CACHE_FILE) then
                     local raw = readfile(LVLMAX_CACHE_FILE)
                     local ok2, decoded = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
+                    if not ok2 or type(decoded) ~= "table" or type(decoded.leveling) ~= "table" then
+                        -- format lama (string /lvlmax) atau invalid -> hapus cache, jangan dipakai
+                        pcall(function() if delfile then delfile(LVLMAX_CACHE_FILE) end end)
+                        pcall(function() if removefile then removefile(LVLMAX_CACHE_FILE) end end)
+                        print("[up6kg] cache lvlmax lama (format string) dihapus")
+                        return
+                    end
                     if ok2 and type(decoded) == "table" and type(decoded.leveling) == "table" then
                         local m, mc = {}, {}
                         for _, tim in ipairs(decoded.leveling) do
