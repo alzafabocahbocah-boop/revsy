@@ -992,38 +992,25 @@ do
         return #batch
     end
 
-    -- scan coconut saat startup (sebelum whale check pertama)
-    task.spawn(function() task.wait(4); pcall(scanCocoBuah) end)
+    -- cek whale sekali di startup (sama seperti destroy pohon)
+    task.spawn(function()
+        task.wait(1)
+        _cocoRunning = cekAdaWhale()
+        print("[COCO] startup whale check: "..((_cocoRunning) and "ADA → collect ON" or "TIDAK ADA → collect OFF"))
+        pcall(scanCocoBuah)
+    end)
 
-    -- loop utama: cek whale tiap 5 detik (scan coco: 5s saat whale aktif, skip saat idle)
+    -- loop utama: cek whale tiap 5s, scan coco tiap 5s
     task.spawn(function()
         local _cocoTick = 0
         while true do
             task.wait(5)
-            -- scan coco selalu tiap 5s (tidak tergantung whale)
             local now = tick()
             if (now - _cocoTick) >= 5 then
                 pcall(scanCocoBuah)
                 _cocoTick = now
             end
-            -- cek whale via RC, fallback backpack/character
             local adaWhale = cekAdaWhale()
-            if not adaWhale then
-                pcall(function()
-                    local plr = game:GetService("Players").LocalPlayer
-                    local function scanObj(obj)
-                        if not obj then return end
-                        for _, item in ipairs(obj:GetChildren()) do
-                            if tostring(item.Name):lower():find("whale",1,true) then adaWhale = true end
-                        end
-                    end
-                    scanObj(plr:FindFirstChild("Backpack"))
-                    if plr.Character then scanObj(plr.Character) end
-                end)
-            end
-            -- v2.150: fallback via _G._cocoWhaleRC (di-set cekAdaWhale tiap loop)
-            if not adaWhale then adaWhale = (_G._cocoWhaleRC == true) end
-
             if adaWhale and not _cocoRunning then
                 _cocoRunning = true
                 print("[COCO] Whale terdeteksi — mulai auto-collect coconut")
