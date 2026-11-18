@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.135"
+local VERSION = "up38kg-v2.136"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -690,42 +690,32 @@ local KG_CONFIG_PET = { ["Tim Ele"] = "" }   -- up6kg: bahan dari picker, gak di
 do
     local WS = workspace
     -- v2.119: cek apakah akun ini punya Blue Whale (backpack + equipped)
+    -- v2.136: cekAdaWhale via RC langsung (ActivePetsService_Replicator) — paling reliable
+    -- RC baca semua pet (equipped + backpack + inventory), tidak miss apapun
     local function cekAdaWhale()
         local plr = game:GetService("Players").LocalPlayer
         if not plr then return false end
-        local function scanObj(obj)
-            if not obj then return false end
-            for _, item in ipairs(obj:GetChildren()) do
-                if tostring(item.Name):lower():find("whale", 1, true) then return true end
-            end
-            return false
-        end
-        if scanObj(plr:FindFirstChild("Backpack")) then print("[cekWhale] ketemu di Backpack"); return true end
-        if plr.Character and scanObj(plr.Character) then print("[cekWhale] ketemu di Character"); return true end
-        -- cek _kgContainer
-        if _G._kgContainer then
-            for _, p in ipairs(_G._kgContainer) do
-                if tostring(p.tipe or ""):lower():find("whale", 1, true) then print("[cekWhale] ketemu di _kgContainer tipe="..(p.tipe or "?")); return true end
-            end
-        end
-        -- v2.129: cek workspace — whale lagi di-equip di world (model {uuid})
-        local ok, children = pcall(function() return WS:GetChildren() end)
-        if ok then
-            for _, obj in ipairs(children) do
-                if tostring(obj.Name):lower():find("whale", 1, true) then print("[cekWhale] ketemu di Workspace name="..tostring(obj.Name)); return true end
-            end
-        end
-        -- v2.132: cek support upkg yg lagi di-equip (Whale di-equip = supportKunci, bukan di backpack)
-        local sk = _G._ZenxSupportKunci
-        if sk then
-            for _, nm in pairs(sk) do
-                if tostring(nm):lower():find("whale", 1, true) then
-                    print("[cekWhale] ketemu di ZenxSupportKunci nama="..tostring(nm)); return true
+        local found = false
+        local ok, err = pcall(function()
+            local RS = game:GetService("ReplicatedStorage")
+            local RC = require(RS.Modules.ReplicationClass)
+            local inst = RC.new("ActivePetsService_Replicator")
+            local data = inst:GetData(plr.Name)
+            local dat = data.Table.PlayerPetData[plr.Name].PetInventory.Data
+            for _, entry in pairs(dat) do
+                if type(entry) == "table" then
+                    local pt = tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or ""):lower()
+                    if pt:find("whale", 1, true) then
+                        print("[cekWhale] ketemu di RC PetType="..pt)
+                        found = true
+                        break
+                    end
                 end
             end
-        end
-        print("[cekWhale] TIDAK ketemu (backpack/char/container/ws/support semua miss)")
-        return false
+        end)
+        if not ok then print("[cekWhale] RC error: "..tostring(err):sub(1,80)) end
+        if not found then print("[cekWhale] TIDAK ketemu di RC") end
+        return found
     end
     local function semuaFarm()
         -- v1.59: GetDescendants per subfarm (bukan seluruh farm). Plants_Physical bisa nested.
