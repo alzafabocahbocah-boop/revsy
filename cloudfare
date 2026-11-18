@@ -4356,7 +4356,7 @@ export default {
         ).bind(batas10m).all();
         const daftarTim = [];
         for (const row of (timRows.results || [])) {
-          try { const d = JSON.parse(row.data); if (d && d.tim && d.psLink) daftarTim.push(d); } catch {}
+          try { const d = JSON.parse(row.data); if (d && d.tim) daftarTim.push(d); } catch {}  // v2: hapus syarat d.psLink — tim tanpa PS tetap valid, biar gak fallback ke /lvlmax lama yg include up6kg
         }
 
         if (daftarTim.length > 0) {
