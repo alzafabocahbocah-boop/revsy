@@ -11337,7 +11337,8 @@ _CMD.new = function()  -- v9.685
         local nn = string.format("%02d", n)
         local label = "delta-lite-" .. nn
         local outApk = "/sdcard/deltalite" .. nn .. ".apk"
-        local url = rel:match('"(https://[^"]*ZETSU%.DELTA%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        local url = rel:match('"(https://[^"]*KEYLESS%.ZETSU%.LITE%.HITAM%.LEGAM%.' .. nn .. '[^"]*%.apk)"')
+        if not url then url = rel:match('"(https://[^"]*ZETSU%.DELTA%.LITE%.' .. nn .. '[^"]*%.apk)"') end  -- fallback nama lama
         if not url then
             print("[" .. label .. "] URL gak ketemu di rilis (skip).")
         else
