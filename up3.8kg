@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.195 | WW-SWAP sesi 2: whale copot tapi gak tambah bahan                         ║
+-- ║  UP KG — v2.196 | WW-SWAP: bahan ke-2 isi ulang tanpa filter age (kalau age50 diambil)       ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.195"
+local VERSION = "up38kg-v2.196"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -3101,7 +3101,6 @@ do
         task.spawn(function()
             local _wwSwapActive = false   -- true = whale lagi di-swap keluar
             local _wwWhaleUuid = nil      -- uuid whale yg lagi di-swap keluar
-            local _wwBahanUuid = nil      -- uuid bahan ekstra yg masuk saat WW
             local function getWwSisa()
                 -- baca countdown "1m 46s" / "45s" dari Bottom_UI -> detik
                 local sisa = 999
@@ -3139,21 +3138,10 @@ do
                         -- v2.195: sesi 1 → tambah bahan ke-2; sesi 2 → copot whale doang
                         if KG.sesi == 1 then
                             kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out, tambah bahan ke-2")
-                            _G._wwBahanMax = 2  -- v2.193: naikkan limit supaya TRIM gak copot
-                            task.wait(0.5)
-                            local pets = listPetsEngine()
-                            local target = _G.ZenxKgUpTipe
-                            for _, p in ipairs(pets) do
-                                if not supportKunci[p.uuid] and not bahanAktif[p.uuid]
-                                   and (not target or not next(target) or target[p.tipe])
-                                   and p.kgBase < (3.8 - 0.005) and p.age < AGE_TARGET then
-                                    bahanAktif[p.uuid] = p.tipe
-                                    pcall(function() equipPet(p.uuid, CLUSTER) end)
-                                    _wwBahanUuid = p.uuid
-                                    kgLog("[WW-SWAP] bahan ke-2: " .. tostring(p.tipe))
-                                    break
-                                end
-                            end
+                            -- v2.196: set limit 2, lalu biarkan periodic isi-ulang (pilihBahan) yg pick bahan ke-2
+                            -- sama persis logika bahan ke-1: age<50 sesi 1, ganti kalau age 50+
+                            _G._wwBahanMax = 2
+                            kgLog("[WW-SWAP] bahan ke-2: akan diisi periodic check")
                         else
                             kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out (sesi 2, gak tambah bahan)")
                         end
@@ -3164,10 +3152,17 @@ do
                     _G._wwSwapExclude = nil  -- v2.190: clear exclude, isiKurang boleh cek whale lagi
                     _G._wwBahanMax = nil     -- v2.193: clear limit sementara, balik ke BAHAN_S1
                     kgLog("[WW-SWAP] cd="..sisa.."s keluar range → whale balik, copot bahan ke-2")
-                    if _wwBahanUuid then
-                        bahanAktif[_wwBahanUuid] = nil
-                        pcall(function() unequipPet(_wwBahanUuid) end)
-                        _wwBahanUuid = nil
+                    -- v2.196: copot semua bahan lebih dari BAHAN_S1 (periodic check yg pick bahan ke-2, bukan _wwBahanUuid)
+                    local nBahan = 0
+                    for _ in pairs(bahanAktif) do nBahan = nBahan + 1 end
+                    if nBahan > BAHAN_S1 then
+                        for u in pairs(bahanAktif) do
+                            bahanAktif[u] = nil
+                            pcall(function() unequipPet(u) end)
+                            kgLog("[WW-SWAP] copot bahan ke-2: "..u:sub(1,8))
+                            nBahan = nBahan - 1
+                            if nBahan <= BAHAN_S1 then break end
+                        end
                     end
                     if _wwWhaleUuid then
                         supportKunci[_wwWhaleUuid] = "Blue Whale"
