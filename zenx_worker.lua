@@ -5894,7 +5894,11 @@ local function run(cfg)
                             -- v9.635: ekstrak maxInv dan totalAll buat bangun string lvlmax
                             local mx = tonumber(js:match('"maxInv"%s*:%s*(%d+)')) or 0
                             local cn = tonumber(js:match('"totalAll"%s*:%s*(%d+)')) or 0
-                            if mx > 0 then
+                            -- v9.703: hanya akun uplevel yang masuk /lvlmax sebagai target trade
+                            -- filter berdasarkan field "config" di upkgstat JSON
+                            local cfgVal = js:match('"config"%s*:%s*"([^"]*)"') or ""
+                            local isUplevel = cfgVal:lower():find("uplevel", 1, true) ~= nil
+                            if mx > 0 and isUplevel then
                                 lvlmaxParts[#lvlmaxParts+1] = nama .. "=" .. mx .. ":" .. cn
                             end
                         end
