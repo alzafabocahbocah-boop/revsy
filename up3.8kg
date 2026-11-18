@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.197 | WW-SWAP: cek cd langsung dari TextLabel, gak bergantung _G._wwAktif        ║
+-- ║  UP KG — v2.198 | WW-SWAP: swap-off hanya kalau _wwActiveFlag=false atau sisa>180             ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.197"
+local VERSION = "up38kg-v2.198"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -3117,12 +3117,15 @@ do
             while KG.aktif and _G.__ZenxKgResetGen == resetGen do
                 task.wait(1)
                 if not KG.aktif or KG.reset then continue end
-                -- v2.197: cek langsung dari TextLabel (gak bergantung _G._wwAktif yg bisa stale)
+                -- v2.198: wwOn = _wwActiveFlag (reliable, set ChildAdded/poll)
+                -- sisa dari TextLabel; kalau TextLabel kosong sesaat → sisa=0 tapi wwOn masih true
+                -- shouldSwapOut: hanya swap-out kalau sisa jelas di range (gak trigger kalau sisa=0)
+                -- shouldSwapOff: hanya swap-off kalau WW beneran habis (_wwActiveFlag=false) atau sisa > 180
+                local wwFlag = (_G._wwActiveFlag == true)
                 local sisa = getWwSisa()
-                local wwOn = sisa > 0
                 local curTim = _G._cocoLineupTim or 1
-                -- whale OUT kalau WW aktif dan cd di range 15s-180s (3 menit), skip kalau Tim 3
-                local shouldSwapOut = wwOn and sisa >= 15 and sisa <= 180 and curTim ~= 3
+                local shouldSwapOut = wwFlag and sisa >= 15 and sisa <= 180 and curTim ~= 3
+                local shouldSwapOff = _wwSwapActive and (not wwFlag or sisa > 180)
                 if shouldSwapOut and not _wwSwapActive then
                     -- masuk range → whale out, bahan ekstra in
                     local wUuid = nil
@@ -3147,8 +3150,8 @@ do
                             kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out (sesi 2, gak tambah bahan)")
                         end
                     end
-                elseif _wwSwapActive and not shouldSwapOut then
-                    -- keluar range (cd < 15s, > 180s, atau WW habis) → whale balik
+                elseif shouldSwapOff then
+                    -- WW habis (_wwActiveFlag=false) atau cd > 180s → whale balik
                     _wwSwapActive = false
                     _G._wwSwapExclude = nil  -- v2.190: clear exclude, isiKurang boleh cek whale lagi
                     _G._wwBahanMax = nil     -- v2.193: clear limit sementara, balik ke BAHAN_S1
