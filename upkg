@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v1.36"
+local VERSION = "v1.37"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -534,68 +534,28 @@ end)
 
 
 
--- cari container getgc (cache, re-find kalau invalid) — port dari kg.lua
+-- v1.37: container via RC langsung (ActivePetsService_Replicator) — gak pakai getgc
 local _kgContainer = nil
 local function findMemoryContainer()
-    if not getgc then return nil end
-    local backpackUUIDs, bpCount = {}, 0
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") then
-                local u = t:GetAttribute("PET_UUID")
-                if u then
-                    local k = tostring(u); if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
-                    backpackUUIDs[k] = true; bpCount = bpCount + 1
-                end
-            end
+    local result = nil
+    local ok, err = pcall(function()
+        local RS2 = game:GetService("ReplicatedStorage")
+        local RC = require(RS2.Modules.ReplicationClass)
+        local inst = RC.new("ActivePetsService_Replicator")
+        local data = inst:GetData(player.Name)
+        local dat = data.Table.PlayerPetData[player.Name].PetInventory.Data
+        local out = {}
+        for uuid, entry in pairs(dat) do
+            if type(entry) == "table" then out[tostring(uuid)] = entry end
         end
-    end
-    local best, bestCount, bestMatch = nil, 0, 0
-    pcall(function()
-        for _, obj in pairs(getgc(true)) do
-            if type(obj) == "table" then
-                local uuidLike, matchCount = 0, 0
-                for k in pairs(obj) do
-                    if type(k) == "string" and #k >= 32 and k:find("-") then
-                        uuidLike = uuidLike + 1
-                        if backpackUUIDs[k] then matchCount = matchCount + 1 end
-                        if uuidLike >= 50 and matchCount == 0 then break end
-                    end
-                end
-                if uuidLike >= 5 then
-                    local sample = nil
-                    for _, v in pairs(obj) do sample = v; break end
-                    if type(sample) == "table" and rawget(sample, "PetData") then
-                        local cnt = 0; for _ in pairs(obj) do cnt = cnt + 1 end
-                        local better = false
-                        if bpCount > 0 then
-                            if matchCount > bestMatch then better = true
-                            elseif matchCount == bestMatch and cnt > bestCount then better = true end
-                        else
-                            if cnt > bestCount then better = true end
-                        end
-                        if better then best = obj; bestCount = cnt; bestMatch = matchCount end
-                    end
-                end
-            end
-        end
+        if next(out) then result = out end
     end)
-    return best
+    if not ok then print("[upkg] findMemoryContainer RC ERR: "..tostring(err):sub(1,80)) end
+    return result
 end
 local function ambilContainer()
-    -- valid kalau masih tabel + ada PetData. re-find kalau nil.
-    if _kgContainer then
-        local ok = false
-        pcall(function()
-            for _, v in pairs(_kgContainer) do
-                if type(v) == "table" and rawget(v, "PetData") then ok = true end
-                break
-            end
-        end)
-        if ok then return _kgContainer end
-    end
-    _kgContainer = findMemoryContainer()
+    local fresh = findMemoryContainer()
+    if fresh then _kgContainer = fresh end
     return _kgContainer
 end
 -- age-1 KG = BaseWeight × 1.1 (dari kg.lua)
@@ -1070,6 +1030,25 @@ do
         return out
     end
 
+    -- list SEMUA pet dari RC container (equipped + backpack) — lebih reliable dari listPetsEngine
+    local function listPetsAll()
+        local c = _kgContainer
+        if not c then return listPetsEngine() end
+        local out = {}
+        for uuid, e in pairs(c) do
+            if type(e) == "table" and e.PetType then
+                local tipe = stripMutation(tostring(e.PetType))
+                local pd = e.PetData or {}
+                local bw = tonumber(pd.BaseWeight) or 0
+                local lv = tonumber(pd.Level) or 0
+                out[#out+1] = { uuid = fmtUUID(uuid), tipe = tipe, age = lv,
+                    kg = bw * (lv + 10) / 10, kgBase = bw * 1.1 }
+            end
+        end
+        if #out == 0 then return listPetsEngine() end
+        return out
+    end
+
     -- SESI 1 (up AGE): 6 support, swap support doang, bahan 2, rotate pas age>=50
     local SUPPORT_S1 = {
         { nama = "Mimic Octopus",   cari = { "mimic" },              jml = 4 },
@@ -1195,7 +1174,8 @@ do
     -- pilih support (PALING GEDE per tipe, kunci) — tim sesuai SESI
     local function pilihSupport(sesi)
         local SUP = (sesi == 2) and getSupS2() or getSupS1()
-        local pets = listPetsEngine()
+        -- pakai listPetsAll (RC) biar pet yg lagi di-equip juga ke-detect, gak copot-pasang ulang
+        local pets = (listPetsAll and listPetsAll()) or listPetsEngine()
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local ada = {}
         for _, nm in pairs(supportKunci) do ada[nm] = (ada[nm] or 0) + 1 end
@@ -1215,7 +1195,7 @@ do
         local target = _G.ZenxKgUpTipe
         if type(target) ~= "table" or not next(target) then return end
         local maxB = (sesi == 2) and getMaxBS2() or getMaxBS1()
-        local pets = listPetsEngine()
+        local pets = (listPetsAll and listPetsAll()) or listPetsEngine()
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local n = jml(bahanAktif)
         for _, p in ipairs(pets) do
@@ -1435,6 +1415,8 @@ do
         KG.pickup = 0.25   -- jeda setelah ready sebelum copot (kecil = pickup responsif). spider gak di-swap jadi gak perlu special.
         CLUSTER = farmCenter()   -- v0.73: BALIKIN buat swap (equip ke tengah pas swap = gacor, nentuin posisi). HOLD-loop yg dimatiin (biar gak ditahan terus pas gak swap).
         supportKunci = {}; bahanAktif = {}
+        -- v1.37: refresh container di awal kgStart biar loop tunggu container cepet break
+        pcall(function() ambilContainer() end)
         -- v2.132: cek Whale SEKALI di awal — lineup Whale aktif kalau ada, tidak berubah selama sesi
         _adaWhale = cekWhaleAwal()
         kgLog("cekWhale awal: "..((_adaWhale) and "ADA -> lineup Whale" or "tidak ada -> lineup normal"))
