@@ -173,9 +173,24 @@ task.spawn(function()
                 cocoLbl.TextColor3 = Color3.fromRGB(90, 80, 40)
             end
         end
-        -- v2.123g: Whale Waters badge — detect via _G._wwAktif (di-set dari ChildAdded hook)
+        -- v2.131: Whale Waters — tampil countdown di header ttl + badge
         do
             local wwAktif = _G._wwAktif == true
+            -- baca countdown dari Bottom_UI
+            local wwCd = ""
+            pcall(function()
+                local pg = game.Players.LocalPlayer.PlayerGui
+                local cd = pg.Bottom_UI.BottomFrame.Holder.List.WhaleWaters.TextLabel.Text
+                if cd and cd ~= "" then wwCd = cd end
+            end)
+            -- update header: "UP3.8KG  🌊1m 46s" atau "UP3.8KG" kalau tidak aktif
+            if wwAktif and wwCd ~= "" then
+                ttl.Text = "UP3.8KG  \u{1F30A}"..wwCd
+                ttl.Size = UDim2.new(0, 220, 1, 0)
+            else
+                ttl.Text = "UP3.8KG"
+                ttl.Size = UDim2.new(0, 140, 1, 0)
+            end
             wwBadge.Visible = wwAktif
             wwStroke.Thickness = wwAktif and 2 or 0
         end
@@ -782,19 +797,31 @@ do
         end
     end)
     -- ChildAdded: set flag DULU baru destroy
+    -- v2.131: pakai Clam sebagai trigger utama (lebih banyak & reliable)
     WS.ChildAdded:Connect(function(c)
         for _, nm in ipairs(_wwVfxNames) do
             if c.Name == nm then
-                if nm == "Whale" then _G._wwActiveFlag = true; _G._wwAktif = true end
+                if nm == "Whale" or nm == "Clam" then
+                    _G._wwActiveFlag = true; _G._wwAktif = true
+                end
                 task.wait(0.05); pcall(function() c:Destroy() end); break
             end
         end
     end)
-    -- ChildRemoved: kalau semua Whale hilang, reset flag
-    WS.ChildRemoved:Connect(function(c)
-        if c.Name == "Whale" then
-            -- cek apakah masih ada Whale lain
-            if not WS:FindFirstChild("Whale") then
+    -- ChildRemoved: cek via countdown TextLabel — kalau "0s" atau kosong = selesai
+    -- v2.131: jangan reset dari Whale saja (di-destroy duluan), pakai poll Bottom_UI
+    task.spawn(function()
+        while true do
+            task.wait(3)
+            if not (_G._wwActiveFlag == true) then continue end
+            -- cek countdown di Bottom_UI
+            local cd = ""
+            pcall(function()
+                cd = game.Players.LocalPlayer.PlayerGui
+                    .Bottom_UI.BottomFrame.Holder.List.WhaleWaters.TextLabel.Text
+            end)
+            -- kalau kosong atau tidak ada = event selesai
+            if cd == "" or cd == nil then
                 _G._wwActiveFlag = false; _G._wwAktif = false
             end
         end
