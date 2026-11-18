@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.172 | debug ENFORCE: log eqSet vs supKunci count                               ║
+-- ║  UP KG — v2.179 | debug: equipSemua delay 0.25s, RC eqSz change log, HEAL equip result    ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.178"
+local VERSION = "up38kg-v2.179"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -2097,6 +2097,7 @@ do
     local modelByUuid = {}
     -- up3.8kg: RC cache EquippedPets — update tiap 2s, pengganti modelByUuid untuk cek equipped
     local _equippedSet = {}
+    local _equippedSetFrozen = 0  -- timestamp: kalau > tick() -> skip RC overwrite
     local function refreshEquippedSet()
         -- jangan wipe _equippedSet kalau RC error (ActivePetsService crash)
         -- hanya update kalau berhasil dapat data valid
@@ -2118,7 +2119,20 @@ do
             end
             return s
         end)
-        if ok and newSet then _equippedSet = newSet end
+        if ok and newSet then
+            local prevSz = 0; for _ in pairs(_equippedSet) do prevSz = prevSz + 1 end
+            local newSz = 0; for _ in pairs(newSet) do newSz = newSz + 1 end
+            -- v2.179: kalau frozen (HEAL baru equip), skip RC overwrite yg lebih kecil
+            if tick() < _equippedSetFrozen then
+                -- frozen: merge saja (tambah yg baru dari RC, tapi jangan hapus optimistic entries)
+                for k in pairs(newSet) do _equippedSet[k] = true end
+            else
+                _equippedSet = newSet
+                if prevSz > 0 and newSz < prevSz then
+                    kgLog("[dbg-rc] eqSz "..prevSz.." -> "..newSz.." (RC update)")
+                end
+            end
+        end
         -- kalau RC error: pertahankan _equippedSet lama (jangan wipe -> HEAL false alarm)
     end
     refreshEquippedSet() -- isi langsung saat startup, jangan tunggu 2s
@@ -2454,9 +2468,13 @@ do
     end
     local function equipSemua()
         -- up6kg: SKIP pet yg UDAH ke-equip (transisi smart -> yg ke-keep gak di-equip ulang).
-        local dly = 0.06
-        for u in pairs(supportKunci) do if not modelByUuid[u] then equipPet(u, CLUSTER); task.wait(dly) end end
-        for u in pairs(bahanAktif) do if not modelByUuid[u] then equipPet(u, CLUSTER); task.wait(dly) end end
+        local dly = 0.25  -- v2.179: naik dari 0.06 -> server throttle suspect
+        local eqCount = 0
+        for u in pairs(supportKunci) do if not modelByUuid[u] then equipPet(u, CLUSTER); eqCount=eqCount+1; task.wait(dly) end end
+        for u in pairs(bahanAktif) do if not modelByUuid[u] then equipPet(u, CLUSTER); eqCount=eqCount+1; task.wait(dly) end end
+        kgLog("[dbg-equip] equipSemua: "..eqCount.." equip fired, dly="..dly.."s")
+        -- freeze RC overwrite 15s setelah equip massal (RC perlu waktu konfirmasi semua)
+        _equippedSetFrozen = tick() + 15
         -- v1.6: PERSISTENT support-protect (samain up6kg v10.101). supportKunci di-clear in-place pas REDO
         -- -> window KOSONG -> petsLolos gak skip support -> kekirim. Snapshot ini gak ikut ke-clear.
         if next(supportKunci) then
@@ -3133,11 +3151,15 @@ do
                         if not rcEquipped and not busy[u] and idle > 3 then
                             local tp = tostring(tipeDariUuid(u) or "?")
                             kgLog("[dbg-heal] MISS eqSz="..eqSz.." uuid="..tostring(u):sub(1,12).." tp="..tp:sub(1,20))
-                            unequipPet(u); task.wait(0.15)
-                            equipPet(u, CLUSTER); task.wait(0.12)
+                            -- v2.179: JANGAN unequip dulu — langsung equip saja
+                            -- unequip dulu justru bikin pet ilang kalau server sudah counted equipped
+                            local okEq = pcall(function() equipRE:FireServer("EquipPet", fmtUUID(u), CFrame.new(CLUSTER)) end); task.wait(0.15)
+                            kgLog("[dbg-heal] equip result: eq="..tostring(okEq))
                             -- optimistic update: tandai di _equippedSet langsung tanpa tunggu RC refresh
                             _equippedSet[clean] = true
                             _equippedSet["{"..clean.."}"] = true
+                            -- freeze RC overwrite 10s biar RC yg lambat gak hapus optimistic entries
+                            _equippedSetFrozen = tick() + 10
                             healed = healed + 1
                         end
                     end
