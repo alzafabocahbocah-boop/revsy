@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.122 | sesi1+Whale: Whale+Peacock+Lion+RainbowDilop+2Gilded                   ║
+-- ║  UP KG — v2.124c | sesi1+Whale: Whale+Peacock+Lion+RainbowDilop+2Gilded                  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.122"
+local VERSION = "up38kg-v2.124c"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -764,10 +764,10 @@ do
     end
     -- destroy sekali pas start
     task.spawn(function() task.wait(5); destroyWWVfx(); cekWWAktif() end)
-    -- loop tiap 3s
+    -- loop tiap 10s (v2.124c: dulu 3s -> bikin lag, WS:GetChildren setiap 3s berat)
     task.spawn(function()
         while true do
-            task.wait(3)
+            task.wait(10)
             pcall(cekWWAktif)
             pcall(destroyWWVfx)
         end
@@ -914,12 +914,18 @@ do
     -- scan coconut saat startup (sebelum whale check pertama)
     task.spawn(function() task.wait(4); pcall(scanCocoBuah) end)
 
-    -- loop utama: cek whale tiap 5 detik
+    -- loop utama: cek whale tiap 5 detik (scan coco: 5s saat whale aktif, 15s saat idle)
     task.spawn(function()
+        local _cocoTick = 0
         while true do
             task.wait(5)
-            -- selalu update coconut counter di panel (meski whale belum ada)
-            pcall(scanCocoBuah)
+            -- v2.124c: scan coco tiap 15s kalau whale belum aktif (scan farm berat), tiap 5s saat aktif
+            local now = tick()
+            local scanInterval = _cocoRunning and 5 or 15
+            if (now - _cocoTick) >= scanInterval then
+                pcall(scanCocoBuah)
+                _cocoTick = now
+            end
             local adaWhale = false
             pcall(function()
                 local plr = game:GetService("Players").LocalPlayer
@@ -2917,26 +2923,7 @@ do
             cdwLog("OFF")
         end)
         -- HEALER cek TERUS (tiap 1s): pet tim yg model-nya ILANG -> langsung PAKSA copot->pasang
-        -- HOLD di TENGAH: tahan pet tim di CLUSTER (numpuk rapet) — pivot balik kalau drift >3 stud
-        task.spawn(function()
-            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
-                task.wait(0.25)
-                if _G.ZenxAutoTengah and KG.aktif and not KG.reset and CLUSTER then   -- v0.76: HOLD-ke-tengah lewat toggle "AUTO TENGAH"
-                    for uuid in pairs(modelByUuid) do
-                        -- up6kg: GAK ada yg ditahan tengah (semua swap skill termasuk Ele)
-                        if false and not busy[uuid] then
-                            local m = modelByUuid[uuid]
-                            if m and m.Parent then
-                                local ok, p = pcall(function() return m:GetPivot().Position end)
-                                if ok and (p - CLUSTER).Magnitude > 3 then
-                                    pcall(function() m:PivotTo(CFrame.new(CLUSTER)) end)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end)
+        -- HOLD di TENGAH: dimatiin (if false body) -> loop dihapus (v2.124c: sumber lag 0.25s dead loop)
         -- (server nganggep udah equip -> equip biasa no-op. copot dulu baru equip = model spawn lagi)
         task.spawn(function()
             while KG.aktif and _G.__ZenxKgResetGen == resetGen do
@@ -6478,7 +6465,7 @@ if not _G.__ZenxUpkgNightScan then
                 end
                 _G.ZenxUpkgNight = night
             end)
-            task.wait(15)
+            task.wait(30)   -- v2.124c: dulu 15s -> pg:GetDescendants scan berat, 30s cukup
         end
     end)
 end
@@ -6551,10 +6538,10 @@ do
     -- apply sekarang
     applyLightingFX(); destroyParticlesIn(workspace); applyWeather(); applyColorFX()
 
-    -- cleanup loop tiap 10s (sama kayak up6kg)
+    -- cleanup loop tiap 30s (v2.124c: dulu 10s -> workspace:GetDescendants tiap 10s = lag berat, 30s cukup)
     task.spawn(function()
         while true do
-            task.wait(10)
+            task.wait(30)
             destroyParticlesIn(workspace); applyWeather(); applyColorFX(); applyLightingFX()
         end
     end)
