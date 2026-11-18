@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.189 | fix COCO scope (setLineupTim via _G), filter ActivePetsService noise  ║
+-- ║  UP KG — v2.190 | fix WW-SWAP: whale di-swap keluar tapi isiKurang langsung equip balik  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.189"
+local VERSION = "up38kg-v2.190"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -2982,7 +2982,9 @@ do
         local SUP = getSUP(sesi)
         local cnt = {}
         for _, nm in pairs(supportKunci) do cnt[nm] = (cnt[nm] or 0) + 1 end
+        local wwExclude = _G._wwSwapExclude or {}  -- v2.190: skip nama yg lagi di-WW-SWAP
         for _, sup in ipairs(SUP) do
+            if wwExclude[sup.nama] then continue end  -- v2.190: whale lagi swap out, skip
             local perlu = sup.jml - (cnt[sup.nama] or 0)
             if perlu > 0 then
                 local pool = supPool[sup.nama] or {}
@@ -3131,6 +3133,8 @@ do
                         _wwSwapActive = true
                         _wwWhaleUuid = wUuid
                         supportKunci[wUuid] = nil
+                        -- v2.190: exclude whale dari isiKurang check selama WW-SWAP aktif
+                        _G._wwSwapExclude = {["Blue Whale"] = true}
                         pcall(function() unequipPet(wUuid) end)
                         kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out, cari bahan ekstra")
                         task.wait(0.5)
@@ -3150,6 +3154,7 @@ do
                 elseif _wwSwapActive and not shouldSwapOut then
                     -- keluar range (cd < 15s, > 180s, atau WW habis) → whale balik
                     _wwSwapActive = false
+                    _G._wwSwapExclude = nil  -- v2.190: clear exclude, isiKurang boleh cek whale lagi
                     kgLog("[WW-SWAP] cd="..sisa.."s keluar range → whale balik")
                     if _wwBahanUuid then
                         bahanAktif[_wwBahanUuid] = nil
@@ -3179,7 +3184,9 @@ do
                         local cnt = {}
                         for _, nm in pairs(supportKunci) do cnt[nm] = (cnt[nm] or 0) + 1 end
                         local kurang = false
+                        local wwExclude = _G._wwSwapExclude or {}  -- v2.190: skip WW-SWAP names
                         for _, sup in ipairs(getSUP(KG.sesi)) do
+                            if wwExclude[sup.nama] then continue end  -- v2.190
                             if (cnt[sup.nama] or 0) < sup.jml then kurang = true; break end
                         end
                         if kurang then isiKurang(KG.sesi) end
