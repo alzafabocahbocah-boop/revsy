@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.174"
+local VERSION = "up38kg-v2.175"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -2098,24 +2098,28 @@ do
     -- up3.8kg: RC cache EquippedPets — update tiap 2s, pengganti modelByUuid untuk cek equipped
     local _equippedSet = {}
     local function refreshEquippedSet()
-        pcall(function()
+        -- jangan wipe _equippedSet kalau RC error (ActivePetsService crash)
+        -- hanya update kalau berhasil dapat data valid
+        local ok, newSet = pcall(function()
             local RS2 = game:GetService("ReplicatedStorage")
             local plr2 = game:GetService("Players").LocalPlayer
             local mod2 = RS2:FindFirstChild("Modules") and RS2.Modules:FindFirstChild("ReplicationClass")
-            if not mod2 then return end
+            if not mod2 then return nil end
             local rc2 = require(mod2).new("ActivePetsService_Replicator")
             local d2 = rc2:GetData(plr2.Name)
             local eq = d2.Table.PlayerPetData[plr2.Name].EquippedPets
-            local newSet = {}
+            local s = {}
             if type(eq) == "table" then
                 for _, u in ipairs(eq) do
                     local clean = tostring(u):gsub("[{}]","")
-                    newSet[clean] = true
-                    newSet["{"..clean.."}"] = true
+                    s[clean] = true
+                    s["{"..clean.."}"] = true
                 end
             end
-            _equippedSet = newSet
+            return s
         end)
+        if ok and newSet then _equippedSet = newSet end
+        -- kalau RC error: pertahankan _equippedSet lama (jangan wipe -> HEAL false alarm)
     end
     refreshEquippedSet() -- isi langsung saat startup, jangan tunggu 2s
     task.spawn(function()
@@ -2976,7 +2980,7 @@ do
         -- ENFORCE: copot pet equipped yg UNTRACKED (gak di supportKunci & bahanAktif).
         -- Cukup 1x setelah _equippedSet refresh (2.5s) — gak perlu scan modelByUuid terus-terusan.
         task.spawn(function()
-            task.wait(2.5) -- tunggu equip selesai
+            task.wait(5) -- tunggu equip + bahan LEBIH copot + RC refresh selesai
             refreshEquippedSet() -- force refresh sebelum cek
             if (KG.sesi or 1) ~= sesi then return end
             local eqCnt = 0; for _ in pairs(_equippedSet) do eqCnt = eqCnt + 1 end
