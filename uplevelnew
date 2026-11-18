@@ -1,4 +1,4 @@
--- uplevelnew v8.814
+-- uplevelnew v8.815
 -- v8.814: hapus "clear" dari SWAP_ANIM — deepFind skip nil jadi clear mati total, samain up3.8kg
 -- v8.813: fan tetap task.spawn sendiri (bukan queue) — roar/weave/clear pakai queue worker, fan langsung tanpa throttle
 -- v8.812: port swap engine dari up3.8kg — isMyPetUUID backpack+char scan, sequential queue worker, hapus fan throttle 0.5s
@@ -290,7 +290,7 @@ local function _main()
 -- v8.311: global agar accessible di block AUTO MTS (executor Delta isolate local)
 RS = game:GetService("ReplicatedStorage")
 plr = game.Players.LocalPlayer
-local VERSION = "v8.791"  -- v8.791: revert skip trade — kembali ke total >= maxInv (fix salah edit v8.789-790)
+local VERSION = "v8.815"  -- v8.815: matiin auto-tengah, hapus logModelName DescendantAdded, plant seed 0.1->0.5s
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
@@ -3934,7 +3934,7 @@ pcall(function()
 end)
 workspace.DescendantAdded:Connect(function(d) task.defer(function()
     pcall(regModel,d)
-    pcall(logModelName,d)  -- v8.781: log format nama model baru
+    -- v8.815: hapus logModelName dari DescendantAdded — flood tiap object spawn bikin lag
     -- debug: log semua model yang masuk workspace (bukan hanya yg lolos isPetModel)
     if d:IsA("Model") then
         local nm = tostring(d.Name)
@@ -5495,7 +5495,7 @@ end)
 task.spawn(function()
     local _logTick = 0
     while true do
-        task.wait(0.1)
+        task.wait(0.5)  -- v8.815: 0.1s -> 0.5s, kurangi lag
         if not _psRunning or not _psSelectedSeed then continue end
         -- cek RE
         if not plantRE then plantRE = gameEvents:FindFirstChild("Plant_RE") end
@@ -6407,32 +6407,8 @@ end)
 
 -- ===================== POSISI LOOP =====================
 -- Mimic  → paksa ke titik slot-nya (MIMIC_POSITIONS[slotNum])
--- Peacock / Ghostly Spider / Baku → paksa ke tengah kebun
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        if not running or stopRequested then continue end
-        local center = _clusterPos or farmCenter()
-        for uuid in pairs(_activeUuids) do
-            local m = modelByUuid[uuid]
-            if not m or not m.Parent then continue end
-            local tipe = getPetTipeFromUUID(uuid)
-            if not tipe then continue end
-            local targetPos = nil
-            if AUTO_TENGAH_TYPES[tipe] and center then
-                targetPos = center
-            end
-            if targetPos then
-                pcall(function()
-                    local pos = m:GetPivot().Position
-                    if (pos - targetPos).Magnitude > 2 then
-                        m:PivotTo(CFrame.new(targetPos))
-                    end
-                end)
-            end
-        end
-    end
-end)
+-- v8.815: auto-tengah dimatiin (gak perlu, bikin lag)
+-- task.spawn(function() while true do ... end end)
 
 -- ===================== AUTOLVLNEWW LOOP =====================
 -- auto-shovel: equip shovel, FireServer Remove_Item tiap pohon bermutasi, unequip setelah selesai
