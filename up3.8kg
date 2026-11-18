@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.175"
+local VERSION = "up38kg-v2.176"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -2561,7 +2561,11 @@ do
         end
         -- 3. pet EXTRA/UNTRACKED ke-equip (gak di supportKunci & bahanAktif) -> copot
         for uuid in pairs(_equippedSet) do
-            if not supportKunci[uuid] and not bahanAktif[uuid] then
+            local cleanU = tostring(uuid):gsub("[{}]","")
+            local bracedU = "{"..cleanU.."}"
+            local inSup = supportKunci[uuid] or supportKunci[cleanU] or supportKunci[bracedU]
+            local inBahan = bahanAktif[uuid] or bahanAktif[cleanU] or bahanAktif[bracedU]
+            if not inSup and not inBahan then
                 local tipe = tipeDariUuid(uuid)
                 -- v10.52: Ele di-protect CUMA sesi 2 (dipegang buat up-kg). Sesi 1 -> copot
                 -- (masuk backpack, gak makan slot pet leveling).
@@ -3119,6 +3123,7 @@ do
                     for u in pairs(supportKunci) do team[u] = true end
                     for u in pairs(bahanAktif) do team[u] = true end
                     local healed = 0
+                    local eqSz = 0; for _ in pairs(_equippedSet) do eqSz = eqSz + 1 end
                     for u in pairs(team) do
                         local idle = lastSwap[u] and (tick() - lastSwap[u]) or 999
                         -- RC gak equip + gak lagi di-swap + gak baru di-swap -> paksa re-equip
@@ -3127,7 +3132,7 @@ do
                         local rcEquipped = _equippedSet[u] or _equippedSet[clean] or _equippedSet["{"..clean.."}"]
                         if not rcEquipped and not busy[u] and idle > 3 then
                             local tp = tostring(tipeDariUuid(u) or "?")
-                            kgLog("[dbg-heal] MISS uuid="..tostring(u):sub(1,12).." tp="..tp:sub(1,20))
+                            kgLog("[dbg-heal] MISS eqSz="..eqSz.." uuid="..tostring(u):sub(1,12).." tp="..tp:sub(1,20))
                             unequipPet(u); task.wait(0.15)
                             equipPet(u, CLUSTER); task.wait(0.12)
                             healed = healed + 1
