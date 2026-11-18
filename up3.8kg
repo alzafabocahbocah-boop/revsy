@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.199 | WW-SWAP: swap-off kalau WW habis / cd<15s / cd>180s                        ║
+-- ║  UP KG — v2.200 | WW-SWAP: log lengkap countdown WW + status bahan ke-2                      ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.199"
+local VERSION = "up38kg-v2.200"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -3127,6 +3127,17 @@ do
                 local shouldSwapOut = wwFlag and sisa >= 15 and sisa <= 180 and curTim ~= 3
                 -- swap-off: WW habis, atau cd < 15s, atau cd > 180s (TextLabel kosong sementara bukan alasan)
                 local shouldSwapOff = _wwSwapActive and (not wwFlag or (sisa > 0 and sisa < 15) or sisa > 180)
+                -- v2.200: log WW countdown tiap detik (debug)
+                if wwFlag then
+                    local nBahanNow = jml(bahanAktif)
+                    local bahanInfo = ""
+                    for u, tipe in pairs(bahanAktif) do
+                        bahanInfo = bahanInfo .. tipe .. "(age" .. (getAge(u) or "?") .. ") "
+                    end
+                    kgLog("[WW] cd=" .. sisa .. "s | swap=" .. tostring(_wwSwapActive)
+                        .. " | bahan " .. nBahanNow .. "/" .. (_G._wwBahanMax or BAHAN_S1)
+                        .. " [" .. bahanInfo:gsub("%s+$","") .. "]")
+                end
                 if shouldSwapOut and not _wwSwapActive then
                     -- masuk range → whale out, bahan ekstra in
                     local wUuid = nil
@@ -3142,36 +3153,41 @@ do
                         pcall(function() unequipPet(wUuid) end)
                         -- v2.195: sesi 1 → tambah bahan ke-2; sesi 2 → copot whale doang
                         if KG.sesi == 1 then
-                            kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out, tambah bahan ke-2")
+                            kgLog("[WW-SWAP] cd="..sisa.."s → whale OUT (uuid="..wUuid:sub(1,8).."), set bahan max=2")
                             -- v2.196: set limit 2, lalu biarkan periodic isi-ulang (pilihBahan) yg pick bahan ke-2
-                            -- sama persis logika bahan ke-1: age<50 sesi 1, ganti kalau age 50+
                             _G._wwBahanMax = 2
-                            kgLog("[WW-SWAP] bahan ke-2: akan diisi periodic check")
+                            kgLog("[WW-SWAP] bahan aktif saat ini: "..jml(bahanAktif).." → tunggu periodic isi ke-2")
                         else
-                            kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out (sesi 2, gak tambah bahan)")
+                            kgLog("[WW-SWAP] cd="..sisa.."s → whale OUT (sesi 2, bahan tetap "..jml(bahanAktif)..")")
                         end
+                    else
+                        kgLog("[WW-SWAP] cd="..sisa.."s → mau swap tapi whale gak ketemu di supportKunci!")
                     end
                 elseif shouldSwapOff then
-                    -- WW habis (_wwActiveFlag=false) atau cd > 180s → whale balik
+                    -- WW habis atau cd < 15s → whale balik
+                    local alasan = not wwFlag and "WW habis" or ("cd="..sisa.."s")
+                    kgLog("[WW-SWAP] "..alasan.." → whale BALIK, copot bahan ke-2")
                     _wwSwapActive = false
-                    _G._wwSwapExclude = nil  -- v2.190: clear exclude, isiKurang boleh cek whale lagi
-                    _G._wwBahanMax = nil     -- v2.193: clear limit sementara, balik ke BAHAN_S1
-                    kgLog("[WW-SWAP] cd="..sisa.."s keluar range → whale balik, copot bahan ke-2")
-                    -- v2.196: copot semua bahan lebih dari BAHAN_S1 (periodic check yg pick bahan ke-2, bukan _wwBahanUuid)
+                    _G._wwSwapExclude = nil
+                    _G._wwBahanMax = nil
+                    -- v2.196: copot semua bahan lebih dari BAHAN_S1
                     local nBahan = 0
                     for _ in pairs(bahanAktif) do nBahan = nBahan + 1 end
                     if nBahan > BAHAN_S1 then
-                        for u in pairs(bahanAktif) do
+                        for u, tipe in pairs(bahanAktif) do
                             bahanAktif[u] = nil
                             pcall(function() unequipPet(u) end)
-                            kgLog("[WW-SWAP] copot bahan ke-2: "..u:sub(1,8))
+                            kgLog("[WW-SWAP] copot bahan ke-2: "..tipe.." (uuid="..u:sub(1,8)..")")
                             nBahan = nBahan - 1
                             if nBahan <= BAHAN_S1 then break end
                         end
+                    else
+                        kgLog("[WW-SWAP] bahan ke-2 belum sempat masuk (bahan aktif: "..nBahan..")")
                     end
                     if _wwWhaleUuid then
                         supportKunci[_wwWhaleUuid] = "Blue Whale"
                         pcall(function() equipPet(_wwWhaleUuid, CLUSTER) end)
+                        kgLog("[WW-SWAP] whale kembali (uuid="..(_wwWhaleUuid):sub(1,8)..")")
                         _wwWhaleUuid = nil
                     end
                 end
@@ -3306,10 +3322,22 @@ do
                     end
                     -- isi ulang bahan
                     local maxB = _G._wwBahanMax or ((KG.sesi == 2) and BAHAN_S2 or BAHAN_S1)  -- v2.193
-                    if jml(bahanAktif) < maxB then
+                    local jmlSblm = jml(bahanAktif)
+                    if jmlSblm < maxB then
+                        kgLog("[BAHAN] kurang ("..jmlSblm.."/"..maxB..") → pilihBahan sesi"..KG.sesi
+                            .. (_G._wwBahanMax and " [WW slot]" or ""))
                         pilihBahan(KG.sesi)
-                        for u in pairs(bahanAktif) do
-                            if not modelByUuid[u] then equipPet(u, CLUSTER); task.wait(0.06) end
+                        local equipped = 0
+                        for u, tipe in pairs(bahanAktif) do
+                            if not modelByUuid[u] then
+                                equipPet(u, CLUSTER); task.wait(0.06)
+                                kgLog("[BAHAN] equip bahan ke-" .. jml(bahanAktif) .. ": " .. tipe
+                                    .. " age " .. (getAge(u) or "?"))
+                                equipped = equipped + 1
+                            end
+                        end
+                        if equipped == 0 then
+                            kgLog("[BAHAN] pilihBahan selesai tapi gak ada yg di-equip baru (total="..jml(bahanAktif)..")")
                         end
                     end
                     -- re-equip support yg hilang -- GRACE 5s: baru equip kalo hilang >5s
