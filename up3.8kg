@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.183"
+local VERSION = "up38kg-v2.184"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -3101,8 +3101,10 @@ do
                 if not KG.aktif or KG.reset then continue end
                 local wwOn = _G._wwAktif == true
                 local sisa = wwOn and getWwSisa() or 0
-                if wwOn and not _wwSwapActive then
-                    -- WW baru aktif — cari whale di supportKunci, keluarkan
+                -- whale OUT kalau WW aktif dan cd di range 15s-180s (3 menit)
+                local shouldSwapOut = wwOn and sisa >= 15 and sisa <= 180
+                if shouldSwapOut and not _wwSwapActive then
+                    -- masuk range → whale out, bahan ekstra in
                     local wUuid = nil
                     for u, nm in pairs(supportKunci) do
                         if tostring(nm):lower():find("whale", 1, true) then wUuid = u; break end
@@ -3112,7 +3114,7 @@ do
                         _wwWhaleUuid = wUuid
                         supportKunci[wUuid] = nil
                         pcall(function() unequipPet(wUuid) end)
-                        kgLog("[WW-SWAP] WW aktif → whale out, cari bahan ekstra")
+                        kgLog("[WW-SWAP] cd="..sisa.."s (15-180) → whale out, cari bahan ekstra")
                         task.wait(0.5)
                         local pets = listPetsEngine()
                         local target = _G.ZenxKgUpTipe
@@ -3127,10 +3129,10 @@ do
                             end
                         end
                     end
-                elseif _wwSwapActive and (not wwOn or sisa <= 15) then
-                    -- WW selesai ATAU cd tinggal <= 15s → whale balik
+                elseif _wwSwapActive and not shouldSwapOut then
+                    -- keluar range (cd < 15s, > 180s, atau WW habis) → whale balik
                     _wwSwapActive = false
-                    kgLog("[WW-SWAP] cd="..sisa.."s → whale balik")
+                    kgLog("[WW-SWAP] cd="..sisa.."s keluar range → whale balik")
                     if _wwBahanUuid then
                         bahanAktif[_wwBahanUuid] = nil
                         pcall(function() unequipPet(_wwBahanUuid) end)
