@@ -8,7 +8,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.702"
+local VERSION = "9.703"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5464,6 +5464,7 @@ local function run(cfg)
     local lastSettingCek = 0   -- v9.34: kapan terakhir cek /setting-tim (tiap 5s)
     local lastLandscapeCek = 0  -- v9.609: kapan terakhir enforce landscape (delta_split, tiap 10s)
     local lastCekGrafis = 0    -- v8.12: kapan terakhir cek all grafis (tiap 90s)
+    local lastDropCache = 0    -- v9.700: kapan terakhir drop_caches berkala (tiap 30 menit)
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
     local lastPendingLog = 0     -- v6.92: kapan terakhir log "nunggu ganti akun"
@@ -6846,6 +6847,16 @@ local function run(cfg)
                     BYPASS_TERAKHIR = now
                 end
             end
+        end
+
+        -- v9.700: drop_caches berkala tiap 30 menit — bebaskan page cache Termux/Android biar RAM gak ngumpet
+        if (now - lastDropCache) >= 1800 then
+            lastDropCache = now
+            sh_silent("su -c 'sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null'")
+            local mi = sh("cat /proc/meminfo 2>/dev/null") or ""
+            local avail = tonumber(mi:match("MemAvailable:%s+(%d+)")) or 0
+            local mb = math.floor(avail / 1024)
+            info(("[auto-dropcache] drop_caches selesai — RAM tersedia: %d MB"):format(mb))
         end
 
         if false and mati and (now - lastCookieStandby) >= 300 then
