@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.703 — up6kg baca __ZenxLvlPS → worker go ke PS tim leveling target
 -- zenx_worker v9.702 — up3.8kgv2: fix _ps_override dari /ps override assign-ps saat FORCE/RESTART
 -- zenx_worker v9.701 — up3.8kgv2: broadcast assign-ps link ke semua akun di device (fix beda server)
 -- zenx_worker v9.688 — suplai-antri polling: market minta isi pet → worker arahkan leveling client ke PS market → selesai balik TradeWorld
@@ -6914,6 +6915,24 @@ local function run(cfg)
                     cfg._ps_override = link
                     _psOverrideSetTs = (link ~= "") and os.time() or 0  -- v9.689: catat kapan mulai di PS
                     info("PS dari panel: " .. (link ~= "" and link or "(public)"))
+                end
+            end
+            -- UP6KG — baca _G.__ZenxLvlPS (diset up6kg setelah pilih tim leveling target)
+            -- apply psLink ke cfg._ps_override biar worker go ke PS leveling
+            if tostring(cfg.script_label or ""):upper():find("UP6KG") or tostring(cfg.script_label or ""):upper():find("UP6") then
+                local lp = _G.__ZenxLvlPS
+                if type(lp) == "table" and (lp.psLink or "") ~= "" then
+                    if lp.psLink ~= (cfg._lvlPsApplied or "") then
+                        cfg._lvlPsApplied = lp.psLink
+                        cfg._ps_override  = lp.psLink
+                        _psOverrideSetTs  = os.time()
+                        for pkg in pairs(mapLink) do mapLink[pkg] = lp.psLink end
+                        info("[LVL-PS] apply psLink dari up6kg → tim=" .. tostring(lp.tim) .. " link=" .. lp.psLink:sub(1,40))
+                    end
+                elseif (cfg._lvlPsApplied or "") ~= "" then
+                    cfg._lvlPsApplied = ""
+                    info("[LVL-PS] up6kg clear LvlPS → refresh_ps")
+                    pcall(refresh_ps)
                 end
             end
             -- v9.690: MARKET — baca _G.__ZenxSuplaiPS (diset market script setelah pilih leveling)
