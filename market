@@ -406,7 +406,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.559"
+local VERSION = "8.560"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -693,6 +693,18 @@ task.spawn(function()
             return
         end
         -- pet jualan < threshold & belum minta / cooldown lewat → minta suplai
+        -- v8.560: kalau petRule=0 tapi totalPet masih banyak (>50), jangan minta suplai
+        -- bisa jadi rule belum ke-load / gak ada rule yang cocok sementara
+        if pet == 0 and (totalPetTerakhir or 0) > 50 then
+            _G.__ZenxSuplaiDebug = _G.__ZenxSuplaiDebug or {}
+            _G.__ZenxSuplaiDebug.status   = "SKIP-RULENOFIT"
+            _G.__ZenxSuplaiDebug.alasan   = "petRule=0 tapi totalPet=" .. tostring(totalPetTerakhir) .. " (rule gak cocok / belum load)"
+            _G.__ZenxSuplaiDebug.totalPet = totalPetTerakhir or 0
+            _G.__ZenxSuplaiDebug.maxInv   = maxInvTerakhir or 0
+            _G.__ZenxSuplaiDebug.sisa     = sisaInv
+            _G.__ZenxSuplaiDebug.petRule  = pet
+            return
+        end
         if pet < _SUPLAI_MIN and (not _supMinta) and (now - _supLamaMinta) >= _SUPLAI_CD then
             _supMinta = true
             _supLamaMinta = now
@@ -735,6 +747,10 @@ task.spawn(function()
                             -- debug info
                             local akunList = {}
                             for _, v in ipairs(d.leveling) do akunList[#akunList+1] = tostring(v.tim) .. "(" .. tostring(v.age500 or 0) .. ")" end
+                            -- v8.560: pakai _G.ZenxMarketTotalPet (RC datastore, lebih reliable) buat snapshot
+                            local _snapTotal = (_G.ZenxMarketTotalPet and _G.ZenxMarketTotalPet > 0) and _G.ZenxMarketTotalPet or totalPetTerakhir or 0
+                            local _snapMax   = maxInvTerakhir or 0
+                            local _snapSisa  = math.max(0, _snapMax - _snapTotal)
                             _G.__ZenxSuplaiDebug = {
                                 status   = "AKTIF",
                                 minta_ts = _G.__ZenxSuplaiDebug and _G.__ZenxSuplaiDebug.minta_ts or "-",
@@ -743,9 +759,9 @@ task.spawn(function()
                                 pilih    = tostring(pilih.tim) .. " age500=" .. tostring(pilih.age500 or 0),
                                 psLink   = tostring(pilih.psLink or ""),
                                 petRule  = pet,
-                                totalPet = totalPetTerakhir or 0,
-                                maxInv   = maxInvTerakhir or 0,
-                                sisa     = sisa,
+                                totalPet = _snapTotal,
+                                maxInv   = _snapMax,
+                                sisa     = _snapSisa,
                                 error    = nil,
                             }
                             warn("[SUPLAI] minta isi — pet=" .. pet
