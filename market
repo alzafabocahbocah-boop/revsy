@@ -1,3 +1,4 @@
+-- ZENX MARKET v8.564 — bacaTotalPet: skip RC (nil di TradeWorld), langsung BP scan; maxInv startup: UI scan layer 0 (zero lag)
 -- ZENX MARKET v8.559 — closeBtn: minimize ke logo Z, bukan kill GUI
 -- ZENX MARKET v8.558 — findMemoryContainer: ganti rawget ke direct index (fix memContainer gagal di up6kg)
 -- ZENX MARKET v8.552 — maxInv: tambah getgc scan layer 0 (upkg style) di startup + per-tick detect
@@ -528,40 +529,17 @@ task.spawn(function()
     -- v8.518: baca total pet LANGSUNG dari backpack (ringan, kayak bacaTokens)
     -- gak perlu scan rule -> bisa dipanggil tiap loop 20s tanpa nge-block
     local function bacaTotalPet()
-        -- v8.561: RC container dulu (sama kayak up3.8kg) — baca SEMUA pet (backpack+equip+inventory)
-        -- backpack scan miss pet yg lagi di kebun/equip slot → RC lebih akurat
+        -- v8.564: RC nil di TradeWorld (confirmed debug) — langsung BP scan, zero overhead
         local nn = 0
-        local rcOk = false
         pcall(function()
-            if not _rcInst then return end
-            local data = _rcInst:GetData(plr.Name)
-            if type(data) ~= "table" then return end
-            local tbl = rawget(data, "Table")
-            if type(tbl) ~= "table" then return end
-            local ppd = rawget(tbl, "PlayerPetData")
-            if type(ppd) ~= "table" then return end
-            local pd = rawget(ppd, plr.Name)
-            if type(pd) ~= "table" then return end
-            local pi = rawget(pd, "PetInventory")
-            if type(pi) ~= "table" then return end
-            local dat = rawget(pi, "Data")
-            if type(dat) ~= "table" then return end
-            local cnt = 0
-            for _ in pairs(dat) do cnt = cnt + 1 end
-            if cnt > 0 then nn = cnt; rcOk = true end
-        end)
-        -- fallback: backpack scan kalau RC gagal/kosong
-        if not rcOk then
-            pcall(function()
-                local bp = plr:FindFirstChild("Backpack")
-                if not bp then return end
-                for _, t in ipairs(bp:GetChildren()) do
-                    if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
-                        nn = nn + 1
-                    end
+            local bp = plr:FindFirstChild("Backpack")
+            if not bp then return end
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
+                    nn = nn + 1
                 end
-            end)
-        end
+            end
+        end)
         return nn
     end
 
@@ -849,54 +827,21 @@ task.spawn(function()
     --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
     local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
     local totalPetTerakhir, maxInvTerakhir = 0, 0   -- v8.354: total pet backpack + maxInv (buat panel)
-    -- v8.525: RC direct — prioritas utama untuk maxInv + totalPet (tanpa getgc, tanpa UI scan)
+    -- v8.564: RC nil di TradeWorld (confirmed) — _rcInst tetap nil, fungsi RC skip otomatis
     local _rcInst = nil
+    -- v8.564: totalPet boot — langsung BP scan (RC skip)
     pcall(function()
-        local RC = require(RS.Modules.ReplicationClass)
-        _rcInst = RC.new("ActivePetsService_Replicator")
-    end)
-    -- v8.525: hitung totalPet sekali di boot — RC direct dulu, fallback backpack scan
-    -- (loop hitung normalnya baru jalan setelah 60s, jadi panel dapet 0 selama itu)
-    pcall(function()
-        -- 1) RC direct (paling akurat: inventory count dari server data)
-        local rcTotal = nil
-        pcall(function()
-            if _rcInst then
-                local data = _rcInst:GetData(plr.Name)
-                if type(data) ~= "table" then return end
-                local tbl = rawget(data, "Table")
-                if type(tbl) ~= "table" then return end
-                local ppd = rawget(tbl, "PlayerPetData")
-                if type(ppd) ~= "table" then return end
-                local pd = rawget(ppd, plr.Name)
-                if type(pd) ~= "table" then return end
-                local pi = rawget(pd, "PetInventory")
-                if type(pi) ~= "table" then return end
-                local dat = rawget(pi, "Data")
-                if type(dat) ~= "table" then return end
-                local cnt = 0
-                for _ in pairs(dat) do cnt = cnt + 1 end
-                if cnt > 0 then rcTotal = cnt end
-            end
-        end)
-        if rcTotal then
-            totalPetTerakhir = rcTotal
-            _G.ZenxMarketTotalPet = rcTotal
-            return
-        end
-        -- 2) fallback: backpack scan
         local bp = plr:FindFirstChild("Backpack")
-        if bp then
-            local nn = 0
-            for _, t in ipairs(bp:GetChildren()) do
-                if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
-                    nn = nn + 1
-                end
+        if not bp then return end
+        local nn = 0
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
+                nn = nn + 1
             end
-            if nn > 0 then
-                totalPetTerakhir = nn
-                _G.ZenxMarketTotalPet = nn
-            end
+        end
+        if nn > 0 then
+            totalPetTerakhir = nn
+            _G.ZenxMarketTotalPet = nn
         end
     end)
     local function _rcGetMaxInv()
@@ -943,7 +888,26 @@ task.spawn(function()
     local _maxInvFile = plr and plr.Name and ("zenx_maxinv_" .. plr.Name .. ".txt")
     pcall(function()
         if not _maxInvFile then return end
-        -- v8.552: layer 0 — getgc scan (sama kayak upkg, paling reliable)
+        -- v8.564: layer 0a — UI scan "Pet Items (X/Y)" (zero lag, confirmed works TradeWorld)
+        if maxInvTerakhir <= 0 then pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui")
+            if not pg then return end
+            local function scanUI(obj, depth)
+                if depth > 10 or maxInvTerakhir > 0 then return end
+                if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+                    local t = obj.Text or ""
+                    local x, y = t:match("Pet Items %((%d+)/(%d+)%)")
+                    if x and y then
+                        local mx = tonumber(y)
+                        if mx and mx > 0 then maxInvTerakhir = mx end
+                        return
+                    end
+                end
+                for _, c in ipairs(obj:GetChildren()) do scanUI(c, depth+1) end
+            end
+            scanUI(pg, 0)
+        end) end
+        -- v8.552: layer 0b — getgc scan (reliable, sedikit lebih lambat dari UI scan)
         if maxInvTerakhir <= 0 then pcall(function()
             if getgc then
                 local mx = nil
@@ -1019,46 +983,11 @@ task.spawn(function()
                     petTerakhir, nRuleTerakhir = p2, n2
                     if type(r2) == "table" then rincianTerakhir = r2 end
                 end
-                -- v8.561: total pet via RC container (kayak up3.8kg) — baca SEMUA pet bukan cuma backpack
-                -- RC iterasi PetInventory.Data → akurat, termasuk pet equip/kebun
-                -- backpack scan tetap jadi fallback kalau RC kosong/gagal
-                local rcContainer = nil
-                pcall(function()
-                    if not _rcInst then return end
-                    local data = _rcInst:GetData(plr.Name)
-                    if type(data) ~= "table" then return end
-                    local tbl = rawget(data, "Table")
-                    if type(tbl) ~= "table" then return end
-                    local ppd = rawget(tbl, "PlayerPetData")
-                    if type(ppd) ~= "table" then return end
-                    local pd = rawget(ppd, plr.Name)
-                    if type(pd) ~= "table" then return end
-                    local pi = rawget(pd, "PetInventory")
-                    if type(pi) ~= "table" then return end
-                    rcContainer = rawget(pi, "Data")
-                end)
+                -- v8.564: RC nil di TradeWorld (confirmed) — langsung BP scan
                 local ZAPI = getgenv and getgenv().ZenxAPS
                 local nn = 0; local pjMap = {}
-                if type(rcContainer) == "table" then
-                    -- RC path: iterasi container (semua pet) — dapat PetType + BaseWeight
-                    for _, entry in pairs(rcContainer) do
-                        if type(entry) == "table" and entry.PetType then
-                            nn = nn + 1
-                            local f = tostring(entry.PetType or "")
-                            if f ~= "" then
-                                local e = pjMap[f]; if not e then e = { j = 0, kg = {} }; pjMap[f] = e end
-                                e.j = e.j + 1
-                                local bw = tonumber(entry.BaseWeight or (type(entry.PetData) == "table" and entry.PetData.BaseWeight) or 0) or 0
-                                if bw > 0 then
-                                    local b = math.floor(bw * 1.1 + 0.5)
-                                    if b < 1 then b = 1 elseif b > 12 then b = 12 end
-                                    e.kg[b] = (e.kg[b] or 0) + 1
-                                end
-                            end
-                        end
-                    end
-                else
-                    -- fallback: backpack scan
+                do
+                    -- BP scan only (RC skip)
                     local bp = plr:FindFirstChild("Backpack")
                     if bp then
                         for _, t in ipairs(bp:GetChildren()) do
@@ -1095,12 +1024,26 @@ task.spawn(function()
                 table.sort(pjArr, function(a, b) if a.j ~= b.j then return a.j > b.j end return a.n < b.n end)
                 while #pjArr > 80 do table.remove(pjArr) end
                 if #pjArr > 0 then petJenisTerakhir = pjArr end
-                -- v8.552: maxInv per-tick — 0) getgc scan (upkg style), 1) RC, 2) Hact, 3) Attr, 4) folder
-                -- getgc berat → cache 60s via __ZenxMaxPetCacheTime
-                -- hanya update kalau nilai baru > tersimpan
+                -- v8.564: maxInv per-tick — 0a) UI scan (zero lag), 0b) getgc, 1) Hact, 2) Attr, 3) folder
+                -- RC skip (nil di TradeWorld); getgc cache 60s
                 do
                     local mxNew = nil
-                    -- layer 0: getgc scan (sama kayak upkg — paling reliable)
+                    -- layer 0a: UI scan "Pet Items (X/Y)" — instant, confirmed works TradeWorld
+                    if not mxNew then pcall(function()
+                        local pg = plr:FindFirstChild("PlayerGui")
+                        if not pg then return end
+                        local function scanUI(obj, depth)
+                            if depth > 10 or mxNew then return end
+                            if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+                                local t = obj.Text or ""
+                                local _, y = t:match("Pet Items %((%d+)/(%d+)%)")
+                                if y then local mx = tonumber(y); if mx and mx > 0 then mxNew = mx end; return end
+                            end
+                            for _, c in ipairs(obj:GetChildren()) do scanUI(c, depth+1) end
+                        end
+                        scanUI(pg, 0)
+                    end) end
+                    -- layer 0b: getgc scan (cache 60s — sedikit berat)
                     if not mxNew then pcall(function()
                         if getgc and (not _G.__ZenxMaxPetCacheTime or (tick() - _G.__ZenxMaxPetCacheTime) > 60) then
                             local mx = nil
@@ -1116,11 +1059,6 @@ task.spawn(function()
                             mxNew = _G.__ZenxMaxPetCache
                         end
                         if mxNew then _G.__ZenxMaxPetCache = mxNew end
-                    end) end
-                    -- layer 1: RC direct
-                    if not mxNew then pcall(function()
-                        local rcv = _rcGetMaxInv()
-                        if rcv then mxNew = rcv end
                     end) end
                     -- layer 2: HactTelurGetMaxPets
                     if not mxNew then pcall(function()
