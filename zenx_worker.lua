@@ -6412,7 +6412,7 @@ local function run(cfg)
                         if fname ~= "" then
                             local fpath = _dd .. "/" .. fname
                             local umurFile = mtime and (os.time() - tonumber(mtime)) or 999
-                            if umurFile > 30 then
+                            if umurFile > 60 then
                                 warn("[file-cmd] " .. fname .. " stale (" .. umurFile .. "s) -> dihapus")
                                 sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
                             else
