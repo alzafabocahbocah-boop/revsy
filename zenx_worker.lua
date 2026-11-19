@@ -5483,6 +5483,7 @@ local function run(cfg)
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
     local lastIsi = nil
     local MODE_JALAN = false
+    local _goserver_scan_ts = 0   -- v9.703: timer scan zenx_goserver_*.txt (tiap 15s)
 
     do
         local ok2, n, place, gk = pulih_aktif(cfg)
@@ -6396,30 +6397,40 @@ local function run(cfg)
         local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
         local isi  = ambil_str(resp, "isi") or ""
 
-        -- v9.703: baca perintah dari file lokal zenx_goserver_<akun>.txt (ditulis script Roblox langsung)
-        -- format isi file: "GOSERVER:<akun>:<link>" -- worker proses lalu hapus file
+        -- v9.703: scan file lokal zenx_goserver_<akun>.txt tiap 15s (ditulis script Roblox langsung)
         -- hanya untuk preset up3.8kgv2 (UP3) dan up6kg (UP6KG)
-        local _sl703 = (cfg.script_label or ""):upper()
-        if _sl703:find("UP3", 1, true) or _sl703:find("UP6KG") then
+        -- file stale > 120s langsung dihapus tanpa diproses
         do
-            for _, _dd in ipairs(denyut_dirs(cfg)) do
-                local _gs = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_goserver_*.txt; do [ -f \"$f\" ] && echo \"$f\"; done' 2>/dev/null") or ""
-                for fname in _gs:gmatch("[^\n]+") do
-                    fname = fname:match("^%s*(.-)%s*$")
-                    if fname ~= "" then
-                        local fpath = _dd .. "/" .. fname
-                        local fcontent = sh("su -c 'cat \"" .. fpath .. "\" 2>/dev/null'") or ""
-                        fcontent = fcontent:match("^%s*(.-)%s*$")
-                        if fcontent:match("^GOSERVER:[^:]+:.+$") then
-                            info("[file-cmd] baca " .. fname .. " -> " .. fcontent:sub(1,80))
-                            isi = fcontent   -- override isi, proses di bawah seperti biasa
-                            sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
+            local _sl703 = (cfg.script_label or ""):upper()
+            local _isGoPreset = _sl703:find("UP3", 1, true) or _sl703:find("UP6KG")
+            if _isGoPreset and (os.time() - (_goserver_scan_ts or 0)) >= 15 then
+                _goserver_scan_ts = os.time()
+                for _, _dd in ipairs(denyut_dirs(cfg)) do
+                    local _gs = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_goserver_*.txt; do [ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    for line in _gs:gmatch("[^\n]+") do
+                        local fname, mtime = line:match("^(.-)|(%d+)$")
+                        fname = fname and fname:match("^%s*(.-)%s*$") or ""
+                        if fname ~= "" then
+                            local fpath = _dd .. "/" .. fname
+                            local umurFile = mtime and (os.time() - tonumber(mtime)) or 999
+                            if umurFile > 120 then
+                                -- file terlalu lama (stale) -> hapus, skip
+                                warn("[file-cmd] " .. fname .. " stale (" .. umurFile .. "s) -> dihapus")
+                                sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
+                            else
+                                local fcontent = sh("su -c 'cat \"" .. fpath .. "\" 2>/dev/null'") or ""
+                                fcontent = fcontent:match("^%s*(.-)%s*$")
+                                if fcontent:match("^GOSERVER:[^:]+:.+$") then
+                                    info("[file-cmd] baca " .. fname .. " (" .. umurFile .. "s) -> " .. fcontent:sub(1,80))
+                                    isi = fcontent   -- override isi, proses di bawah seperti biasa
+                                    sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
+                                end
+                            end
                         end
                     end
                 end
             end
         end
-        end -- guard UP3/UP6KG
 
         do
             local _sl = tostring(cfg.script_label or "")
