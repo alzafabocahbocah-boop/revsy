@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.212 | tab LINK: interactive picker list (kunci/lepas, offline abu-abu)           ║
+-- ║  UP KG — v2.213 | lvlmax-tim+bahan: one-shot fetch, retry 10s (sama kayak up6kg)             ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.212"
+local VERSION = "up38kg-v2.213"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -5545,7 +5545,7 @@ do
             end)
         end
         task.spawn(function()
-            local haveLvl = false   -- v10.60: pas awal execute, retry cepet (10s) sampe dapet; abis dapet -> 30s
+            local done = false   -- v2.213: fetch sekali pas awal, retry 10s kalau gagal, stop setelah berhasil
             local LVLMAX_TIM_URL = LVLMAX_URL:gsub("/lvlmax$", "/lvlmax-tim")  -- v10.95: baca per-tim (merge dari semua panel)
             while true do
                 pcall(function()
@@ -5584,7 +5584,7 @@ do
                                 end
                             end
                             if next(m) then
-                                _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; haveLvl = true
+                                _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; done = true
                                 print("[up38kg] load lvlmax dari /lvlmax-tim: "..tostring(#(decoded.leveling or {})).." tim")
                                 pcall(function() if writefile then writefile(LVLMAX_CACHE_FILE, rawTim) end end)
                             else
@@ -5612,8 +5612,9 @@ do
                         if next(t) then _G.ZenxKgUpTipe = t end   -- bahan global override
                     end
                 end)
-                if haveLvl then task.wait(60) else task.wait(10) end
-                -- v1.49: refetch tiap 60s terus (dulu "fetch sekali -> stop selamanya" - bug sama kayak up6kg)
+                if done then break end
+                task.wait(10)
+                -- v2.213: one-shot fetch (sama kayak up6kg) — stop setelah berhasil, retry 10s kalau gagal
             end
         end)
     end
