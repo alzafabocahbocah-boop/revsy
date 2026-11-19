@@ -1,11 +1,11 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.323 | loadPick/setPick lokal aja, hapus fetch /ele-ikut                        ║
+-- ║  UP KG — v10.324 | lvlmax-tim + up6kg-bahan fetch sekali pas awal, bukan tiap 15s           ║
 -- ║  v10.232: kirim clients ke /tim; v10.230: fetch hactakun via executor request.             ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.323"
+local VERSION = "up6kg-v10.324"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -5220,10 +5220,10 @@ do
         local _LVLMAX_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"  -- v10.130: kunci buat /lvlmax-tim (sama kayak up3.8kg)
         local LVLMAX_TIM_URL = LVLMAX_URL:gsub("/lvlmax$", "/lvlmax-tim")  -- v10.130: endpoint per-tim (merge dari semua panel)
         task.spawn(function()
-            local haveLvl = false   -- v10.60: pas awal execute, retry cepet (10s) sampe dapet; abis dapet -> 30s
+            -- v10.324: fetch sekali pas awal, retry 10s kalau gagal, stop kalau berhasil
             while true do
+                local done = false
                 pcall(function()
-                    -- v10.130: UTAMA: baca /lvlmax-tim pakai request+kunci (sama jalur up3.8kg)
                     local rawTim
                     local _req = request or http_request or (syn and syn.request)
                     if _req then
@@ -5248,23 +5248,18 @@ do
                                 end
                             end
                             if next(m) then
-                                _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; haveLvl = true
-                                pcall(function() if writefile then writefile(LVLMAX_CACHE_FILE, rawTim) end end)  -- v10.279: simpan cache JSON /lvlmax-tim
+                                _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; done = true
+                                pcall(function() if writefile then writefile(LVLMAX_CACHE_FILE, rawTim) end end)
                                 print("[up6kg] load lvlmax dari /lvlmax-tim: "..tostring(#(decoded.leveling or {})).." tim")
                             else
-                                print("[up6kg] /lvlmax-tim leveling ada tapi akun semua kosong, jumlah tim: "..tostring(#decoded.leveling))
+                                print("[up6kg] /lvlmax-tim akun kosong, retry...")
                             end
-                            return  -- v10.277: return di luar if next(m) supaya gak fallback ke /lvlmax lama walau akun kosong
-                        else
-                            print("[up6kg] /lvlmax-tim parse gagal, skip (gak fallback ke /lvlmax)")
+                            return
                         end
-                    else
-                        print("[up6kg] /lvlmax-tim response kosong, skip")
                     end
-                    -- v10.279: hapus fallback /lvlmax lama — isinya semua akun termasuk up6kg -> target trade salah
-                    -- kalau /lvlmax-tim gagal/kosong, tunggu retry berikutnya aja
+                    print("[up6kg] /lvlmax-tim gagal/kosong, retry 10s...")
                 end)
-                -- v10.94: BARENGAN fetch bahan global /up6kg-bahan (1 loop, bukan 2)
+                -- fetch bahan global — juga sekali, barengan
                 pcall(function()
                     local raw
                     pcall(function() raw = game:HttpGet(BAHAN_URL) end)
@@ -5275,15 +5270,11 @@ do
                     if raw ~= nil then
                         local t = {}
                         for tp in tostring(raw):gmatch("[^,]+") do local x = tp:gsub("^%s+",""):gsub("%s+$",""); if x ~= "" then t[x] = true end end
-                        if next(t) then _G.ZenxKgUpTipe = t end   -- bahan global override
+                        if next(t) then _G.ZenxKgUpTipe = t end
                     end
                 end)
-                if haveLvl then task.wait(60) else task.wait(10) end
-                -- v10.126: DULU "fetch sekali abis dapet -> stop selamanya (rejoin baru fetch lagi)".
-                -- Bug: kalau data pertama kebetulan mx=0 (target belum sempet lapor maxInv), up6kg
-                -- nyangkut nganggep FULL terus se-sesi (jam-jaman) walau target udah lapor max bener
-                -- belakangan -- padahal panel push data baru tiap 60s. Sekarang refetch tiap 60s terus,
-                -- gak pernah stop, biar data max/count selalu ke-update.
+                if done then break end   -- berhasil -> stop, gak perlu loop lagi
+                task.wait(10)
             end
         end)
     end
