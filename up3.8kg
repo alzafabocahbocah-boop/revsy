@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.211 | tab LINK: tampilkan picker hadir realtime                                  ║
+-- ║  UP KG — v2.212 | tab LINK: interactive picker list (kunci/lepas, offline abu-abu)           ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.211"
+local VERSION = "up38kg-v2.212"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -4246,22 +4246,124 @@ do
     local hT = lbl(hdrF, "LINK SERVER TUJUAN", 13, C.text); hT.Font = FONT_B
     hT.Position = UDim2.new(0,13,0,0); hT.Size = UDim2.new(1,-20,1,0)
 
-    -- picker hadir
-    local pickerF = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 2, Parent = linkScroll }); corner(pickerF, 8); stroke(pickerF, C.border, 1)
-    lbl(pickerF, "Picker", 11, C.textDim).Position = UDim2.new(0,12,0,0)
-    local pickerLbl = lbl(pickerF, "(menunggu...)", 11, C.textMute)
-    pickerLbl.Position = UDim2.new(0,60,0,0); pickerLbl.Size = UDim2.new(1,-70,1,0)
+    -- ---- PICKER INTERAKTIF ----
+    local KUNCI_FILE = "zenx_terkunci.json"
+    local terkunci = {}   -- set nama picker yang dikunci user
+    local function saveKunci()
+        pcall(function()
+            if not writefile then return end
+            local arr = {}
+            for nm in pairs(terkunci) do arr[#arr+1] = string.format("%q", nm) end
+            writefile(KUNCI_FILE, "[" .. table.concat(arr, ",") .. "]")
+        end)
+    end
+    local function loadKunci()
+        pcall(function()
+            if not (isfile and isfile(KUNCI_FILE) and readfile) then return end
+            local raw = readfile(KUNCI_FILE)
+            for nm in raw:gmatch('"(.-)"') do terkunci[nm] = true end
+        end)
+    end
+    loadKunci()
+
+    -- header picker
+    local pickerHdrF = mk("Frame", { Size = UDim2.new(1,0,0,30), BackgroundTransparency = 1,
+        LayoutOrder = 2, Parent = linkScroll })
+    local pickerHdrLbl = lbl(pickerHdrF, "PICKER HADIR", 11, C.textDim)
+    pickerHdrLbl.Font = FONT_B; pickerHdrLbl.Position = UDim2.new(0,4,0,0); pickerHdrLbl.Size = UDim2.new(1,-8,1,0)
+
+    -- container list picker (AutomaticSize Y)
+    local pickerListF = mk("Frame", { Size = UDim2.new(1,0,0,0), BackgroundTransparency = 1,
+        AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 3, Parent = linkScroll })
+    mk("UIListLayout", { Padding = UDim.new(0,4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pickerListF })
+
+    -- kosong placeholder
+    local pickerKosongLbl = lbl(pickerListF, "(tidak ada picker)", 11, C.textMute)
+    pickerKosongLbl.Size = UDim2.new(1,0,0,28); pickerKosongLbl.TextXAlignment = Enum.TextXAlignment.Center
+
+    local _pickerRows = {}   -- nama -> frame (cache buat destroy lama)
+    local function rebuildPickerList()
+        local Players = game:GetService("Players")
+        local plr = Players.LocalPlayer
+        local pick = _G.__ZenxElePick or {}
+
+        -- kumpul semua nama: online dari pick, plus terkunci offline
+        local semua = {}
+        local seen = {}
+        for nm in pairs(pick) do
+            if nm ~= (plr and plr.Name or "") then semua[#semua+1] = nm; seen[nm] = true end
+        end
+        for nm in pairs(terkunci) do
+            if not seen[nm] then semua[#semua+1] = nm end
+        end
+        table.sort(semua)
+
+        -- hapus row lama
+        for nm, fr in pairs(_pickerRows) do
+            fr:Destroy(); _pickerRows[nm] = nil
+        end
+
+        if #semua == 0 then
+            pickerKosongLbl.Visible = true
+            return
+        end
+        pickerKosongLbl.Visible = false
+
+        for i, nm in ipairs(semua) do
+            local isOnline = Players:FindFirstChild(nm) ~= nil
+            local isKunci  = terkunci[nm] == true
+            local row = mk("Frame", {
+                Size = UDim2.new(1,0,0,30), BackgroundColor3 = isKunci and C.accent or C.card,
+                BorderSizePixel = 0, LayoutOrder = i, Parent = pickerListF })
+            corner(row, 7); stroke(row, isKunci and C.accent2 or C.border, 1)
+
+            local nameLbl = lbl(row, nm, 12, isOnline and (isKunci and Color3.fromRGB(0,0,0) or C.text) or C.textMute)
+            nameLbl.Font = isKunci and FONT_B or FONT
+            nameLbl.Position = UDim2.new(0,10,0,0)
+            nameLbl.Size = UDim2.new(1, isKunci and -38 or -10, 1, 0)
+            if not isOnline then
+                local offLbl = lbl(row, " (offline)", 10, C.textMute)
+                offLbl.Position = UDim2.new(0, 10 + nameLbl.TextBounds.X + 2, 0, 0)
+                offLbl.Size = UDim2.new(0, 60, 1, 0)
+            end
+
+            -- tombol X hanya untuk yang sudah dikunci
+            if isKunci then
+                local xBtn = mk("TextButton", {
+                    Size = UDim2.new(0,24,0,22), Position = UDim2.new(1,-30,0.5,-11),
+                    BackgroundColor3 = Color3.fromRGB(80,20,20),
+                    Text = "✕", Font = FONT_B, TextSize = 11,
+                    TextColor3 = Color3.fromRGB(220,80,80), Parent = row })
+                corner(xBtn, 5)
+                xBtn.MouseButton1Click:Connect(function()
+                    terkunci[nm] = nil; saveKunci(); rebuildPickerList()
+                end)
+            end
+
+            -- klik nama untuk kunci (kalau belum dikunci)
+            if not isKunci then
+                row.MouseButton1Click:Connect(function()
+                    terkunci[nm] = true; saveKunci(); rebuildPickerList()
+                end)
+                -- hover effect
+                row.MouseEnter:Connect(function() row.BackgroundColor3 = C.panel end)
+                row.MouseLeave:Connect(function() row.BackgroundColor3 = C.card end)
+            end
+
+            _pickerRows[nm] = row
+        end
+    end
+    rebuildPickerList()
 
     -- status auto-goserver
     local statusF = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 3, Parent = linkScroll }); corner(statusF, 8); stroke(statusF, C.border, 1)
+        BorderSizePixel = 0, LayoutOrder = 4, Parent = linkScroll }); corner(statusF, 8); stroke(statusF, C.border, 1)
     local statusLbl = lbl(statusF, "auto GOSERVER: menunggu...", 11, C.textMute)
     statusLbl.Position = UDim2.new(0,12,0,0); statusLbl.Size = UDim2.new(1,-20,1,0)
 
     -- input nama
     local namaRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 4, Parent = linkScroll }); corner(namaRow, 8); stroke(namaRow, C.border, 1)
+        BorderSizePixel = 0, LayoutOrder = 5, Parent = linkScroll }); corner(namaRow, 8); stroke(namaRow, C.border, 1)
     lbl(namaRow, "Nama", 11, C.textDim).Position = UDim2.new(0,12,0,0)
     local namaBox = mk("TextBox", { Size = UDim2.new(1,-80,0,24), Position = UDim2.new(0,56,0.5,-12),
         BackgroundColor3 = C.input, Text = savedLink.nama, PlaceholderText = "contoh: Server 1",
@@ -4271,7 +4373,7 @@ do
 
     -- input link
     local linkRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 5, Parent = linkScroll }); corner(linkRow, 8); stroke(linkRow, C.border, 1)
+        BorderSizePixel = 0, LayoutOrder = 6, Parent = linkScroll }); corner(linkRow, 8); stroke(linkRow, C.border, 1)
     lbl(linkRow, "Link", 11, C.textDim).Position = UDim2.new(0,12,0,0)
     local linkBox = mk("TextBox", { Size = UDim2.new(1,-80,0,24), Position = UDim2.new(0,50,0.5,-12),
         BackgroundColor3 = C.input, Text = savedLink.url, PlaceholderText = "https://www.roblox.com/share?...",
@@ -4281,7 +4383,7 @@ do
 
     -- tombol baris: Save + Copy + Hapus
     local btnRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1,
-        LayoutOrder = 6, Parent = linkScroll })
+        LayoutOrder = 7, Parent = linkScroll })
     mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0,8), Parent = btnRow })
     local saveBtn = mk("TextButton", { Size = UDim2.new(0.4,-6,1,0), BackgroundColor3 = C.accent,
         Text = "Simpan", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(0,0,0), Parent = btnRow }); corner(saveBtn, 9)
@@ -4338,39 +4440,44 @@ do
         end
     end
 
-    -- cek picker tiap 30s
+    -- cek picker tiap 1s, rebuild list picker, hitung nPick dari terkunci online (atau semua kalau terkunci kosong)
     task.spawn(function()
         local _lastTulis  = -300
-        local _lastKurang = -300   -- terakhir picker kurang; kalau sempat OK -> reset -> hitung 30s dari awal
+        local _lastKurang = -300
+        local _lastRebuild = 0
         while true do
             task.wait(1)
             pcall(function()
                 if savedLink.url == "" then return end
                 local Players = game:GetService("Players")
                 local plr = Players.LocalPlayer
-                local nPick = 0
                 local pick = _G.__ZenxElePick or {}
-                for nm in pairs(pick) do
-                    if nm ~= plr.Name and Players:FindFirstChild(nm) then
-                        nPick = nPick + 1
+
+                -- rebuild list tiap 2s (bukan tiap 1s biar gak flicker)
+                if tick() - _lastRebuild >= 2 then
+                    _lastRebuild = tick()
+                    rebuildPickerList()
+                end
+
+                -- hitung nPick: pakai terkunci kalau ada, else semua pick online
+                local nPick = 0
+                local adaTerkunci = next(terkunci) ~= nil
+                if adaTerkunci then
+                    for nm in pairs(terkunci) do
+                        if nm ~= plr.Name and Players:FindFirstChild(nm) then
+                            nPick = nPick + 1
+                        end
                     end
-                end
-                -- update label picker
-                local names = {}
-                for nm in pairs(pick) do
-                    if nm ~= plr.Name and Players:FindFirstChild(nm) then names[#names+1] = nm end
-                end
-                if #names > 0 then
-                    pickerLbl.Text = table.concat(names, ", ") .. " (" .. #names .. ")"
-                    pickerLbl.TextColor3 = C.accent2
                 else
-                    pickerLbl.Text = "(kosong)"
-                    pickerLbl.TextColor3 = Color3.fromRGB(220,100,100)
+                    for nm in pairs(pick) do
+                        if nm ~= plr.Name and Players:FindFirstChild(nm) then
+                            nPick = nPick + 1
+                        end
+                    end
                 end
 
                 if nPick < 2 then
                     _lastKurang = tick()
-                    -- tulis file kalau sudah 60s terus-menerus kurang (tanpa diselingi picker OK)
                     if tick() - _lastTulis >= 60 then
                         _lastTulis = tick()
                         statusLbl.Text = "picker < 2 (" .. nPick .. ") -> kirim GOSERVER..."
@@ -4378,10 +4485,8 @@ do
                         kirimGoserver()
                     end
                 else
-                    -- picker OK -> reset (kalau kurang lagi, hitung 60s dari nol)
                     _lastKurang = -300
                     _lastTulis  = -300
-                    -- hapus file kalau masih ada (batalin GOSERVER pending)
                     if isfile then
                         local fname = "zenx_goserver_" .. plr.Name .. ".txt"
                         pcall(function() if isfile(fname) then delfile(fname) end end)
