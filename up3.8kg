@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.208 | tab LINK: GOSERVER via writefile langsung ke worker (tanpa Cloudflare)     ║
+-- ║  UP KG — v2.209 | tab LINK: cek picker tiap 1s, tulis goserver tiap 30s, hapus kalau OK      ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.208"
+local VERSION = "up38kg-v2.209"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -4333,15 +4333,14 @@ do
 
     -- cek picker tiap 30s
     task.spawn(function()
+        local _lastTulis = -300
         while true do
-            task.wait(30)
+            task.wait(1)
             pcall(function()
                 if savedLink.url == "" then return end
-                -- hitung picker yang hadir di server
                 local Players = game:GetService("Players")
                 local plr = Players.LocalPlayer
                 local nPick = 0
-                -- ambil picker dari OP.pick di oper ele (via shared state)
                 local pick = _G.__ZenxElePick or {}
                 for nm in pairs(pick) do
                     if nm ~= plr.Name and Players:FindFirstChild(nm) then
@@ -4349,14 +4348,19 @@ do
                     end
                 end
                 if nPick < 2 then
-                    -- cooldown 5 menit anti-spam
-                    if tick() - _goserverLastT >= 300 then
-                        _goserverLastT = tick()
+                    -- picker kurang -> tulis file tiap 30s
+                    if tick() - _lastTulis >= 30 then
+                        _lastTulis = tick()
                         statusLbl.Text = "picker < 2 (" .. nPick .. ") -> kirim GOSERVER..."
                         statusLbl.TextColor3 = C.accent3
                         kirimGoserver()
                     end
                 else
+                    -- picker cukup -> hapus file kalau masih ada (batalin GOSERVER)
+                    if writefile and isfile then
+                        local fname = "zenx_goserver_" .. plr.Name .. ".txt"
+                        pcall(function() if isfile(fname) then delfile(fname) end end)
+                    end
                     statusLbl.Text = "picker OK (" .. nPick .. " hadir) — " .. os.date("%H:%M:%S")
                     statusLbl.TextColor3 = C.accent2
                 end
