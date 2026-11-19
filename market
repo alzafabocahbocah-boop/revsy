@@ -406,7 +406,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.562"
+local VERSION = "8.563"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -652,7 +652,24 @@ task.spawn(function()
     local function cekSuplai()
         if not plr then return end
         if tostring(game.PlaceId) ~= _MARKET_PLACE then return end  -- gak di TradeWorld, skip
+        -- v8.563: kalau thread 60s belum jalan (petTerakhir==0), hitung langsung sekarang
         local pet = petTerakhir or 0
+        if pet == 0 then
+            pcall(function()
+                local ok2, p2 = pcall(totalPetCocokRule)
+                if ok2 and type(p2) == "number" and p2 > 0 then pet = p2 end
+            end)
+        end
+        -- v8.563: kalau totalPetTerakhir==0, baca bacaTotalPet langsung (RC fail → backpack scan)
+        if (totalPetTerakhir or 0) == 0 then
+            pcall(function()
+                local ok2, n2 = pcall(bacaTotalPet)
+                if ok2 and type(n2) == "number" and n2 > 0 then
+                    totalPetTerakhir = n2
+                    _G.ZenxMarketTotalPet = n2
+                end
+            end)
+        end
         local maxInv = maxInvTerakhir or 0
         local now = os.time()
         -- sudah penuh → lapor selesai (sekali)
