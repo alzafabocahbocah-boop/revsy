@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.326 | hapus POST assign-tim/sc-set + heartbeat /tim                            ║
+-- ║  UP KG — v10.327 | upkgstat-batch: rutin 60s aja, hapus trigger event                       ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.326"
+local VERSION = "up6kg-v10.327"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1349,9 +1349,7 @@ task.spawn(function()
     local URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
     local KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
 
-    local lastLapor  = -1        -- totalAll terakhir yg dilaporin (-1 = belum ada baseline)
-    local maxLaporTs = 0         -- kapan terakhir lapor "max" (0 = lagi gak full)
-    local MAX_ULANG  = 20 * 60   -- pas FULL: re-lapor tiap 20 menit (biar panel tau masih full)
+    local lastRutinTs = 0   -- v10.327: lapor rutin tiap 60s aja, hapus trigger event
 
     local function jsonKV(tbl)
         local parts = {}
@@ -1393,64 +1391,11 @@ task.spawn(function()
         end)
     end
 
-    -- v10.234: lapor ringan (rutin 1 menit) — cuma kirim totalAll + maxInv
-    local function laporRingan(alasan)
-        pcall(function()
-            local st = _G.ZenxKgStat or {}
-            local cur = tonumber(st.totalAll) or 0
-            local mx  = tonumber(st.maxInv) or 210
-            local stat = string.format(
-                '{"akun":%q,"totalAll":%d,"maxInv":%d,"ts":%d}',
-                plr.Name, cur, mx, os.time())
-            local body = '{"list":[{"akun":"' .. plr.Name .. '","stat":' .. stat .. '}]}'
-            req({ Url = URL .. "/upkgstat-batch", Method = "POST",
-                  Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = KUNCI },
-                  Body = body })
-            print("[UpKg] RUTIN (" .. alasan .. ") inv=" .. cur .. "/" .. mx)
-        end)
-    end
-
     task.wait(10)   -- kasih waktu stat pertama keitung
-    local lastRutin = 0   -- v10.233: lapor rutin tiap 1 menit
     while true do
-        task.wait(3)
-        local st = _G.ZenxKgStat
-        if st and tonumber(st.totalAll) then
-            local cur = tonumber(st.totalAll)
-            local mx  = tonumber(st.maxInv) or 0
-            -- v10.240: lapor rutin walaupun maxInv belum terdeteksi (mx=0),
-            -- supaya stat panel tidak kosong. Tapi skip logika MAX kalau mx=0.
-            if mx <= 0 then
-                if lastRutin == 0 or (os.time() - lastRutin) >= 60 then
-                    laporSekarang("rutin-nomx")
-                    lastLapor = cur; lastRutin = os.time()
-                end
-            else
-            if cur >= mx then
-                -- FULL: lapor pas AWAL nyampe, terus re-lapor tiap 20 menit selama masih full
-                if maxLaporTs == 0 or (os.time() - maxLaporTs) >= MAX_ULANG then
-                    laporSekarang(maxLaporTs == 0 and "MAX" or "MAX-ulang")
-                    maxLaporTs = os.time()
-                    lastLapor  = cur
-                    lastRutin  = os.time()
-                end
-            else
-                maxLaporTs = 0   -- turun di bawah max -> reset
-                if lastLapor < 0 then
-                    lastLapor = cur                          -- baseline pertama, jangan lapor
-                elseif math.abs(cur - lastLapor) >= 20 then
-                    laporSekarang(cur > lastLapor and "+20" or "-20")  -- naik/turun 20 -> lapor
-                    lastLapor = cur
-                    lastRutin = os.time()
-                elseif (os.time() - lastRutin) >= 60 then
-                    -- v10.235: lapor rutin tiap 1 menit, full stat
-                    laporSekarang("rutin-1m")
-                    lastLapor = cur
-                    lastRutin = os.time()
-                end
-            end
-            end   -- v10.240: tutup else (mx > 0)
-        end
+        task.wait(60)
+        laporSekarang("rutin-60s")
+        lastRutinTs = os.time()
     end
 end)
 

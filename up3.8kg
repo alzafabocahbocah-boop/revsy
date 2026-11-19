@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.214 | loadPick/setPick lokal aja, hapus /ele-ikut GET/POST                       ║
+-- ║  UP KG — v2.215 | upkgstat-batch: rutin 60s aja, hapus trigger event                        ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.214"
+local VERSION = "up38kg-v2.215"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -1743,9 +1743,7 @@ task.spawn(function()
     local URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
     local KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
 
-    local lastLapor  = -1        -- totalAll terakhir yg dilaporin (-1 = belum ada baseline)
-    local maxLaporTs = 0         -- kapan terakhir lapor "max" (0 = lagi gak full)
-    local MAX_ULANG  = 20 * 60   -- pas FULL: re-lapor tiap 20 menit (biar panel tau masih full)
+    -- v2.215: lapor rutin 60s aja, hapus trigger event
 
     local function jsonKV(tbl)
         local parts = {}
@@ -1789,29 +1787,8 @@ task.spawn(function()
 
     task.wait(10)   -- kasih waktu stat pertama keitung
     while true do
-        task.wait(3)
-        local st = _G.ZenxKgStat
-        if st and tonumber(st.totalAll) and tonumber(st.maxInv) and (tonumber(st.maxInv) or 0) > 0 then
-            local cur = tonumber(st.totalAll)
-            local mx  = tonumber(st.maxInv)
-            if cur >= mx then
-                -- FULL: lapor pas AWAL nyampe, terus re-lapor tiap 20 menit selama masih full
-                -- (gak spam 3s, tapi gak diem selamanya juga).
-                if maxLaporTs == 0 or (os.time() - maxLaporTs) >= MAX_ULANG then
-                    laporSekarang(maxLaporTs == 0 and "MAX" or "MAX-ulang")
-                    maxLaporTs = os.time()
-                    lastLapor  = cur
-                end
-            else
-                maxLaporTs = 0   -- turun di bawah max -> reset (bisa lapor "MAX" lagi nanti)
-                if lastLapor < 0 then
-                    lastLapor = cur                          -- baseline pertama, jangan lapor
-                elseif math.abs(cur - lastLapor) >= 20 then
-                    laporSekarang(cur > lastLapor and "+20" or "-20")  -- naik/turun 20 -> lapor
-                    lastLapor = cur
-                end
-            end
-        end
+        task.wait(60)
+        laporSekarang("rutin-60s")
     end
 end)
 
