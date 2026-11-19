@@ -1,3 +1,4 @@
+-- ZENX MARKET v8.565 — cekSuplai: kalau rule=0, fetch rules dulu dari BH sebelum totalPetCocokRule (fix rule:0 pas rules belum ke-load)
 -- ZENX MARKET v8.564 — bacaTotalPet: skip RC (nil di TradeWorld), langsung BP scan; maxInv startup: UI scan layer 0 (zero lag)
 -- ZENX MARKET v8.559 — closeBtn: minimize ke logo Z, bukan kill GUI
 -- ZENX MARKET v8.558 — findMemoryContainer: ganti rawget ke direct index (fix memContainer gagal di up6kg)
@@ -630,9 +631,20 @@ task.spawn(function()
     local function cekSuplai()
         if not plr then return end
         if tostring(game.PlaceId) ~= _MARKET_PLACE then return end  -- gak di TradeWorld, skip
-        -- v8.563: kalau thread 60s belum jalan (petTerakhir==0), hitung langsung sekarang
+        -- v8.565: kalau petTerakhir==0, pastikan rules sudah ke-load dulu sebelum hitung
         local pet = petTerakhir or 0
         if pet == 0 then
+            pcall(function()
+                -- coba fetch rules kalau belum ada (BH.marketState.listingRules kosong)
+                local BH2 = getgenv().ZenxMarketBH or _G.BH
+                if BH2 and BH2.marketState then
+                    local lr = BH2.marketState.listingRules
+                    if type(lr) ~= "table" or #lr == 0 then
+                        -- rules belum ready, coba fetch sekali (non-blocking, timeout pendek)
+                        if BH2.fetchRuleFromPanel then pcall(BH2.fetchRuleFromPanel) end
+                    end
+                end
+            end)
             pcall(function()
                 local ok2, p2 = pcall(totalPetCocokRule)
                 if ok2 and type(p2) == "number" and p2 > 0 then pet = p2 end
