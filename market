@@ -406,7 +406,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.560"
+local VERSION = "8.561"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -528,16 +528,40 @@ task.spawn(function()
     -- v8.518: baca total pet LANGSUNG dari backpack (ringan, kayak bacaTokens)
     -- gak perlu scan rule -> bisa dipanggil tiap loop 20s tanpa nge-block
     local function bacaTotalPet()
+        -- v8.561: RC container dulu (sama kayak up3.8kg) — baca SEMUA pet (backpack+equip+inventory)
+        -- backpack scan miss pet yg lagi di kebun/equip slot → RC lebih akurat
         local nn = 0
+        local rcOk = false
         pcall(function()
-            local bp = plr:FindFirstChild("Backpack")
-            if not bp then return end
-            for _, t in ipairs(bp:GetChildren()) do
-                if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
-                    nn = nn + 1
-                end
-            end
+            if not _rcInst then return end
+            local data = _rcInst:GetData(plr.Name)
+            if type(data) ~= "table" then return end
+            local tbl = rawget(data, "Table")
+            if type(tbl) ~= "table" then return end
+            local ppd = rawget(tbl, "PlayerPetData")
+            if type(ppd) ~= "table" then return end
+            local pd = rawget(ppd, plr.Name)
+            if type(pd) ~= "table" then return end
+            local pi = rawget(pd, "PetInventory")
+            if type(pi) ~= "table" then return end
+            local dat = rawget(pi, "Data")
+            if type(dat) ~= "table" then return end
+            local cnt = 0
+            for _ in pairs(dat) do cnt = cnt + 1 end
+            if cnt > 0 then nn = cnt; rcOk = true end
         end)
+        -- fallback: backpack scan kalau RC gagal/kosong
+        if not rcOk then
+            pcall(function()
+                local bp = plr:FindFirstChild("Backpack")
+                if not bp then return end
+                for _, t in ipairs(bp:GetChildren()) do
+                    if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
+                        nn = nn + 1
+                    end
+                end
+            end)
+        end
         return nn
     end
 
@@ -693,18 +717,6 @@ task.spawn(function()
             return
         end
         -- pet jualan < threshold & belum minta / cooldown lewat → minta suplai
-        -- v8.560: kalau petRule=0 tapi totalPet masih banyak (>50), jangan minta suplai
-        -- bisa jadi rule belum ke-load / gak ada rule yang cocok sementara
-        if pet == 0 and (totalPetTerakhir or 0) > 50 then
-            _G.__ZenxSuplaiDebug = _G.__ZenxSuplaiDebug or {}
-            _G.__ZenxSuplaiDebug.status   = "SKIP-RULENOFIT"
-            _G.__ZenxSuplaiDebug.alasan   = "petRule=0 tapi totalPet=" .. tostring(totalPetTerakhir) .. " (rule gak cocok / belum load)"
-            _G.__ZenxSuplaiDebug.totalPet = totalPetTerakhir or 0
-            _G.__ZenxSuplaiDebug.maxInv   = maxInvTerakhir or 0
-            _G.__ZenxSuplaiDebug.sisa     = sisaInv
-            _G.__ZenxSuplaiDebug.petRule  = pet
-            return
-        end
         if pet < _SUPLAI_MIN and (not _supMinta) and (now - _supLamaMinta) >= _SUPLAI_CD then
             _supMinta = true
             _supLamaMinta = now
@@ -747,10 +759,6 @@ task.spawn(function()
                             -- debug info
                             local akunList = {}
                             for _, v in ipairs(d.leveling) do akunList[#akunList+1] = tostring(v.tim) .. "(" .. tostring(v.age500 or 0) .. ")" end
-                            -- v8.560: pakai _G.ZenxMarketTotalPet (RC datastore, lebih reliable) buat snapshot
-                            local _snapTotal = (_G.ZenxMarketTotalPet and _G.ZenxMarketTotalPet > 0) and _G.ZenxMarketTotalPet or totalPetTerakhir or 0
-                            local _snapMax   = maxInvTerakhir or 0
-                            local _snapSisa  = math.max(0, _snapMax - _snapTotal)
                             _G.__ZenxSuplaiDebug = {
                                 status   = "AKTIF",
                                 minta_ts = _G.__ZenxSuplaiDebug and _G.__ZenxSuplaiDebug.minta_ts or "-",
@@ -759,9 +767,9 @@ task.spawn(function()
                                 pilih    = tostring(pilih.tim) .. " age500=" .. tostring(pilih.age500 or 0),
                                 psLink   = tostring(pilih.psLink or ""),
                                 petRule  = pet,
-                                totalPet = _snapTotal,
-                                maxInv   = _snapMax,
-                                sisa     = _snapSisa,
+                                totalPet = totalPetTerakhir or 0,
+                                maxInv   = maxInvTerakhir or 0,
+                                sisa     = sisa,
                                 error    = nil,
                             }
                             warn("[SUPLAI] minta isi — pet=" .. pet
@@ -986,44 +994,82 @@ task.spawn(function()
                     petTerakhir, nRuleTerakhir = p2, n2
                     if type(r2) == "table" then rincianTerakhir = r2 end
                 end
-                -- v8.354: total pet + v8.358: per jenis + v8.361: histogram base weight
-                -- (bucket 1..11 kg) per jenis -> panel tampil range kg pet yg gak di list.
-                local bp = plr:FindFirstChild("Backpack")
-                if bp then
-                    local ZAPI = getgenv and getgenv().ZenxAPS
-                    local nn = 0; local pjMap = {}
-                    for _, t in ipairs(bp:GetChildren()) do
-                        if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
+                -- v8.561: total pet via RC container (kayak up3.8kg) — baca SEMUA pet bukan cuma backpack
+                -- RC iterasi PetInventory.Data → akurat, termasuk pet equip/kebun
+                -- backpack scan tetap jadi fallback kalau RC kosong/gagal
+                local rcContainer = nil
+                pcall(function()
+                    if not _rcInst then return end
+                    local data = _rcInst:GetData(plr.Name)
+                    if type(data) ~= "table" then return end
+                    local tbl = rawget(data, "Table")
+                    if type(tbl) ~= "table" then return end
+                    local ppd = rawget(tbl, "PlayerPetData")
+                    if type(ppd) ~= "table" then return end
+                    local pd = rawget(ppd, plr.Name)
+                    if type(pd) ~= "table" then return end
+                    local pi = rawget(pd, "PetInventory")
+                    if type(pi) ~= "table" then return end
+                    rcContainer = rawget(pi, "Data")
+                end)
+                local ZAPI = getgenv and getgenv().ZenxAPS
+                local nn = 0; local pjMap = {}
+                if type(rcContainer) == "table" then
+                    -- RC path: iterasi container (semua pet) — dapat PetType + BaseWeight
+                    for _, entry in pairs(rcContainer) do
+                        if type(entry) == "table" and entry.PetType then
                             nn = nn + 1
-                            local f = tostring(t:GetAttribute("f") or "")
+                            local f = tostring(entry.PetType or "")
                             if f ~= "" then
-                                local e = pjMap[f]
-                                if not e then e = { j = 0, kg = {} }; pjMap[f] = e end
+                                local e = pjMap[f]; if not e then e = { j = 0, kg = {} }; pjMap[f] = e end
                                 e.j = e.j + 1
-                                local uuid = t:GetAttribute("PET_UUID")
-                                if uuid and ZAPI and ZAPI.getBaseKg then
-                                    local ok, bw = pcall(ZAPI.getBaseKg, uuid)
-                                    if ok and type(bw) == "number" and bw > 0 then
-                                        local b = math.floor(bw)
-                                        if b < 1 then b = 1 elseif b > 12 then b = 12 end
-                                        e.kg[b] = (e.kg[b] or 0) + 1
+                                local bw = tonumber(entry.BaseWeight or (type(entry.PetData) == "table" and entry.PetData.BaseWeight) or 0) or 0
+                                if bw > 0 then
+                                    local b = math.floor(bw * 1.1 + 0.5)
+                                    if b < 1 then b = 1 elseif b > 12 then b = 12 end
+                                    e.kg[b] = (e.kg[b] or 0) + 1
+                                end
+                            end
+                        end
+                    end
+                else
+                    -- fallback: backpack scan
+                    local bp = plr:FindFirstChild("Backpack")
+                    if bp then
+                        for _, t in ipairs(bp:GetChildren()) do
+                            if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:GetAttribute("PET_UUID")) then
+                                nn = nn + 1
+                                local f = tostring(t:GetAttribute("f") or "")
+                                if f ~= "" then
+                                    local e = pjMap[f]; if not e then e = { j = 0, kg = {} }; pjMap[f] = e end
+                                    e.j = e.j + 1
+                                    local uuid = t:GetAttribute("PET_UUID")
+                                    if uuid and ZAPI and ZAPI.getBaseKg then
+                                        local ok2, bw = pcall(ZAPI.getBaseKg, uuid)
+                                        if ok2 and type(bw) == "number" and bw > 0 then
+                                            local b = math.floor(bw)
+                                            if b < 1 then b = 1 elseif b > 12 then b = 12 end
+                                            e.kg[b] = (e.kg[b] or 0) + 1
+                                        end
                                     end
                                 end
                             end
                         end
                     end
+                end
+                if nn > 0 then
                     totalPetTerakhir = nn
                     _G.ZenxMarketTotalPet = nn   -- v8.434: buat auto-ascend (skip kalo >200)
-                    local pjArr = {}
-                    for ty, e in pairs(pjMap) do
-                        local kgArr = {}
-                        for b = 1, 12 do kgArr[b] = e.kg[b] or 0 end
-                        pjArr[#pjArr+1] = { n = ty, j = e.j, kg = kgArr }
-                    end
-                    table.sort(pjArr, function(a, b) if a.j ~= b.j then return a.j > b.j end return a.n < b.n end)
-                    while #pjArr > 80 do table.remove(pjArr) end
-                    petJenisTerakhir = pjArr
                 end
+                local pjArr = {}
+                for ty, e in pairs(pjMap) do
+                    local kgArr = {}
+                    for b = 1, 12 do kgArr[b] = e.kg[b] or 0 end
+                    pjArr[#pjArr+1] = { n = ty, j = e.j, kg = kgArr }
+                end
+                table.sort(pjArr, function(a, b) if a.j ~= b.j then return a.j > b.j end return a.n < b.n end)
+                while #pjArr > 80 do table.remove(pjArr) end
+                if #pjArr > 0 then petJenisTerakhir = pjArr end
                 -- v8.552: maxInv per-tick — 0) getgc scan (upkg style), 1) RC, 2) Hact, 3) Attr, 4) folder
                 -- getgc berat → cache 60s via __ZenxMaxPetCacheTime
                 -- hanya update kalau nilai baru > tersimpan
