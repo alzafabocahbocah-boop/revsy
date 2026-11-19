@@ -6394,18 +6394,17 @@ local function run(cfg)
             banner_karamel()
         end
 
-        local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
-        local isi  = ambil_str(resp, "isi") or ""
-
-        -- v9.703: scan file lokal zenx_goserver_<akun>.txt tiap 15s (ditulis script Roblox langsung)
+        -- v9.703: scan file lokal zenx_goserver_<akun>.txt tiap 15s — DIPRIORITASKAN sebelum api_get
         -- hanya untuk preset up3.8kgv2 (UP3) dan up6kg (UP6KG)
-        -- file stale > 120s langsung dihapus tanpa diproses
+        -- file stale > 30s langsung dihapus tanpa diproses
+        local _isiFileCmd = nil
         do
             local _sl703 = (cfg.script_label or ""):upper()
             local _isGoPreset = _sl703:find("UP3", 1, true) or _sl703:find("UP6KG")
             if _isGoPreset and (os.time() - (_goserver_scan_ts or 0)) >= 15 then
                 _goserver_scan_ts = os.time()
                 for _, _dd in ipairs(denyut_dirs(cfg)) do
+                    if _isiFileCmd then break end   -- sudah nemu, skip dirs lainnya
                     local _gs = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_goserver_*.txt; do [ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
                     for line in _gs:gmatch("[^\n]+") do
                         local fname, mtime = line:match("^(.-)|(%d+)$")
@@ -6414,7 +6413,6 @@ local function run(cfg)
                             local fpath = _dd .. "/" .. fname
                             local umurFile = mtime and (os.time() - tonumber(mtime)) or 999
                             if umurFile > 30 then
-                                -- file terlalu lama (stale) -> hapus, skip
                                 warn("[file-cmd] " .. fname .. " stale (" .. umurFile .. "s) -> dihapus")
                                 sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
                             else
@@ -6422,7 +6420,7 @@ local function run(cfg)
                                 fcontent = fcontent:match("^%s*(.-)%s*$")
                                 if fcontent:match("^GOSERVER:[^:]+:.+$") then
                                     info("[file-cmd] baca " .. fname .. " (" .. umurFile .. "s) -> " .. fcontent:sub(1,80))
-                                    isi = fcontent   -- override isi, proses di bawah seperti biasa
+                                    _isiFileCmd = fcontent
                                     sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
                                 end
                             end
@@ -6430,6 +6428,14 @@ local function run(cfg)
                     end
                 end
             end
+        end
+
+        local isi
+        if _isiFileCmd then
+            isi = _isiFileCmd   -- file cmd ada -> langsung pakai, skip api_get
+        else
+            local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+            isi = ambil_str(resp, "isi") or ""
         end
 
         do
