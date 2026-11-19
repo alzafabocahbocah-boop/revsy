@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.328 | lvlmax-tim: baca potensi per akun (ZenxLvlPotensi)                        ║
+-- ║  UP KG — v10.329 | tab LEVELING: target akun leveling berdasarkan potensi slot               ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.328"
+local VERSION = "up6kg-v10.329"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3626,6 +3626,7 @@ makeSideBtn("OPER ELE", 140)
 makeSideBtn("TEST DL", 182)
 makeSideBtn("TRADE ALL", 224)
 makeSideBtn("LINK", 266)
+makeSideBtn("LEVELING", 308)
 
 -- ============ AREA KONTEN ============
 local content = mk("Frame", {
@@ -3682,6 +3683,112 @@ local linkContent = mk("Frame", {
     Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
     BackgroundTransparency = 1, Visible = false, Parent = main })
 pad(linkContent, 14)
+
+-- ============ TAB LEVELING ============
+local lvlContent = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Visible = false, Parent = main })
+pad(lvlContent, 14)
+local lvlScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+    BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+    CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = lvlContent })
+mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = lvlScroll })
+
+do
+    -- header
+    local hdrF = mk("Frame", { Size = UDim2.new(1,0,0,32), BackgroundColor3 = C.card, BorderSizePixel=0, LayoutOrder=1, Parent=lvlScroll }); corner(hdrF,8)
+    local hdrT = lbl(hdrF, "LEVELING", 13, C.text); hdrT.Font=FONT_B; hdrT.Position=UDim2.new(0,13,0,0); hdrT.Size=UDim2.new(0.5,0,1,0)
+    local lvlPetLbl = lbl(hdrF, "6kg+: -", 12, C.accent); lvlPetLbl.Font=FONT_B; lvlPetLbl.Position=UDim2.new(0.5,0,0,0); lvlPetLbl.Size=UDim2.new(0.5,-10,1,0); lvlPetLbl.TextXAlignment=Enum.TextXAlignment.Right
+
+    -- card target terpilih
+    local tgtF = mk("Frame", { Size = UDim2.new(1,0,0,56), BackgroundColor3 = Color3.fromRGB(14,30,20), BorderSizePixel=0, LayoutOrder=2, Parent=lvlScroll }); corner(tgtF,8)
+    local tgtTitleL = lbl(tgtF, "TARGET", 10, C.textDim); tgtTitleL.Font=FONT_B; tgtTitleL.Position=UDim2.new(0,13,0,6); tgtTitleL.Size=UDim2.new(1,-16,0,14)
+    local tgtNamaL = lbl(tgtF, "-", 16, AQ); tgtNamaL.Font=FONT_B; tgtNamaL.Position=UDim2.new(0,13,0,20); tgtNamaL.Size=UDim2.new(0.65,0,0,20)
+    local tgtAlasanL = lbl(tgtF, "-", 11, C.textDim); tgtAlasanL.Position=UDim2.new(0,13,0,40); tgtAlasanL.Size=UDim2.new(1,-16,0,14)
+    local tgtPotL = lbl(tgtF, "", 13, AQ); tgtPotL.Font=FONT_B; tgtPotL.Position=UDim2.new(0.65,0,0,20); tgtPotL.Size=UDim2.new(0.35,-10,0,20); tgtPotL.TextXAlignment=Enum.TextXAlignment.Right
+
+    -- separator
+    local sepL = lbl(lvlScroll, "SEMUA AKUN LEVELING", 10, C.textDim); sepL.Font=FONT_B; sepL.LayoutOrder=3; sepL.Size=UDim2.new(1,0,0,20); sepL.BackgroundTransparency=1
+
+    -- container list akun (diisi dinamis)
+    local akunContainer = mk("Frame", { Size = UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=4, Parent=lvlScroll })
+    mk("UIListLayout", { Padding = UDim.new(0,4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = akunContainer })
+
+    local akunRows = {}  -- cache row per nama
+
+    local function rebuildLvlList()
+        local potensi = _G.ZenxLvlPotensi or {}
+        local lvlMax  = _G.ZenxLvlMax or {}
+        local st      = _G.ZenxKgStat or {}
+        local pet6kg  = tonumber(st.udah) or 0
+
+        lvlPetLbl.Text = "6kg+: " .. pet6kg
+
+        -- kumpul semua akun + potensi
+        local list = {}
+        for nm in pairs(lvlMax) do
+            list[#list+1] = { nm = nm, pot = tonumber(potensi[nm]) or 0 }
+        end
+        table.sort(list, function(a,b) return a.pot > b.pot end)
+
+        -- tentukan target
+        local target, alasan
+        if pet6kg > 100 then
+            for _, item in ipairs(list) do
+                if item.pot >= pet6kg then target = item; alasan = "potensi ≥ "..pet6kg; break end
+            end
+            if not target and #list > 0 then target = list[1]; alasan = "potensi terbesar ("..list[1].pot..")" end
+        else
+            if #list > 0 then target = list[1]; alasan = "6kg+ ≤ 100, pilih terbesar" end
+        end
+
+        if target then
+            tgtNamaL.Text   = target.nm
+            tgtPotL.Text    = "pot: " .. target.pot
+            tgtAlasanL.Text = alasan or "-"
+        else
+            tgtNamaL.Text = "-"; tgtPotL.Text = ""; tgtAlasanL.Text = "belum ada data"
+        end
+
+        -- update/buat rows
+        local seen = {}
+        for i, item in ipairs(list) do
+            seen[item.nm] = true
+            local row = akunRows[item.nm]
+            if not row then
+                row = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card, BorderSizePixel=0, LayoutOrder=i, Parent=akunContainer }); corner(row,7)
+                local nL = lbl(row, item.nm, 13, C.text); nL.Font=FONT_B; nL.Position=UDim2.new(0,10,0,4); nL.Size=UDim2.new(0.65,0,0,16)
+                local pL = lbl(row, "", 13, AQ); pL.Font=FONT_B; pL.Position=UDim2.new(0.65,0,0,4); pL.Size=UDim2.new(0.35,-8,0,16); pL.TextXAlignment=Enum.TextXAlignment.Right
+                local sL = lbl(row, "", 11, C.textDim); sL.Position=UDim2.new(0,10,0,22); sL.Size=UDim2.new(1,-16,0,12)
+                akunRows[item.nm] = { row=row, nL=nL, pL=pL, sL=sL }
+                row = akunRows[item.nm]
+            end
+            row.row.LayoutOrder = i
+            row.nL.Text = item.nm
+            row.pL.Text = "pot: " .. item.pot
+            -- highlight target
+            local isTarget = target and (target.nm == item.nm)
+            row.row.BackgroundColor3 = isTarget and Color3.fromRGB(14,30,20) or C.card
+            row.nL.TextColor3 = isTarget and AQ or C.text
+            row.sL.Text = isTarget and "▶ target" or ""
+            row.sL.TextColor3 = AQ
+        end
+        -- hapus row yang udah gak ada
+        for nm, r in pairs(akunRows) do
+            if not seen[nm] then r.row:Destroy(); akunRows[nm] = nil end
+        end
+    end
+
+    -- refresh tiap 2s saat tab keliatan
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            if lvlContent.Visible then
+                pcall(rebuildLvlList)
+            end
+        end
+    end)
+end
 local linkScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
     BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
     CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = linkContent })
@@ -3960,6 +4067,7 @@ showSideFn = function(name)
     testDLContent.Visible    = (name == "TEST DL")
     tradeAllContent.Visible  = (name == "TRADE ALL")
     linkContent.Visible      = (name == "LINK")
+    lvlContent.Visible       = (name == "LEVELING")
 end
 
 -- ---- KONTEN AUTO KG (kanan) = CONFIG ----
