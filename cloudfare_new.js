@@ -903,6 +903,40 @@ export default {
           for (const row of (rows.results || [])) {
             try { const d = JSON.parse(row.data); if (d && d.tim) daftar.push(d); } catch {}
           }
+          // tambah potensi per akun + potensi_tim (slot kosong = maxInv - totalAll)
+          const semuaAkun = [];
+          for (const tim of daftar) {
+            if (Array.isArray(tim.akun)) for (const nm of tim.akun) if (nm) semuaAkun.push(nm);
+          }
+          const statMap = {};
+          if (semuaAkun.length > 0) {
+            const placeholders = semuaAkun.map(() => "?").join(",");
+            const statRows = await db.prepare(
+              `SELECT nama, upkgstat FROM akun WHERE nama IN (${placeholders})`
+            ).bind(...semuaAkun).all().catch(() => ({ results: [] }));
+            for (const r of (statRows.results || [])) {
+              try {
+                const s = typeof r.upkgstat === "string" ? JSON.parse(r.upkgstat) : r.upkgstat;
+                if (s) statMap[r.nama] = { totalAll: Number(s.totalAll) || 0, maxInv: Number(s.maxInv) || 0 };
+              } catch {}
+            }
+          }
+          for (const tim of daftar) {
+            const potensi = {};
+            let totalMaxTim = 0, totalPetTim = 0;
+            if (Array.isArray(tim.akun)) {
+              for (const nm of tim.akun) {
+                const s = statMap[nm];
+                if (s) {
+                  potensi[nm] = s.maxInv - s.totalAll;
+                  totalMaxTim += s.maxInv;
+                  totalPetTim += s.totalAll;
+                }
+              }
+            }
+            tim.potensi = potensi;
+            tim.potensi_tim = totalMaxTim - totalPetTim;
+          }
           return json({ ok: true, leveling: daftar });
         }
       }
