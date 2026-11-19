@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.209 | tab LINK: cek picker tiap 1s, tulis goserver tiap 30s, hapus kalau OK      ║
+-- ║  UP KG — v2.210 | tab LINK: 30s dihitung ulang kalau picker sempat OK walau 1s               ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.209"
+local VERSION = "up38kg-v2.210"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -4333,7 +4333,8 @@ do
 
     -- cek picker tiap 30s
     task.spawn(function()
-        local _lastTulis = -300
+        local _lastTulis  = -300
+        local _lastKurang = -300   -- terakhir picker kurang; kalau sempat OK -> reset -> hitung 30s dari awal
         while true do
             task.wait(1)
             pcall(function()
@@ -4348,16 +4349,20 @@ do
                     end
                 end
                 if nPick < 2 then
-                    -- picker kurang -> tulis file tiap 30s
-                    if tick() - _lastTulis >= 30 then
+                    _lastKurang = tick()
+                    -- tulis file kalau sudah 30s terus-menerus kurang (tanpa diselingi picker OK)
+                    if tick() - _lastTulis >= 60 then
                         _lastTulis = tick()
                         statusLbl.Text = "picker < 2 (" .. nPick .. ") -> kirim GOSERVER..."
                         statusLbl.TextColor3 = C.accent3
                         kirimGoserver()
                     end
                 else
-                    -- picker cukup -> hapus file kalau masih ada (batalin GOSERVER)
-                    if writefile and isfile then
+                    -- picker OK -> reset lastKurang (kalau kurang lagi, hitung 30s dari nol)
+                    _lastKurang = -300
+                    _lastTulis  = -300
+                    -- hapus file kalau masih ada (batalin GOSERVER pending)
+                    if isfile then
                         local fname = "zenx_goserver_" .. plr.Name .. ".txt"
                         pcall(function() if isfile(fname) then delfile(fname) end end)
                     end
