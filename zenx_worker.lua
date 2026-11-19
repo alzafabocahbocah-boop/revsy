@@ -6403,7 +6403,7 @@ local function run(cfg)
         do
             local _sl703 = (cfg.script_label or ""):upper()
             local _isGoPreset = _sl703:find("UP3", 1, true) or _sl703:find("UP6KG")
-            if _isGoPreset and (os.time() - (_goserver_scan_ts or 0)) >= 15 then
+            if _isGoPreset and (os.time() - (_goserver_scan_ts or 0)) >= 30 then
                 _goserver_scan_ts = os.time()
                 for _, _dd in ipairs(denyut_dirs(cfg)) do
                     local _gs = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_goserver_*.txt; do [ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
