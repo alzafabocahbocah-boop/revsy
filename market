@@ -1,3 +1,4 @@
+-- ZENX MARKET v8.569 — applyState: alias petType di rule (Trex → T-Rex) saat rules di-apply dari panel
 -- ZENX MARKET v8.568 — COUNT-DIAG: dedup by ruleType+range (fix spam tiap loop saat src berubah/rules re-apply)
 -- ZENX MARKET v8.567 — getAge+getBaseKg: TradeWorld TBIC path via getloadedmodules (RC nil di TW → pakai PetData.Level+BaseWeight dari TradeBoothInventoryController upvalue)
 -- ZENX MARKET v8.566 — countMyPetsForRule: dedup warn+log per rule (fix spam warn tiap 5s refreshBackpackStats)
@@ -411,7 +412,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.568"
+local VERSION = "8.569"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2702,8 +2703,12 @@ do
                 end
             end
         end
+        -- v8.569: alias khusus nama pet yang ada variasi penulisan
+        local _PET_ALIASES = { ["Trex"] = "T-Rex", ["TRex"] = "T-Rex", ["T Rex"] = "T-Rex" }
+        if _PET_ALIASES[result] then result = _PET_ALIASES[result] end
         return result
     end
+
 end
 
 -- ===== v8.37: maxKGCache — tiru inventory.lua untuk mutated pet detection =====
@@ -3064,9 +3069,17 @@ do
         -- v8.308: pakai BH.listingRules (di-expose dari tab Listing yg didefinisikan belakangan).
         local lr = BH.listingRules
         local synced = false
+        -- v8.569: alias petType di rule (normalize variasi penulisan → nama resmi game)
+        local _RULE_ALIASES = { ["Trex"]="T-Rex", ["TRex"]="T-Rex", ["T Rex"]="T-Rex" }
         if lr then
             for i = #lr, 1, -1 do lr[i] = nil end
-            for i, r in ipairs(BH.marketState.listingRules) do lr[i] = r end
+            for i, r in ipairs(BH.marketState.listingRules) do
+                if r.type and _RULE_ALIASES[r.type] then
+                    r = setmetatable({}, {__index=r})
+                    r.type = _RULE_ALIASES[r.type]
+                end
+                lr[i] = r
+            end
             BH.marketState.listingRules = lr
             synced = true
         end
