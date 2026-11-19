@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.704 — up6kg tulis zenx_lvlps.txt → worker baca → go ke PS leveling
 -- zenx_worker v9.703 — up6kg baca __ZenxLvlPS → worker go ke PS tim leveling target
 -- zenx_worker v9.702 — up3.8kgv2: fix _ps_override dari /ps override assign-ps saat FORCE/RESTART
 -- zenx_worker v9.701 — up3.8kgv2: broadcast assign-ps link ke semua akun di device (fix beda server)
@@ -5485,6 +5486,7 @@ local function run(cfg)
     local lastIsi = nil
     local MODE_JALAN = false
     local _goserver_scan_ts = 0   -- v9.703: timer scan zenx_goserver_*.txt (tiap 15s)
+    local _lvlps_scan_ts    = 0   -- v9.704: timer scan zenx_lvlps.txt (tiap 60s)
 
     do
         local ok2, n, place, gk = pulih_aktif(cfg)
@@ -6917,21 +6919,29 @@ local function run(cfg)
                     info("PS dari panel: " .. (link ~= "" and link or "(public)"))
                 end
             end
-            -- UP6KG — baca _G.__ZenxLvlPS (diset up6kg setelah pilih tim leveling target)
-            -- apply psLink ke cfg._ps_override biar worker go ke PS leveling
-            if tostring(cfg.script_label or ""):upper():find("UP6KG") or tostring(cfg.script_label or ""):upper():find("UP6") then
-                local lp = _G.__ZenxLvlPS
-                if type(lp) == "table" and (lp.psLink or "") ~= "" then
-                    if lp.psLink ~= (cfg._lvlPsApplied or "") then
-                        cfg._lvlPsApplied = lp.psLink
-                        cfg._ps_override  = lp.psLink
-                        _psOverrideSetTs  = os.time()
-                        for pkg in pairs(mapLink) do mapLink[pkg] = lp.psLink end
-                        info("[LVL-PS] apply psLink dari up6kg → tim=" .. tostring(lp.tim) .. " link=" .. lp.psLink:sub(1,40))
-                    end
-                elseif (cfg._lvlPsApplied or "") ~= "" then
+            -- v9.704: UP6KG — baca file zenx_lvlps.txt (ditulis up6kg kalau pet 6kg+ > 100)
+            -- format: LVLPS:<tim>:<psLink>
+            local _sl704 = (cfg.script_label or ""):upper()
+            if (_sl704:find("UP6KG") or _sl704:find("UP6")) and (os.time() - _lvlps_scan_ts) >= 60 then
+                _lvlps_scan_ts = os.time()
+                local _lvlTimBaru, _lvlLinkBaru
+                for _, _dd in ipairs(denyut_dirs(cfg)) do
+                    if _lvlLinkBaru then break end
+                    local fpath = _dd .. "/zenx_lvlps.txt"
+                    local fc = sh("su -c 'cat \"" .. fpath .. "\" 2>/dev/null'") or ""
+                    fc = fc:match("^%s*(.-)%s*$")
+                    local t, l = fc:match("^LVLPS:([^:]+):(.+)$")
+                    if t and l and l ~= "" then _lvlTimBaru = t; _lvlLinkBaru = l end
+                end
+                if _lvlLinkBaru and _lvlLinkBaru ~= (cfg._lvlPsApplied or "") then
+                    cfg._lvlPsApplied = _lvlLinkBaru
+                    cfg._ps_override  = _lvlLinkBaru
+                    _psOverrideSetTs  = os.time()
+                    for pkg in pairs(mapLink) do mapLink[pkg] = _lvlLinkBaru end
+                    info("[LVL-PS] apply dari file → tim=" .. tostring(_lvlTimBaru) .. " link=" .. _lvlLinkBaru:sub(1,40))
+                elseif not _lvlLinkBaru and (cfg._lvlPsApplied or "") ~= "" then
                     cfg._lvlPsApplied = ""
-                    info("[LVL-PS] up6kg clear LvlPS → refresh_ps")
+                    info("[LVL-PS] file kosong/hilang → refresh_ps")
                     pcall(refresh_ps)
                 end
             end
