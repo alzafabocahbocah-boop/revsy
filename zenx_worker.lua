@@ -2,6 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.707 — LVL-PS: SERVER_TERAKHIR→custom + trigger rejoin semua pkg saat link baru
 -- zenx_worker v9.706 — log [LVL-PS] file ada tapi link sama (skip)
+-- zenx_worker v9.709 — matiin 3 debug log spam: upkgstat-debug, DBG-SHECK, wm-log
 -- zenx_worker v9.708 — dedup warn freeform: skip kalau task sama udah dipindah <60s
 -- zenx_worker v9.705 — log windowingMode Roblox client tiap 60s
 -- zenx_worker v9.704 — up6kg tulis zenx_lvlps.txt → worker baca → go ke PS leveling
@@ -5892,17 +5893,14 @@ local function run(cfg)
                             end
                         end
                     end
-                    info("[upkgstat-debug] dirs: " .. table.concat(_dbgDirs, " | "))
-                    if #_dbgFound > 0 then
-                        info("[upkgstat-debug] files: " .. table.concat(_dbgFound, ", "))
-                    else
-                        warn("[upkgstat-debug] TIDAK ADA file zenx_upkgstat_*.json di semua dir!")
-                        -- v9.637: cari lebih luas — find di seluruh /sdcard + /storage
+                    -- v8.570: upkgstat-debug dimatiin (sudah stabil)
+                    if #_dbgFound == 0 then
+                        -- hanya warn kalau benar-benar tidak ada file sama sekali
                         local _found = sh("su -c 'find /sdcard /storage/emulated/0 -maxdepth 6 -name \"zenx_upkgstat_*.json\" 2>/dev/null | head -20'") or ""
                         if _found ~= "" then
-                            warn("[upkgstat-debug] TAPI file ADA di: " .. _found:gsub("\n", " | "))
+                            warn("[upkgstat] file ada di luar dir scan: " .. _found:gsub("\n", " | "))
                         else
-                            warn("[upkgstat-debug] find luas juga tidak nemu — file belum pernah ditulis di device ini")
+                            warn("[upkgstat] tidak ada file zenx_upkgstat_*.json di device ini")
                         end
                     end
                     local items = {}
@@ -6070,7 +6068,7 @@ local function run(cfg)
                             local nightKg = isi:match(";N(%d+)")   -- v9.413: night egg dari upkg (format kg)
                             local petTotal = isi:match(";P(%d+)")  -- uplevel: total pet inventory
                             local petMax   = isi:match(";P%d+;(%d+)")  -- uplevel: max inventory
-                            info(("[DBG-SHECK] %s: ;S=%s ;N=%s ;P=%s/%s | isi=%s"):format(nama, tostring(skReal), tostring(nightKg), tostring(petTotal), tostring(petMax), isi:sub(1, 65)))
+                            -- v8.570: DBG-SHECK dimatiin (debug denyut parsing, sudah stabil)
                             if isi:match("^%d+;%d+;%d+;%d+;egg3") then
                                 local gem, chr, night = isi:match("^%d+;(%d+);(%d+);(%d+);egg3")
                                 if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 or (tonumber(night) or 0) > 0 or (tonumber(skReal) or 0) > 0 then
@@ -6742,28 +6740,7 @@ local function run(cfg)
             end
         end
 
-        -- v9.705: log windowingMode semua Roblox client tiap 60s
-        if (now - lastWmLog) >= 60 then
-            lastWmLog = now
-            pcall(function()
-                local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
-                local pkgs = { "com.roblox.client", "com.roblox.clienu", "com.roblox.clienv" }
-                local hasil = {}
-                for _, pkg in ipairs(pkgs) do
-                    local pat = pkg:gsub("%.", "%%.") .. "[^%w_]"
-                    local pos = dump:find(pat)
-                    if pos then
-                        local chunk = dump:sub(math.max(1, pos-200), pos+800)
-                        local wm = chunk:match("windowingMode=(%d+)") or chunk:match("mWindowingMode=(%d+)") or "?"
-                        local pkg_short = pkg:match("clien(.-)$") or pkg
-                        hasil[#hasil+1] = pkg_short .. "=wm" .. wm
-                    end
-                end
-                if #hasil > 0 then
-                    info("[wm-log] " .. table.concat(hasil, " | "))
-                end
-            end)
-        end
+        -- v9.705: wm-log dimatiin v8.570 (selalu wm? di device ini, tidak berguna)
 
         if (now - lastSettingCek) >= 5 then
             lastSettingCek = now
