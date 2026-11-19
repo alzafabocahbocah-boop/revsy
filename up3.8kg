@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.206 | tab LINK: simpan/copy/hapus link server Roblox                            ║
+-- ║  UP KG — v2.207 | tab LINK: auto GOSERVER ke worker kalau picker < 2                        ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.206"
+local VERSION = "up38kg-v2.207"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -4217,113 +4217,161 @@ local linkScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), Backgrou
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = linkScroll })
 
 do
-    local LINK_FILE = "zenx_links.json"
-    local links = {}   -- { {nama=string, url=string}, ... }
+    local LINK_FILE  = "zenx_link.json"   -- 1 entry: {nama, url}
+    local WORKER_URL = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local KUNCI_LINK = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+    local savedLink  = { nama = "", url = "" }   -- entry tunggal
+    local _goserverLastT = -300   -- cooldown anti-spam (5 menit)
 
-    local function saveLinks()
+    local function saveLink()
         pcall(function()
             if not writefile then return end
-            local parts = {}
-            for _, e in ipairs(links) do
-                parts[#parts+1] = string.format('{"nama":%q,"url":%q}', e.nama, e.url)
-            end
-            writefile(LINK_FILE, "["..table.concat(parts, ",").."]")
+            writefile(LINK_FILE, string.format('{"nama":%q,"url":%q}', savedLink.nama, savedLink.url))
         end)
     end
-    local function loadLinks()
+    local function loadLink()
         pcall(function()
             if not (isfile and isfile(LINK_FILE) and readfile) then return end
             local raw = readfile(LINK_FILE)
-            for nama, url in raw:gmatch('"nama":"(.-[^\\])","url":"(.-[^\\])"') do
-                links[#links+1] = { nama = nama, url = url }
-            end
+            local nm  = raw:match('"nama"%s*:%s*"(.-[^\\])"') or raw:match('"nama"%s*:%s*""') and "" or nil
+            local ul  = raw:match('"url"%s*:%s*"(.-[^\\])"')  or raw:match('"url"%s*:%s*""')  and "" or nil
+            if nm ~= nil then savedLink.nama = nm end
+            if ul ~= nil then savedLink.url  = ul end
         end)
     end
-    loadLinks()
+    loadLink()
 
+    -- ---- UI ----
     -- header
     local hdrF = mk("Frame", { Size = UDim2.new(1,0,0,38), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 1, Parent = linkScroll }); corner(hdrF, 10); stroke(hdrF, C.border, 1)
-    local hT = lbl(hdrF, "LINK SERVER", 13, C.text); hT.Font = FONT_B
+    local hT = lbl(hdrF, "LINK SERVER TUJUAN", 13, C.text); hT.Font = FONT_B
     hT.Position = UDim2.new(0,13,0,0); hT.Size = UDim2.new(1,-20,1,0)
+
+    -- status auto-goserver
+    local statusF = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 2, Parent = linkScroll }); corner(statusF, 8); stroke(statusF, C.border, 1)
+    local statusLbl = lbl(statusF, "auto GOSERVER: menunggu...", 11, C.textMute)
+    statusLbl.Position = UDim2.new(0,12,0,0); statusLbl.Size = UDim2.new(1,-20,1,0)
 
     -- input nama
     local namaRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 2, Parent = linkScroll }); corner(namaRow, 8); stroke(namaRow, C.border, 1)
+        BorderSizePixel = 0, LayoutOrder = 3, Parent = linkScroll }); corner(namaRow, 8); stroke(namaRow, C.border, 1)
     lbl(namaRow, "Nama", 11, C.textDim).Position = UDim2.new(0,12,0,0)
     local namaBox = mk("TextBox", { Size = UDim2.new(1,-80,0,24), Position = UDim2.new(0,56,0.5,-12),
-        BackgroundColor3 = C.input, Text = "", PlaceholderText = "contoh: Server 1",
+        BackgroundColor3 = C.input, Text = savedLink.nama, PlaceholderText = "contoh: Server 1",
         Font = FONT_B, TextSize = 12, TextColor3 = C.text, PlaceholderColor3 = C.textMute,
         ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, Parent = namaRow })
     corner(namaBox, 5); stroke(namaBox, C.border, 1)
 
     -- input link
     local linkRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 3, Parent = linkScroll }); corner(linkRow, 8); stroke(linkRow, C.border, 1)
+        BorderSizePixel = 0, LayoutOrder = 4, Parent = linkScroll }); corner(linkRow, 8); stroke(linkRow, C.border, 1)
     lbl(linkRow, "Link", 11, C.textDim).Position = UDim2.new(0,12,0,0)
     local linkBox = mk("TextBox", { Size = UDim2.new(1,-80,0,24), Position = UDim2.new(0,50,0.5,-12),
-        BackgroundColor3 = C.input, Text = "", PlaceholderText = "https://www.roblox.com/share?...",
+        BackgroundColor3 = C.input, Text = savedLink.url, PlaceholderText = "https://www.roblox.com/share?...",
         Font = FONT_B, TextSize = 11, TextColor3 = C.text, PlaceholderColor3 = C.textMute,
         ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, Parent = linkRow })
     corner(linkBox, 5); stroke(linkBox, C.border, 1)
 
-    -- tombol save
-    local saveBtn = mk("TextButton", { Size = UDim2.new(1,0,0,34), BackgroundColor3 = C.accent,
-        Text = "+ Simpan", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(0,0,0),
-        LayoutOrder = 4, Parent = linkScroll }); corner(saveBtn, 9)
-
-    -- list holder
-    local listHolder = mk("Frame", { Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1, LayoutOrder = 5, Parent = linkScroll })
-    mk("UIListLayout", { Padding = UDim.new(0,6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = listHolder })
-
-    local function rebuildList()
-        for _, c in ipairs(listHolder:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
-        for i, e in ipairs(links) do
-            local row = mk("Frame", { Size = UDim2.new(1,0,0,46), BackgroundColor3 = C.card,
-                BorderSizePixel = 0, LayoutOrder = i, Parent = listHolder }); corner(row, 9); stroke(row, C.border, 1)
-            -- nama
-            local nL = lbl(row, e.nama, 13, C.text); nL.Font = FONT_B
-            nL.Position = UDim2.new(0,12,0,5); nL.Size = UDim2.new(1,-176,0,18)
-            -- url (truncate)
-            local uL = lbl(row, e.url, 10, C.textMute)
-            uL.Position = UDim2.new(0,12,0,24); uL.Size = UDim2.new(1,-176,0,14)
-            uL.TextXAlignment = Enum.TextXAlignment.Left; uL.TextTruncate = Enum.TextTruncate.AtEnd
-            -- tombol copy
-            local copyBtn = mk("TextButton", { Size = UDim2.new(0,66,0,30), Position = UDim2.new(1,-156,0.5,-15),
-                BackgroundColor3 = C.accent2, Text = "Copy", Font = FONT_B, TextSize = 12,
-                TextColor3 = Color3.fromRGB(0,0,0), Parent = row }); corner(copyBtn, 7)
-            -- tombol hapus
-            local delBtn = mk("TextButton", { Size = UDim2.new(0,56,0,30), Position = UDim2.new(1,-82,0.5,-15),
-                BackgroundColor3 = Color3.fromRGB(80,30,30), Text = "Hapus", Font = FONT_B, TextSize = 12,
-                TextColor3 = Color3.fromRGB(220,100,100), Parent = row }); corner(delBtn, 7)
-
-            local idx = i
-            copyBtn.MouseButton1Click:Connect(function()
-                local clip = setclipboard or toclipboard or set_clipboard or writeclipboard
-                if clip then pcall(function() clip(links[idx].url) end) end
-                local orig = copyBtn.Text; copyBtn.Text = "✓ Done"
-                task.delay(1.5, function() if copyBtn and copyBtn.Parent then copyBtn.Text = orig end end)
-            end)
-            delBtn.MouseButton1Click:Connect(function()
-                table.remove(links, idx)
-                saveLinks()
-                rebuildList()
-            end)
-        end
-    end
+    -- tombol baris: Save + Copy + Hapus
+    local btnRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1,
+        LayoutOrder = 5, Parent = linkScroll })
+    mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0,8), Parent = btnRow })
+    local saveBtn = mk("TextButton", { Size = UDim2.new(0.4,-6,1,0), BackgroundColor3 = C.accent,
+        Text = "Simpan", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(0,0,0), Parent = btnRow }); corner(saveBtn, 9)
+    local copyBtn = mk("TextButton", { Size = UDim2.new(0.3,-6,1,0), BackgroundColor3 = C.accent2,
+        Text = "Copy", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(0,0,0), Parent = btnRow }); corner(copyBtn, 9)
+    local hapusBtn = mk("TextButton", { Size = UDim2.new(0.3,-6,1,0), BackgroundColor3 = Color3.fromRGB(80,30,30),
+        Text = "Hapus", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(220,100,100), Parent = btnRow }); corner(hapusBtn, 9)
 
     saveBtn.MouseButton1Click:Connect(function()
         local nm = namaBox.Text:match("^%s*(.-)%s*$")
         local ul = linkBox.Text:match("^%s*(.-)%s*$")
         if nm == "" or ul == "" then return end
-        links[#links+1] = { nama = nm, url = ul }
-        saveLinks()
+        savedLink.nama = nm; savedLink.url = ul
+        saveLink()
+        local orig = saveBtn.Text; saveBtn.Text = "✓ Tersimpan"
+        task.delay(1.5, function() if saveBtn and saveBtn.Parent then saveBtn.Text = orig end end)
+    end)
+    copyBtn.MouseButton1Click:Connect(function()
+        local clip = setclipboard or toclipboard or set_clipboard or writeclipboard
+        if clip and savedLink.url ~= "" then pcall(function() clip(savedLink.url) end) end
+        local orig = copyBtn.Text; copyBtn.Text = "✓ Done"
+        task.delay(1.5, function() if copyBtn and copyBtn.Parent then copyBtn.Text = orig end end)
+    end)
+    hapusBtn.MouseButton1Click:Connect(function()
+        savedLink.nama = ""; savedLink.url = ""
         namaBox.Text = ""; linkBox.Text = ""
-        rebuildList()
+        saveLink()
     end)
 
-    rebuildList()
+    -- ---- AUTO GOSERVER: kalau picker < 2 di server -> kirim GOSERVER ke worker ----
+    local function kirimGoserver()
+        local plr = game:GetService("Players").LocalPlayer
+        if not plr then return end
+        if savedLink.url == "" then
+            statusLbl.Text = "auto GOSERVER: link belum diisi"
+            statusLbl.TextColor3 = C.textMute
+            return
+        end
+        local tim = "tim-" .. tostring(lineupTim or 1)
+        local isi = "GOSERVER:" .. plr.Name .. ":" .. savedLink.url
+        local req = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
+        if not req then
+            statusLbl.Text = "auto GOSERVER: gak ada http_request"
+            statusLbl.TextColor3 = Color3.fromRGB(220,100,100)
+            return
+        end
+        local ok, res = pcall(function()
+            return req({
+                Url = WORKER_URL .. "/perintah",
+                Method = "PUT",
+                Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = KUNCI_LINK },
+                Body = string.format('{"tim":%q,"isi":%q}', tim, isi)
+            })
+        end)
+        if ok and res and (res.StatusCode == 200 or res.StatusCode == 201) then
+            statusLbl.Text = "GOSERVER terkirim -> " .. savedLink.nama .. " (" .. os.date("%H:%M:%S") .. ")"
+            statusLbl.TextColor3 = C.accent2
+        else
+            statusLbl.Text = "GOSERVER gagal: " .. tostring(ok and (res and res.StatusCode or "?") or res)
+            statusLbl.TextColor3 = Color3.fromRGB(220,100,100)
+        end
+    end
+
+    -- cek picker tiap 30s
+    task.spawn(function()
+        while true do
+            task.wait(30)
+            pcall(function()
+                if savedLink.url == "" then return end
+                -- hitung picker yang hadir di server
+                local Players = game:GetService("Players")
+                local plr = Players.LocalPlayer
+                local nPick = 0
+                -- ambil picker dari OP.pick di oper ele (via shared state)
+                local pick = _G.__ZenxElePick or {}
+                for nm in pairs(pick) do
+                    if nm ~= plr.Name and Players:FindFirstChild(nm) then
+                        nPick = nPick + 1
+                    end
+                end
+                if nPick < 2 then
+                    -- cooldown 5 menit anti-spam
+                    if tick() - _goserverLastT >= 300 then
+                        _goserverLastT = tick()
+                        statusLbl.Text = "picker < 2 (" .. nPick .. ") -> kirim GOSERVER..."
+                        statusLbl.TextColor3 = C.accent3
+                        kirimGoserver()
+                    end
+                else
+                    statusLbl.Text = "picker OK (" .. nPick .. " hadir) — " .. os.date("%H:%M:%S")
+                    statusLbl.TextColor3 = C.accent2
+                end
+            end)
+        end
+    end)
 end
 
 showSideFn = function(name)
@@ -6277,6 +6325,7 @@ do
         end
         if not next(newPick) then loadLocalPick(newPick) end   -- backend kosong/gagal -> file lokal
         OP.pick = newPick   -- reassign SEKALI di akhir -> gak ada window kosong -> gak flicker
+        _G.__ZenxElePick = OP.pick   -- expose ke tab LINK buat cek picker hadir
     end
     local function setPick(nama, val)
         httpReq("/ele-ikut", "POST", string.format('{"kunci":"%s","akun":"%s","ikut":%s}', KUNCI, nama, tostring(val)))
