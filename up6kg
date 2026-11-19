@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.343 | hapus zenx_gohome, balik home lewat tab LINK                             ║
+-- ║  UP KG — v10.346 | label status lvlps.txt di tab LEVELING                                   ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.343"
+local VERSION = "up6kg-v10.346"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3700,18 +3700,33 @@ do
     local hdrT = lbl(hdrF, "LEVELING", 13, C.text); hdrT.Font=FONT_B; hdrT.Position=UDim2.new(0,13,0,0); hdrT.Size=UDim2.new(0.5,0,1,0)
     local lvlPetLbl = lbl(hdrF, "6kg+: -", 12, C.accent); lvlPetLbl.Font=FONT_B; lvlPetLbl.Position=UDim2.new(0.5,0,0,0); lvlPetLbl.Size=UDim2.new(0.5,-10,1,0); lvlPetLbl.TextXAlignment=Enum.TextXAlignment.Right
 
+    -- status fetch /lvlmax-tim (v10.344)
+    local lvlFetchLbl = lbl(lvlScroll, "fetch: menunggu...", 10, C.textDim)
+    lvlFetchLbl.LayoutOrder = 2
+    lvlFetchLbl.Size = UDim2.new(1,0,0,16)
+    lvlFetchLbl.BackgroundTransparency = 1
+    lvlFetchLbl.TextXAlignment = Enum.TextXAlignment.Left
+    _G.__ZenxLvlFetchLbl = lvlFetchLbl  -- akses dari luar do-block
+
     -- card target terpilih
-    local tgtF = mk("Frame", { Size = UDim2.new(1,0,0,56), BackgroundColor3 = Color3.fromRGB(14,30,20), BorderSizePixel=0, LayoutOrder=2, Parent=lvlScroll }); corner(tgtF,8)
+    local tgtF = mk("Frame", { Size = UDim2.new(1,0,0,56), BackgroundColor3 = Color3.fromRGB(14,30,20), BorderSizePixel=0, LayoutOrder=3, Parent=lvlScroll }); corner(tgtF,8)
     local tgtTitleL = lbl(tgtF, "TARGET", 10, C.textDim); tgtTitleL.Font=FONT_B; tgtTitleL.Position=UDim2.new(0,13,0,6); tgtTitleL.Size=UDim2.new(1,-16,0,14)
     local tgtNamaL = lbl(tgtF, "-", 16, AQ); tgtNamaL.Font=FONT_B; tgtNamaL.Position=UDim2.new(0,13,0,20); tgtNamaL.Size=UDim2.new(0.65,0,0,20)
     local tgtAlasanL = lbl(tgtF, "-", 11, C.textDim); tgtAlasanL.Position=UDim2.new(0,13,0,40); tgtAlasanL.Size=UDim2.new(1,-16,0,14)
     local tgtPotL = lbl(tgtF, "", 13, AQ); tgtPotL.Font=FONT_B; tgtPotL.Position=UDim2.new(0.65,0,0,20); tgtPotL.Size=UDim2.new(0.35,-10,0,20); tgtPotL.TextXAlignment=Enum.TextXAlignment.Right
 
+    -- status zenx_lvlps.txt (v10.346)
+    local lvlLpsLbl = lbl(lvlScroll, "lvlps: -", 10, C.textDim)
+    lvlLpsLbl.LayoutOrder = 4
+    lvlLpsLbl.Size = UDim2.new(1,0,0,16)
+    lvlLpsLbl.BackgroundTransparency = 1
+    lvlLpsLbl.TextXAlignment = Enum.TextXAlignment.Left
+
     -- separator
-    local sepL = lbl(lvlScroll, "SEMUA AKUN LEVELING", 10, C.textDim); sepL.Font=FONT_B; sepL.LayoutOrder=3; sepL.Size=UDim2.new(1,0,0,20); sepL.BackgroundTransparency=1
+    local sepL = lbl(lvlScroll, "SEMUA AKUN LEVELING", 10, C.textDim); sepL.Font=FONT_B; sepL.LayoutOrder=5; sepL.Size=UDim2.new(1,0,0,20); sepL.BackgroundTransparency=1
 
     -- container list akun (diisi dinamis)
-    local akunContainer = mk("Frame", { Size = UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=4, Parent=lvlScroll })
+    local akunContainer = mk("Frame", { Size = UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=6, Parent=lvlScroll })
     mk("UIListLayout", { Padding = UDim.new(0,4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = akunContainer })
 
     local akunRows = {}  -- cache row per nama
@@ -3722,6 +3737,12 @@ do
         local timInfo  = _G.ZenxLvlTimInfo or {}
         local st       = _G.ZenxKgStat or {}
         local pet6kg   = tonumber(st.udah) or 0
+
+        -- helper update label status lvlps
+        local function setLpsLbl(txt, col)
+            lvlLpsLbl.Text = txt
+            lvlLpsLbl.TextColor3 = col or C.textDim
+        end
 
         lvlPetLbl.Text = "6kg+: " .. pet6kg
 
@@ -3736,10 +3757,12 @@ do
             end
             if sameNow and pet6kg < 20 then
                 pcall(function() if isfile and isfile("zenx_lvlps.txt") and delfile then delfile("zenx_lvlps.txt") end end)
+                setLpsLbl("lvlps: dihapus (selesai)", C.textMute)
                 _G.__ZenxLvlAktif = false
                 tgtNamaL.Text = "-"; tgtPotL.Text = ""; tgtAlasanL.Text = "selesai leveling (6kg+ < 20)"
             else
                 tgtNamaL.Text = "-"; tgtPotL.Text = ""; tgtAlasanL.Text = "6kg+ ≤ 100, menunggu..."
+                setLpsLbl("lvlps: tidak aktif (6kg+ ≤ 100)", C.textMute)
             end
             return
         end
@@ -3779,20 +3802,24 @@ do
             if sudahSameServer then
                 tgtAlasanL.Text = "✓ sudah di server tim"
                 pcall(function() if isfile and isfile("zenx_lvlps.txt") and delfile then delfile("zenx_lvlps.txt") end end)
+                setLpsLbl("lvlps: dihapus ✓ sudah se-server " .. os.date("%H:%M:%S"), Color3.fromRGB(80,200,120))
                 _G.__ZenxLvlAktif = true  -- tetap aktif (tab LINK tetap off), cuma gak nulis file
             else
                 tgtAlasanL.Text = (target.psLink ~= "" and target.psLink or "-") .. " | " .. (alasan or "")
                 -- tulis file zenx_lvlps.txt biar worker go ke PS tim leveling ini
                 if target.psLink ~= "" then
                     pcall(function() if writefile then writefile("zenx_lvlps.txt", "LVLPS:"..target.tim..":"..target.psLink) end end)
+                    setLpsLbl("✍ lvlps: tulis " .. target.tim .. " " .. os.date("%H:%M:%S"), Color3.fromRGB(220,180,60))
                 else
                     pcall(function() if isfile and isfile("zenx_lvlps.txt") and delfile then delfile("zenx_lvlps.txt") end end)
+                    setLpsLbl("lvlps: dihapus (psLink kosong)", C.textMute)
                 end
                 _G.__ZenxLvlAktif = true
             end
         else
             tgtNamaL.Text = "-"; tgtPotL.Text = ""; tgtAlasanL.Text = "belum ada data"
             pcall(function() if isfile and isfile("zenx_lvlps.txt") and delfile then delfile("zenx_lvlps.txt") end end)
+            setLpsLbl("lvlps: dihapus (belum ada data)", C.textMute)
         end
 
         -- update/buat rows per tim
@@ -3901,17 +3928,21 @@ do
 
     local _pickerRows = {}
     local function rebuildPickerList()
+        -- v10.345: sumber dari Players online di server, bukan __ZenxElePick
         local Players = game:GetService("Players")
         local plr = Players.LocalPlayer
-        local pick = _G.__ZenxElePick or {}
+        local myName = plr and plr.Name or ""
 
+        -- kumpul: semua player online (kecuali diri sendiri) + yang terkunci walau offline
         local semua = {}
         local seen = {}
-        for nm in pairs(pick) do
-            if nm ~= (plr and plr.Name or "") then semua[#semua+1] = nm; seen[nm] = true end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Name ~= myName then
+                semua[#semua+1] = p.Name; seen[p.Name] = true
+            end
         end
         for nm in pairs(terkunci) do
-            if not seen[nm] then semua[#semua+1] = nm end
+            if not seen[nm] then semua[#semua+1] = nm end  -- terkunci tapi sudah offline
         end
         table.sort(semua)
 
@@ -3928,12 +3959,18 @@ do
         for i, nm in ipairs(semua) do
             local isOnline = Players:FindFirstChild(nm) ~= nil
             local isKunci  = terkunci[nm] == true
+            -- cek apakah akun leveling (ada psLink di ZenxLvlTimInfo)
+            local timInfo  = (_G.ZenxLvlTimInfo or {})[nm]
+            local isLvl    = timInfo ~= nil
+
             local row = mk("Frame", {
-                Size = UDim2.new(1,0,0,30), BackgroundColor3 = isKunci and C.accent or C.card,
+                Size = UDim2.new(1,0,0,30),
+                BackgroundColor3 = isKunci and C.accent or (isLvl and Color3.fromRGB(14,30,20) or C.card),
                 BorderSizePixel = 0, LayoutOrder = i, Parent = pickerListF })
             corner(row, 7); stroke(row, isKunci and C.accent2 or C.border, 1)
 
-            local nameLbl = lbl(row, nm, 12, isOnline and (isKunci and Color3.fromRGB(0,0,0) or C.text) or C.textMute)
+            local nameColor = isOnline and (isKunci and Color3.fromRGB(0,0,0) or (isLvl and Color3.fromRGB(80,220,120) or C.text)) or C.textMute
+            local nameLbl = lbl(row, nm .. (isLvl and " [lvl]" or ""), 12, nameColor)
             nameLbl.Font = isKunci and FONT_B or FONT
             nameLbl.Position = UDim2.new(0,10,0,0)
             nameLbl.Size = UDim2.new(1, isKunci and -38 or -10, 1, 0)
@@ -4058,13 +4095,13 @@ do
                 if savedLink.url == "" then return end
                 local Players = game:GetService("Players")
                 local plr = Players.LocalPlayer
-                local pick = _G.__ZenxElePick or {}
 
                 if tick() - _lastRebuild >= 2 then
                     _lastRebuild = tick()
                     rebuildPickerList()
                 end
 
+                -- v10.345: nPick dari terkunci online (kalau terkunci kosong → semua player online)
                 local nPick = 0
                 local adaTerkunci = next(terkunci) ~= nil
                 if adaTerkunci then
@@ -4074,10 +4111,9 @@ do
                         end
                     end
                 else
-                    for nm in pairs(pick) do
-                        if nm ~= plr.Name and Players:FindFirstChild(nm) then
-                            nPick = nPick + 1
-                        end
+                    -- tidak ada yang di-terkunci: hitung semua player online kecuali diri sendiri
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if p.Name ~= plr.Name then nPick = nPick + 1 end
                     end
                 end
 
@@ -5184,8 +5220,17 @@ do
         local LVLMAX_TIM_URL = LVLMAX_URL:gsub("/lvlmax$", "/lvlmax-tim")  -- v10.130: endpoint per-tim (merge dari semua panel)
         task.spawn(function()
             -- v10.324: fetch sekali pas awal, retry 10s kalau gagal, stop kalau berhasil
+            local _retryCount = 0
+            local function _setFetchLbl(txt, col)
+                pcall(function()
+                    local fl = _G.__ZenxLvlFetchLbl
+                    if fl then fl.Text = txt; if col then fl.TextColor3 = col end end
+                end)
+            end
             while true do
                 local done = false
+                _retryCount = _retryCount + 1
+                _setFetchLbl("fetch lvlmax-tim... (coba ke-" .. _retryCount .. ")", Color3.fromRGB(180,180,80))
                 pcall(function()
                     local rawTim
                     local _req = request or http_request or (syn and syn.request)
@@ -5215,12 +5260,19 @@ do
                             if next(m) then
                                 _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; _G.ZenxLvlPotensi = mp; _G.ZenxLvlTimInfo = mt; done = true
                                 pcall(function() if writefile then writefile(LVLMAX_CACHE_FILE, rawTim) end end)
-                                print("[up6kg] load lvlmax dari /lvlmax-tim: "..tostring(#(decoded.leveling or {})).." tim")
+                                local timCount = #(decoded.leveling or {})
+                                print("[up6kg] load lvlmax dari /lvlmax-tim: "..tostring(timCount).." tim")
+                                _setFetchLbl("✓ lvlmax-tim: "..timCount.." tim | " .. os.date("%H:%M:%S"), Color3.fromRGB(80,200,120))
                             else
                                 print("[up6kg] /lvlmax-tim akun kosong, retry...")
+                                _setFetchLbl("⚠ lvlmax-tim: akun kosong, retry...", Color3.fromRGB(220,120,60))
                             end
                             return
+                        else
+                            _setFetchLbl("⚠ decode JSON gagal, retry...", Color3.fromRGB(220,120,60))
                         end
+                    else
+                        _setFetchLbl("⚠ response kosong, retry...", Color3.fromRGB(220,120,60))
                     end
                     print("[up6kg] /lvlmax-tim gagal/kosong, retry 10s...")
                 end)
@@ -5244,6 +5296,7 @@ do
                         task.wait(60)
                         local pet6kg = tonumber((_G.ZenxKgStat or {}).udah) or 0
                         if pet6kg > 100 then
+                            _setFetchLbl("↻ re-fetch lvlmax-tim... " .. os.date("%H:%M:%S"), Color3.fromRGB(180,180,80))
                             pcall(function()
                                 local rawTim
                                 local _req = request or http_request or (syn and syn.request)
@@ -5273,8 +5326,16 @@ do
                                         if next(m) then
                                             _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; _G.ZenxLvlPotensi = mp; _G.ZenxLvlTimInfo = mt
                                             pcall(function() if writefile then writefile(LVLMAX_CACHE_FILE, rawTim) end end)
+                                            local timCount = #(decoded.leveling or {})
+                                            _setFetchLbl("✓ refresh " .. os.date("%H:%M:%S") .. " | "..timCount.." tim", Color3.fromRGB(80,200,120))
+                                        else
+                                            _setFetchLbl("⚠ refresh: akun kosong " .. os.date("%H:%M:%S"), Color3.fromRGB(220,120,60))
                                         end
+                                    else
+                                        _setFetchLbl("⚠ refresh: decode gagal " .. os.date("%H:%M:%S"), Color3.fromRGB(220,120,60))
                                     end
+                                else
+                                    _setFetchLbl("⚠ refresh: no response " .. os.date("%H:%M:%S"), Color3.fromRGB(220,120,60))
                                 end
                             end)
                         end

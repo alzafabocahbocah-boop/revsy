@@ -1,5 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.707 — LVL-PS: SERVER_TERAKHIR→custom + trigger rejoin semua pkg saat link baru
+-- zenx_worker v9.706 — log [LVL-PS] file ada tapi link sama (skip)
 -- zenx_worker v9.705 — log windowingMode Roblox client tiap 60s
 -- zenx_worker v9.704 — up6kg tulis zenx_lvlps.txt → worker baca → go ke PS leveling
 -- zenx_worker v9.703 — up6kg baca __ZenxLvlPS → worker go ke PS tim leveling target
@@ -6769,7 +6771,11 @@ local function run(cfg)
                     SERVER_TERAKHIR ~= "" and SERVER_TERAKHIR or "(kosong)",
                     tostring(serverBeda)))
                 SETTING_TS_TERAKHIR = tsBaru   -- update ts (biar gak cek ulang terus)
-                if sServer ~= "" then SERVER_TERAKHIR = sServer end
+                -- v9.707: kalau LVL-PS aktif, jangan overwrite SERVER_TERAKHIR dari panel
+                if sServer ~= "" and (cfg._lvlPsApplied or "") == "" then SERVER_TERAKHIR = sServer end
+                if sServer ~= "" and (cfg._lvlPsApplied or "") ~= "" then
+                    info("[LVL-PS] skip update SERVER_TERAKHIR dari panel (lvlps aktif, tetap custom)")
+                end
                 if not (placeBeda or gridBeda or serverBeda) and not KICK_DIURUS["start_fresh"] then
                     info("Setting-tim ts naik tapi place/grid/server sama -- gak restart")
                     goto lewatSetting
@@ -6963,7 +6969,16 @@ local function run(cfg)
                     cfg._ps_override  = _lvlLinkBaru
                     _psOverrideSetTs  = os.time()
                     for pkg in pairs(mapLink) do mapLink[pkg] = _lvlLinkBaru end
-                    info("[LVL-PS] apply dari file → tim=" .. tostring(_lvlTimBaru) .. " link=" .. _lvlLinkBaru:sub(1,40))
+                    -- v9.707: paksa SERVER_TERAKHIR=custom biar build_url tidak skip _ps_override saat serverMode=public
+                    SERVER_TERAKHIR = "custom"
+                    -- v9.707: trigger rejoin semua pkg biar langsung pindah ke PS leveling
+                    _G.__hactRejoin = _G.__hactRejoin or {}
+                    for pkg in pairs(mapLink) do _G.__hactRejoin[pkg] = true end
+                    local _nPkg = 0; for _ in pairs(mapLink) do _nPkg = _nPkg + 1 end
+                    info("[LVL-PS] apply dari file → tim=" .. tostring(_lvlTimBaru) .. " link=" .. _lvlLinkBaru:sub(1,40) .. " | SERVER_TERAKHIR→custom | trigger rejoin " .. _nPkg .. " pkg")
+                elseif _lvlLinkBaru and _lvlLinkBaru == (cfg._lvlPsApplied or "") then
+                    -- v9.706: file ada tapi sama, tidak perlu apply ulang
+                    info("[LVL-PS] file ada (tim=" .. tostring(_lvlTimBaru) .. ") link sama, skip")
                 elseif not _lvlLinkBaru and (cfg._lvlPsApplied or "") ~= "" then
                     cfg._lvlPsApplied = ""
                     info("[LVL-PS] file kosong/hilang → refresh_ps")
