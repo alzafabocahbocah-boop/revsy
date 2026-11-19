@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.705 — log windowingMode Roblox client tiap 60s
 -- zenx_worker v9.704 — up6kg tulis zenx_lvlps.txt → worker baca → go ke PS leveling
 -- zenx_worker v9.703 — up6kg baca __ZenxLvlPS → worker go ke PS tim leveling target
 -- zenx_worker v9.702 — up3.8kgv2: fix _ps_override dari /ps override assign-ps saat FORCE/RESTART
@@ -5469,6 +5470,7 @@ local function run(cfg)
     local lastDropCache = 0    -- v9.700: kapan terakhir drop_caches berkala (tiap 30 menit)
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
+    local lastWmLog = 0          -- v9.705: kapan terakhir log windowingMode Roblox (tiap 60s)
     local lastPendingLog = 0     -- v6.92: kapan terakhir log "nunggu ganti akun"
     local waktuAktivitas = 0     -- v6.95: kapan terakhir ada aktivitas ganti akun/LOGIN
     local lastCooldownLog = 0    -- v6.95: kapan terakhir log cooldown 3 menit
@@ -6723,6 +6725,29 @@ local function run(cfg)
                 sh_silent("su -c 'wm user-rotation lock 1 2>/dev/null'")
                 info("[grid-rf] landscape di-enforce ulang (wm lock, rotasi=" .. tostring(rot) .. ")")
             end
+        end
+
+        -- v9.705: log windowingMode semua Roblox client tiap 60s
+        if (now - lastWmLog) >= 60 then
+            lastWmLog = now
+            pcall(function()
+                local dump = sh("su -c 'dumpsys window windows 2>/dev/null'") or ""
+                local pkgs = { "com.roblox.client", "com.roblox.clienu", "com.roblox.clienv" }
+                local hasil = {}
+                for _, pkg in ipairs(pkgs) do
+                    local pat = pkg:gsub("%.", "%%.") .. "[^%w_]"
+                    local pos = dump:find(pat)
+                    if pos then
+                        local chunk = dump:sub(math.max(1, pos-200), pos+800)
+                        local wm = chunk:match("windowingMode=(%d+)") or chunk:match("mWindowingMode=(%d+)") or "?"
+                        local pkg_short = pkg:match("clien(.-)$") or pkg
+                        hasil[#hasil+1] = pkg_short .. "=wm" .. wm
+                    end
+                end
+                if #hasil > 0 then
+                    info("[wm-log] " .. table.concat(hasil, " | "))
+                end
+            end)
         end
 
         if (now - lastSettingCek) >= 5 then
