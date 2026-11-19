@@ -2,6 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.707 — LVL-PS: SERVER_TERAKHIR→custom + trigger rejoin semua pkg saat link baru
 -- zenx_worker v9.706 — log [LVL-PS] file ada tapi link sama (skip)
+-- zenx_worker v9.708 — dedup warn freeform: skip kalau task sama udah dipindah <60s
 -- zenx_worker v9.705 — log windowingMode Roblox client tiap 60s
 -- zenx_worker v9.704 — up6kg tulis zenx_lvlps.txt → worker baca → go ke PS leveling
 -- zenx_worker v9.703 — up6kg baca __ZenxLvlPS → worker go ke PS tim leveling target
@@ -5594,6 +5595,13 @@ local function run(cfg)
                 end
                 -- v9.566: paksa ke stack 4 (hardcode, freeform tetap hidup buat app lain)
                 local stackFS = 4
+                -- v8.570: dedup warn per taskId -- kalau task yg sama udah dipindah dlm 60s terakhir, skip warn
+                _G.__ZenxFreeformPindah = _G.__ZenxFreeformPindah or {}
+                local now = os.time()
+                -- bersih entry lama (>120s)
+                for k, ts in pairs(_G.__ZenxFreeformPindah) do
+                    if now - ts > 120 then _G.__ZenxFreeformPindah[k] = nil end
+                end
                 -- pindah semua Roblox yang di freeform stack ke stack 4
                 local cmds = {}
                 for tid, p in pairs(taskPkg) do
@@ -5601,7 +5609,12 @@ local function run(cfg)
                     for _, pkg in ipairs(pkgs) do if pkg == p then inPkgs = true; break end end
                     if inPkgs and stacks[taskStack[tid]] == "freeform" then
                         cmds[#cmds+1] = string.format("am stack move-task %d 4 true", tid)
-                        warn("[full] " .. p:gsub("com%.roblox%.","") .. " nyasar ke freeform -> dipaksa ke stack 4")
+                        -- warn hanya kalau task ini belum pernah dipindah (atau sudah > 60s)
+                        local key = tostring(tid) .. "|" .. p
+                        if not _G.__ZenxFreeformPindah[key] or (now - _G.__ZenxFreeformPindah[key]) > 60 then
+                            warn("[full] " .. p:gsub("com%.roblox%.","") .. " nyasar ke freeform -> dipaksa ke stack 4")
+                            _G.__ZenxFreeformPindah[key] = now
+                        end
                     end
                 end
                 if #cmds > 0 then
