@@ -6430,13 +6430,8 @@ local function run(cfg)
             end
         end
 
-        local isi
-        if _isiFileCmd then
-            isi = _isiFileCmd   -- file cmd ada -> langsung pakai, skip api_get
-        else
-            local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
-            isi = ambil_str(resp, "isi") or ""
-        end
+        local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+        local isi  = _isiFileCmd or ambil_str(resp, "isi") or ""
 
         do
             local _sl = tostring(cfg.script_label or "")
