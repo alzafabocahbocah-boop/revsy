@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.207 | tab LINK: auto GOSERVER ke worker kalau picker < 2                        ║
+-- ║  UP KG — v2.208 | tab LINK: GOSERVER via writefile langsung ke worker (tanpa Cloudflare)     ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.207"
+local VERSION = "up38kg-v2.208"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -4206,7 +4206,7 @@ mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.Layout
 
 -- (isi OPER 3.8KG diisi di blok do bawah)
 
--- ============ TAB LINK — simpan link server Roblox ============
+-- ============ TAB LINK — simpan link server Roblox (v2.208) ============
 local linkContent = mk("Frame", {
     Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
     BackgroundTransparency = 1, Visible = false, Parent = main })
@@ -4218,8 +4218,6 @@ mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.Layout
 
 do
     local LINK_FILE  = "zenx_link.json"   -- 1 entry: {nama, url}
-    local WORKER_URL = "https://dry-glitter-63e4.petagee5.workers.dev"
-    local KUNCI_LINK = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
     local savedLink  = { nama = "", url = "" }   -- entry tunggal
     local _goserverLastT = -300   -- cooldown anti-spam (5 menit)
 
@@ -4306,7 +4304,8 @@ do
         saveLink()
     end)
 
-    -- ---- AUTO GOSERVER: kalau picker < 2 di server -> kirim GOSERVER ke worker ----
+    -- ---- AUTO GOSERVER: kalau picker < 2 di server -> tulis file ke zenx_worker.lua ----
+    -- v2.208: langsung writefile ke Workspace (dibaca worker), gak perlu HTTP ke Cloudflare
     local function kirimGoserver()
         local plr = game:GetService("Players").LocalPlayer
         if not plr then return end
@@ -4315,27 +4314,19 @@ do
             statusLbl.TextColor3 = C.textMute
             return
         end
-        local tim = "tim-" .. tostring(lineupTim or 1)
-        local isi = "GOSERVER:" .. plr.Name .. ":" .. savedLink.url
-        local req = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
-        if not req then
-            statusLbl.Text = "auto GOSERVER: gak ada http_request"
+        if not writefile then
+            statusLbl.Text = "auto GOSERVER: writefile tidak tersedia"
             statusLbl.TextColor3 = Color3.fromRGB(220,100,100)
             return
         end
-        local ok, res = pcall(function()
-            return req({
-                Url = WORKER_URL .. "/perintah",
-                Method = "PUT",
-                Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = KUNCI_LINK },
-                Body = string.format('{"tim":%q,"isi":%q}', tim, isi)
-            })
-        end)
-        if ok and res and (res.StatusCode == 200 or res.StatusCode == 201) then
-            statusLbl.Text = "GOSERVER terkirim -> " .. savedLink.nama .. " (" .. os.date("%H:%M:%S") .. ")"
+        local isi = "GOSERVER:" .. plr.Name .. ":" .. savedLink.url
+        local fname = "zenx_goserver_" .. plr.Name .. ".txt"
+        local ok, err = pcall(function() writefile(fname, isi) end)
+        if ok then
+            statusLbl.Text = "GOSERVER -> " .. savedLink.nama .. " (" .. os.date("%H:%M:%S") .. ")"
             statusLbl.TextColor3 = C.accent2
         else
-            statusLbl.Text = "GOSERVER gagal: " .. tostring(ok and (res and res.StatusCode or "?") or res)
+            statusLbl.Text = "GOSERVER gagal tulis file: " .. tostring(err)
             statusLbl.TextColor3 = Color3.fromRGB(220,100,100)
         end
     end

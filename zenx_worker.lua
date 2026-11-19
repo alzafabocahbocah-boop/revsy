@@ -6396,6 +6396,27 @@ local function run(cfg)
         local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
         local isi  = ambil_str(resp, "isi") or ""
 
+        -- v9.703: baca perintah dari file lokal zenx_goserver_<akun>.txt (ditulis script Roblox langsung)
+        -- format isi file: "GOSERVER:<akun>:<link>" -- worker proses lalu hapus file
+        do
+            for _, _dd in ipairs(denyut_dirs(cfg)) do
+                local _gs = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_goserver_*.txt; do [ -f \"$f\" ] && echo \"$f\"; done' 2>/dev/null") or ""
+                for fname in _gs:gmatch("[^\n]+") do
+                    fname = fname:match("^%s*(.-)%s*$")
+                    if fname ~= "" then
+                        local fpath = _dd .. "/" .. fname
+                        local fcontent = sh("su -c 'cat \"" .. fpath .. "\" 2>/dev/null'") or ""
+                        fcontent = fcontent:match("^%s*(.-)%s*$")
+                        if fcontent:match("^GOSERVER:[^:]+:.+$") then
+                            info("[file-cmd] baca " .. fname .. " -> " .. fcontent:sub(1,80))
+                            isi = fcontent   -- override isi, proses di bawah seperti biasa
+                            sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
+                        end
+                    end
+                end
+            end
+        end
+
         do
             local _sl = tostring(cfg.script_label or "")
             local _isUp38 = _sl:find("UP3", 1, true)
