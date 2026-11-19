@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.210 | tab LINK: 30s dihitung ulang kalau picker sempat OK walau 1s               ║
+-- ║  UP KG — v2.211 | tab LINK: tampilkan picker hadir realtime                                  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.210"
+local VERSION = "up38kg-v2.211"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -4246,15 +4246,22 @@ do
     local hT = lbl(hdrF, "LINK SERVER TUJUAN", 13, C.text); hT.Font = FONT_B
     hT.Position = UDim2.new(0,13,0,0); hT.Size = UDim2.new(1,-20,1,0)
 
+    -- picker hadir
+    local pickerF = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 2, Parent = linkScroll }); corner(pickerF, 8); stroke(pickerF, C.border, 1)
+    lbl(pickerF, "Picker", 11, C.textDim).Position = UDim2.new(0,12,0,0)
+    local pickerLbl = lbl(pickerF, "(menunggu...)", 11, C.textMute)
+    pickerLbl.Position = UDim2.new(0,60,0,0); pickerLbl.Size = UDim2.new(1,-70,1,0)
+
     -- status auto-goserver
     local statusF = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 2, Parent = linkScroll }); corner(statusF, 8); stroke(statusF, C.border, 1)
+        BorderSizePixel = 0, LayoutOrder = 3, Parent = linkScroll }); corner(statusF, 8); stroke(statusF, C.border, 1)
     local statusLbl = lbl(statusF, "auto GOSERVER: menunggu...", 11, C.textMute)
     statusLbl.Position = UDim2.new(0,12,0,0); statusLbl.Size = UDim2.new(1,-20,1,0)
 
     -- input nama
     local namaRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 3, Parent = linkScroll }); corner(namaRow, 8); stroke(namaRow, C.border, 1)
+        BorderSizePixel = 0, LayoutOrder = 4, Parent = linkScroll }); corner(namaRow, 8); stroke(namaRow, C.border, 1)
     lbl(namaRow, "Nama", 11, C.textDim).Position = UDim2.new(0,12,0,0)
     local namaBox = mk("TextBox", { Size = UDim2.new(1,-80,0,24), Position = UDim2.new(0,56,0.5,-12),
         BackgroundColor3 = C.input, Text = savedLink.nama, PlaceholderText = "contoh: Server 1",
@@ -4264,7 +4271,7 @@ do
 
     -- input link
     local linkRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 4, Parent = linkScroll }); corner(linkRow, 8); stroke(linkRow, C.border, 1)
+        BorderSizePixel = 0, LayoutOrder = 5, Parent = linkScroll }); corner(linkRow, 8); stroke(linkRow, C.border, 1)
     lbl(linkRow, "Link", 11, C.textDim).Position = UDim2.new(0,12,0,0)
     local linkBox = mk("TextBox", { Size = UDim2.new(1,-80,0,24), Position = UDim2.new(0,50,0.5,-12),
         BackgroundColor3 = C.input, Text = savedLink.url, PlaceholderText = "https://www.roblox.com/share?...",
@@ -4274,7 +4281,7 @@ do
 
     -- tombol baris: Save + Copy + Hapus
     local btnRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1,
-        LayoutOrder = 5, Parent = linkScroll })
+        LayoutOrder = 6, Parent = linkScroll })
     mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0,8), Parent = btnRow })
     local saveBtn = mk("TextButton", { Size = UDim2.new(0.4,-6,1,0), BackgroundColor3 = C.accent,
         Text = "Simpan", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(0,0,0), Parent = btnRow }); corner(saveBtn, 9)
@@ -4348,9 +4355,22 @@ do
                         nPick = nPick + 1
                     end
                 end
+                -- update label picker
+                local names = {}
+                for nm in pairs(pick) do
+                    if nm ~= plr.Name and Players:FindFirstChild(nm) then names[#names+1] = nm end
+                end
+                if #names > 0 then
+                    pickerLbl.Text = table.concat(names, ", ") .. " (" .. #names .. ")"
+                    pickerLbl.TextColor3 = C.accent2
+                else
+                    pickerLbl.Text = "(kosong)"
+                    pickerLbl.TextColor3 = Color3.fromRGB(220,100,100)
+                end
+
                 if nPick < 2 then
                     _lastKurang = tick()
-                    -- tulis file kalau sudah 30s terus-menerus kurang (tanpa diselingi picker OK)
+                    -- tulis file kalau sudah 60s terus-menerus kurang (tanpa diselingi picker OK)
                     if tick() - _lastTulis >= 60 then
                         _lastTulis = tick()
                         statusLbl.Text = "picker < 2 (" .. nPick .. ") -> kirim GOSERVER..."
@@ -4358,7 +4378,7 @@ do
                         kirimGoserver()
                     end
                 else
-                    -- picker OK -> reset lastKurang (kalau kurang lagi, hitung 30s dari nol)
+                    -- picker OK -> reset (kalau kurang lagi, hitung 60s dari nol)
                     _lastKurang = -300
                     _lastTulis  = -300
                     -- hapus file kalau masih ada (batalin GOSERVER pending)
