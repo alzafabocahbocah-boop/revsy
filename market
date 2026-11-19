@@ -1,3 +1,4 @@
+-- ZENX MARKET v8.567 — getAge+getBaseKg: TradeWorld TBIC path via getloadedmodules (RC nil di TW → pakai PetData.Level+BaseWeight dari TradeBoothInventoryController upvalue)
 -- ZENX MARKET v8.566 — countMyPetsForRule: dedup warn+log per rule (fix spam warn tiap 5s refreshBackpackStats)
 -- ZENX MARKET v8.565 — cekSuplai: kalau rule=0, fetch rules dulu dari BH sebelum totalPetCocokRule (fix rule:0 pas rules belum ke-load)
 -- ZENX MARKET v8.564 — bacaTotalPet: skip RC (nil di TradeWorld), langsung BP scan; maxInv startup: UI scan layer 0 (zero lag)
@@ -8047,6 +8048,30 @@ local function getCurrentKg(t)
     return tonumber(string.match(t.Name, "%[([%d%.]+)%s*[Kk][Gg]%]")) or 0
 end
 
+-- v8.567: TradeWorld TBIC cache (UUID → PetData)
+local _tbicCache = nil
+local function getTBICCache()
+    if _tbicCache then return _tbicCache end
+    _tbicCache = {}
+    pcall(function()
+        for _, m in ipairs(getloadedmodules()) do
+            if m.Name == "TradeBoothInventoryController" then
+                local ok, inst = pcall(require, m)
+                if ok and inst and inst.Inventory then
+                    for _, item in ipairs(inst.Inventory) do
+                        if item and item.data and item.data.UUID and item.data.PetData then
+                            local key = tostring(item.data.UUID):gsub("[{}]","")
+                            _tbicCache[key] = item.data.PetData
+                        end
+                    end
+                end
+                break
+            end
+        end
+    end)
+    return _tbicCache
+end
+
 -- Get age: try API, child value, attribute, name patterns
 local function getAge(t)
     -- Try API first (Zenx APS)
@@ -8054,6 +8079,14 @@ local function getAge(t)
     if uuid and getgenv and getgenv().ZenxAPS and getgenv().ZenxAPS.getAge then
         local age = getgenv().ZenxAPS.getAge(uuid)
         if age then return age end
+    end
+    -- v8.567: TradeWorld TBIC path
+    if uuid then
+        local key = tostring(uuid):gsub("[{}]","")
+        local pd = getTBICCache()[key]
+        if pd and pd.Level and tonumber(pd.Level) then
+            return tonumber(pd.Level)
+        end
     end
     -- Try child NumberValue 'Age'
     for _, name in ipairs({"Age", "age", "Level", "Lvl"}) do
@@ -8098,20 +8131,26 @@ local function getBaseKg(t)
     -- contoh: Blood Owl age500 ~177kg → BaseWeight×51=177 → BW≈3.47 → age1: 3.47×1.1≈3.82kg → rule 3-4 ✓
     --         Spider/MimicOct age500 ~280kg → BW≈5.49 → age1: 5.49×1.1≈6.04kg → rule 6-6.4 ✓
     local okU, uuid = pcall(function() return t:GetAttribute("PET_UUID") end)
-    if okU and uuid and getgenv().ZenxAPS then
-        local ZAPS = getgenv().ZenxAPS
-        -- PRIORITAS 1: dari memContainer → BaseWeight × 1.1 = KG age-1
-        if ZAPS.memContainer then
-            local key = "{"..tostring(uuid):gsub("[{}]","").."}"
-            local entry = ZAPS.memContainer[key] or ZAPS.memContainer[tostring(uuid):gsub("[{}]","")]
-            if type(entry) == "table" and entry.PetData then
-                local bw = tonumber(entry.PetData.BaseWeight) or 0
-                if bw > 0 then return bw * 1.1, "RC-age1" end
-            end
+    if okU and uuid then
+        local key = tostring(uuid):gsub("[{}]","")
+        -- PRIORITAS 1: TradeWorld TBIC path (RC nil di TradeWorld)
+        local pd = getTBICCache()[key]
+        if pd and pd.BaseWeight and tonumber(pd.BaseWeight) and tonumber(pd.BaseWeight) > 0 then
+            return tonumber(pd.BaseWeight) * 1.1, "TBIC-age1"
         end
-        -- PRIORITAS 2: getBaseKg APS → udah return BaseWeight×1.1 (KG age-1), langsung pakai
-        local bw = ZAPS.getBaseKg and ZAPS.getBaseKg(uuid)
-        if bw and bw > 0 then return bw, "APS-age1" end
+        -- PRIORITAS 2: ZenxAPS (garden/main world)
+        if getgenv().ZenxAPS then
+            local ZAPS = getgenv().ZenxAPS
+            if ZAPS.memContainer then
+                local entry = ZAPS.memContainer["{"..key.."}"] or ZAPS.memContainer[key]
+                if type(entry) == "table" and entry.PetData then
+                    local bw = tonumber(entry.PetData.BaseWeight) or 0
+                    if bw > 0 then return bw * 1.1, "RC-age1" end
+                end
+            end
+            local bw = ZAPS.getBaseKg and ZAPS.getBaseKg(uuid)
+            if bw and bw > 0 then return bw, "APS-age1" end
+        end
     end
     -- PRIORITAS 3: estimasi dari display KG → balik ke age-1
     local disp = getCurrentKg(t)
