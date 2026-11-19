@@ -13,7 +13,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.707"
+local VERSION = "9.708"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6945,9 +6945,26 @@ local function run(cfg)
                 local link = ambil_str(rps, "link") or ""
                 if link ~= cfg._ps_last then
                     cfg._ps_last = link
-                    cfg._ps_override = link
-                    _psOverrideSetTs = (link ~= "") and os.time() or 0  -- v9.689: catat kapan mulai di PS
-                    info("PS dari panel: " .. (link ~= "" and link or "(public)"))
+                    -- v9.708: kalau LVL-PS aktif (cfg atau file), jangan overwrite _ps_override dari assign-ps
+                    -- cek file langsung biar guard tetap aktif setelah worker restart
+                    local _lvlAktif = (cfg._lvlPsApplied or "") ~= ""
+                    if not _lvlAktif then
+                        local _sl708 = (cfg.script_label or ""):upper()
+                        if _sl708:find("UP6KG") or _sl708:find("UP6") then
+                            for _, _dd in ipairs(denyut_dirs(cfg)) do
+                                local _fc = sh("su -c 'cat \"" .. _dd .. "/zenx_lvlps.txt\" 2>/dev/null'") or ""
+                                _fc = _fc:match("^%s*(.-)%s*$") or ""
+                                if _fc:match("^LVLPS:[^:]+:.+$") then _lvlAktif = true; break end
+                            end
+                        end
+                    end
+                    if _lvlAktif then
+                        info("PS dari panel: " .. (link ~= "" and link or "(public)") .. " | SKIP overwrite _ps_override (LVL-PS aktif)")
+                    else
+                        cfg._ps_override = link
+                        _psOverrideSetTs = (link ~= "") and os.time() or 0  -- v9.689: catat kapan mulai di PS
+                        info("PS dari panel: " .. (link ~= "" and link or "(public)"))
+                    end
                 end
             end
             -- v9.704: UP6KG — baca file zenx_lvlps.txt (ditulis up6kg kalau pet 6kg+ > 100)
