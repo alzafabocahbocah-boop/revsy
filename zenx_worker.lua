@@ -6398,6 +6398,9 @@ local function run(cfg)
 
         -- v9.703: baca perintah dari file lokal zenx_goserver_<akun>.txt (ditulis script Roblox langsung)
         -- format isi file: "GOSERVER:<akun>:<link>" -- worker proses lalu hapus file
+        -- hanya untuk preset up3.8kgv2 (UP3) dan up6kg (UP6KG)
+        local _sl703 = (cfg.script_label or ""):upper()
+        if _sl703:find("UP3", 1, true) or _sl703:find("UP6KG") then
         do
             for _, _dd in ipairs(denyut_dirs(cfg)) do
                 local _gs = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_goserver_*.txt; do [ -f \"$f\" ] && echo \"$f\"; done' 2>/dev/null") or ""
@@ -6416,6 +6419,7 @@ local function run(cfg)
                 end
             end
         end
+        end -- guard UP3/UP6KG
 
         do
             local _sl = tostring(cfg.script_label or "")
