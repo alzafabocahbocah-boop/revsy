@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.205 | rejoin tiap 30 menit (:00 & :30 WIB, dulu :00 aja / 60 menit)             ║
+-- ║  UP KG — v2.206 | tab LINK: simpan/copy/hapus link server Roblox                            ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.205"
+local VERSION = "up38kg-v2.206"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -4158,8 +4158,9 @@ makeSideBtn("AUTO KG", 14)
 makeSideBtn("MISC", 56)
 makeSideBtn("TRADE", 98)
 makeSideBtn("OPER 3.8KG", 140)
+makeSideBtn("LINK", 182)
 -- up3.8kg: tab OPER ELE DIHILANGIN (sc ini gak oper Ele)
--- makeSideBtn("OPER ELE", 182)
+-- makeSideBtn("OPER ELE", 224)
 
 -- ============ AREA KONTEN ============
 local content = mk("Frame", {
@@ -4205,11 +4206,132 @@ mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.Layout
 
 -- (isi OPER 3.8KG diisi di blok do bawah)
 
+-- ============ TAB LINK — simpan link server Roblox ============
+local linkContent = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Visible = false, Parent = main })
+pad(linkContent, 14)
+local linkScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+    BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+    CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = linkContent })
+mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = linkScroll })
+
+do
+    local LINK_FILE = "zenx_links.json"
+    local links = {}   -- { {nama=string, url=string}, ... }
+
+    local function saveLinks()
+        pcall(function()
+            if not writefile then return end
+            local parts = {}
+            for _, e in ipairs(links) do
+                parts[#parts+1] = string.format('{"nama":%q,"url":%q}', e.nama, e.url)
+            end
+            writefile(LINK_FILE, "["..table.concat(parts, ",").."]")
+        end)
+    end
+    local function loadLinks()
+        pcall(function()
+            if not (isfile and isfile(LINK_FILE) and readfile) then return end
+            local raw = readfile(LINK_FILE)
+            for nama, url in raw:gmatch('"nama":"(.-[^\\])","url":"(.-[^\\])"') do
+                links[#links+1] = { nama = nama, url = url }
+            end
+        end)
+    end
+    loadLinks()
+
+    -- header
+    local hdrF = mk("Frame", { Size = UDim2.new(1,0,0,38), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 1, Parent = linkScroll }); corner(hdrF, 10); stroke(hdrF, C.border, 1)
+    local hT = lbl(hdrF, "LINK SERVER", 13, C.text); hT.Font = FONT_B
+    hT.Position = UDim2.new(0,13,0,0); hT.Size = UDim2.new(1,-20,1,0)
+
+    -- input nama
+    local namaRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 2, Parent = linkScroll }); corner(namaRow, 8); stroke(namaRow, C.border, 1)
+    lbl(namaRow, "Nama", 11, C.textDim).Position = UDim2.new(0,12,0,0)
+    local namaBox = mk("TextBox", { Size = UDim2.new(1,-80,0,24), Position = UDim2.new(0,56,0.5,-12),
+        BackgroundColor3 = C.input, Text = "", PlaceholderText = "contoh: Server 1",
+        Font = FONT_B, TextSize = 12, TextColor3 = C.text, PlaceholderColor3 = C.textMute,
+        ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, Parent = namaRow })
+    corner(namaBox, 5); stroke(namaBox, C.border, 1)
+
+    -- input link
+    local linkRow = mk("Frame", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 3, Parent = linkScroll }); corner(linkRow, 8); stroke(linkRow, C.border, 1)
+    lbl(linkRow, "Link", 11, C.textDim).Position = UDim2.new(0,12,0,0)
+    local linkBox = mk("TextBox", { Size = UDim2.new(1,-80,0,24), Position = UDim2.new(0,50,0.5,-12),
+        BackgroundColor3 = C.input, Text = "", PlaceholderText = "https://www.roblox.com/share?...",
+        Font = FONT_B, TextSize = 11, TextColor3 = C.text, PlaceholderColor3 = C.textMute,
+        ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, Parent = linkRow })
+    corner(linkBox, 5); stroke(linkBox, C.border, 1)
+
+    -- tombol save
+    local saveBtn = mk("TextButton", { Size = UDim2.new(1,0,0,34), BackgroundColor3 = C.accent,
+        Text = "+ Simpan", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(0,0,0),
+        LayoutOrder = 4, Parent = linkScroll }); corner(saveBtn, 9)
+
+    -- list holder
+    local listHolder = mk("Frame", { Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = 5, Parent = linkScroll })
+    mk("UIListLayout", { Padding = UDim.new(0,6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = listHolder })
+
+    local function rebuildList()
+        for _, c in ipairs(listHolder:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
+        for i, e in ipairs(links) do
+            local row = mk("Frame", { Size = UDim2.new(1,0,0,46), BackgroundColor3 = C.card,
+                BorderSizePixel = 0, LayoutOrder = i, Parent = listHolder }); corner(row, 9); stroke(row, C.border, 1)
+            -- nama
+            local nL = lbl(row, e.nama, 13, C.text); nL.Font = FONT_B
+            nL.Position = UDim2.new(0,12,0,5); nL.Size = UDim2.new(1,-176,0,18)
+            -- url (truncate)
+            local uL = lbl(row, e.url, 10, C.textMute)
+            uL.Position = UDim2.new(0,12,0,24); uL.Size = UDim2.new(1,-176,0,14)
+            uL.TextXAlignment = Enum.TextXAlignment.Left; uL.TextTruncate = Enum.TextTruncate.AtEnd
+            -- tombol copy
+            local copyBtn = mk("TextButton", { Size = UDim2.new(0,66,0,30), Position = UDim2.new(1,-156,0.5,-15),
+                BackgroundColor3 = C.accent2, Text = "Copy", Font = FONT_B, TextSize = 12,
+                TextColor3 = Color3.fromRGB(0,0,0), Parent = row }); corner(copyBtn, 7)
+            -- tombol hapus
+            local delBtn = mk("TextButton", { Size = UDim2.new(0,56,0,30), Position = UDim2.new(1,-82,0.5,-15),
+                BackgroundColor3 = Color3.fromRGB(80,30,30), Text = "Hapus", Font = FONT_B, TextSize = 12,
+                TextColor3 = Color3.fromRGB(220,100,100), Parent = row }); corner(delBtn, 7)
+
+            local idx = i
+            copyBtn.MouseButton1Click:Connect(function()
+                local clip = setclipboard or toclipboard or set_clipboard or writeclipboard
+                if clip then pcall(function() clip(links[idx].url) end) end
+                local orig = copyBtn.Text; copyBtn.Text = "✓ Done"
+                task.delay(1.5, function() if copyBtn and copyBtn.Parent then copyBtn.Text = orig end end)
+            end)
+            delBtn.MouseButton1Click:Connect(function()
+                table.remove(links, idx)
+                saveLinks()
+                rebuildList()
+            end)
+        end
+    end
+
+    saveBtn.MouseButton1Click:Connect(function()
+        local nm = namaBox.Text:match("^%s*(.-)%s*$")
+        local ul = linkBox.Text:match("^%s*(.-)%s*$")
+        if nm == "" or ul == "" then return end
+        links[#links+1] = { nama = nm, url = ul }
+        saveLinks()
+        namaBox.Text = ""; linkBox.Text = ""
+        rebuildList()
+    end)
+
+    rebuildList()
+end
+
 showSideFn = function(name)
     content.Visible      = (name == "AUTO KG")
     miscContent.Visible  = (name == "MISC")
     tradeContent.Visible = (name == "TRADE")
     oper38Content.Visible = (name == "OPER 3.8KG")
+    linkContent.Visible  = (name == "LINK")
     operContent.Visible  = (name == "OPER ELE")
 end
 
