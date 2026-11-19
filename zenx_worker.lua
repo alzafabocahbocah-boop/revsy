@@ -6413,7 +6413,7 @@ local function run(cfg)
                         if fname ~= "" then
                             local fpath = _dd .. "/" .. fname
                             local umurFile = mtime and (os.time() - tonumber(mtime)) or 999
-                            if umurFile > 120 then
+                            if umurFile > 60 then
                                 -- file terlalu lama (stale) -> hapus, skip
                                 warn("[file-cmd] " .. fname .. " stale (" .. umurFile .. "s) -> dihapus")
                                 sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
