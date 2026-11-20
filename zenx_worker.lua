@@ -5497,7 +5497,7 @@ local function run(cfg)
     local lastIsi = nil
     local MODE_JALAN = false
     local _goserver_scan_ts = 0   -- v9.703: timer scan zenx_goserver_*.txt (tiap 15s)
-    local _lvlps_scan_ts    = 0   -- v9.704: timer scan zenx_lvlps.txt (tiap 60s)
+    local _lvlps_scan_ts    = 0   -- v9.714: timer scan zenx_lvlps.txt (tiap 10s)
 
     do
         local ok2, n, place, gk = pulih_aktif(cfg)
@@ -6948,7 +6948,7 @@ local function run(cfg)
             -- v9.704: UP6KG — baca file zenx_lvlps.txt (ditulis up6kg kalau pet 6kg+ > 100)
             -- format: LVLPS:<tim>:<psLink>
             local _sl704 = (cfg.script_label or ""):upper()
-            if (_sl704:find("UP6KG") or _sl704:find("UP6")) and (os.time() - _lvlps_scan_ts) >= 60 then
+            if (_sl704:find("UP6KG") or _sl704:find("UP6")) and (os.time() - _lvlps_scan_ts) >= 10 then
                 _lvlps_scan_ts = os.time()
                 local _lvlTimBaru, _lvlLinkBaru
                 for _, _dd in ipairs(denyut_dirs(cfg)) do
