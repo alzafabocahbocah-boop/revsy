@@ -22,7 +22,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.716"
+local VERSION = "9.717"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5610,17 +5610,16 @@ local function run(cfg)
                 for k, ts in pairs(_G.__ZenxFreeformPindah) do
                     if now - ts > 120 then _G.__ZenxFreeformPindah[k] = nil end
                 end
-                -- pindah semua Roblox yang di freeform stack ke stack 4
+                -- v9.717: kill Roblox yang nyasar ke freeform (bukan pindah stack)
                 local cmds = {}
                 for tid, p in pairs(taskPkg) do
                     local inPkgs = false
                     for _, pkg in ipairs(pkgs) do if pkg == p then inPkgs = true; break end end
                     if inPkgs and stacks[taskStack[tid]] == "freeform" then
-                        cmds[#cmds+1] = string.format("am stack move-task %d 4 true", tid)
-                        -- warn hanya kalau task ini belum pernah dipindah (atau sudah > 60s)
                         local key = tostring(tid) .. "|" .. p
                         if not _G.__ZenxFreeformPindah[key] or (now - _G.__ZenxFreeformPindah[key]) > 60 then
-                            warn("[full] " .. p:gsub("com%.roblox%.","") .. " nyasar ke freeform -> dipaksa ke stack 4")
+                            cmds[#cmds+1] = string.format("am force-stop %s", p)
+                            warn("[full] " .. p:gsub("com%.roblox%.","") .. " nyasar ke freeform -> kill")
                             _G.__ZenxFreeformPindah[key] = now
                         end
                     end
