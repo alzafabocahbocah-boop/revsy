@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.714 — LVL-PS: langsung open_one (GOSERVER) saat file baru, bukan queue rejoin
 -- zenx_worker v9.713 — LVL-PS: revert v9.711+v9.708 guard; LVL-PS cukup trigger sekali seperti GOSERVER
 -- zenx_worker v9.712 — LVL-PS: zenx_lvlps.txt stale >60s dihapus (tidak dipakai)
 -- zenx_worker v9.711 — LVL-PS: restore mapLink setelah refresh_ps reset (cegah assign-ps overwrite lvlps)
@@ -19,7 +20,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.713"
+local VERSION = "9.714"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6977,10 +6978,17 @@ local function run(cfg)
                     -- v9.707: paksa SERVER_TERAKHIR=custom biar build_url tidak skip _ps_override saat serverMode=public
                     SERVER_TERAKHIR = "custom"
                     -- v9.707: trigger rejoin semua pkg biar langsung pindah ke PS leveling
-                    _G.__hactRejoin = _G.__hactRejoin or {}
-                    for pkg in pairs(mapLink) do _G.__hactRejoin[pkg] = true end
-                    local _nPkg = 0; for _ in pairs(mapLink) do _nPkg = _nPkg + 1 end
-                    info("[LVL-PS] apply dari file → tim=" .. tostring(_lvlTimBaru) .. " link=" .. _lvlLinkBaru:sub(1,40) .. " | SERVER_TERAKHIR→custom | trigger rejoin " .. _nPkg .. " pkg")
+                    -- v9.714: langsung GOSERVER ke semua pkg (bukan queue rejoin)
+                    local _nPkg = 0
+                    for pkg, ak in pairs(mapAkun) do
+                        KICK_DIURUS["move_link_ts:" .. pkg] = nil
+                        KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
+                        DENYUT_UMUR[ak] = nil
+                        open_one(cfg, pkg, _lvlLinkBaru, "lvlps-goserver", true)
+                        TERAKHIR_BUKA[pkg] = os.time()
+                        _nPkg = _nPkg + 1
+                    end
+                    info("[LVL-PS] apply dari file → tim=" .. tostring(_lvlTimBaru) .. " link=" .. _lvlLinkBaru:sub(1,40) .. " | GOSERVER langsung " .. _nPkg .. " pkg")
                 elseif _lvlLinkBaru and _lvlLinkBaru == (cfg._lvlPsApplied or "") then
                     -- v9.706: file ada tapi sama, tidak perlu apply ulang
                     info("[LVL-PS] link sama skip | file=" .. _lvlLinkBaru:sub(1,50) .. " | applied=" .. (cfg._lvlPsApplied or ""):sub(1,50))
