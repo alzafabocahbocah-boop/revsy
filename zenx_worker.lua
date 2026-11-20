@@ -1,11 +1,11 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
--- zenx_worker v9.707 — LVL-PS: SERVER_TERAKHIR→custom + trigger rejoin semua pkg saat link baru
--- zenx_worker v9.706 — log [LVL-PS] file ada tapi link sama (skip)
 -- zenx_worker v9.711 — LVL-PS: restore mapLink setelah refresh_ps reset (cegah assign-ps overwrite lvlps)
 -- zenx_worker v9.710 — LVL-PS skip log: tampilkan file vs applied saat link sama
 -- zenx_worker v9.709 — matiin 3 debug log spam: upkgstat-debug, DBG-SHECK, wm-log
 -- zenx_worker v9.708 — dedup warn freeform: skip kalau task sama udah dipindah <60s
+-- zenx_worker v9.707 — LVL-PS: SERVER_TERAKHIR→custom + trigger rejoin semua pkg saat link baru
+-- zenx_worker v9.706 — log [LVL-PS] file ada tapi link sama (skip)
 -- zenx_worker v9.705 — log windowingMode Roblox client tiap 60s
 -- zenx_worker v9.704 — up6kg tulis zenx_lvlps.txt → worker baca → go ke PS leveling
 -- zenx_worker v9.703 — up6kg baca __ZenxLvlPS → worker go ke PS tim leveling target
@@ -17,7 +17,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.710"
+local VERSION = "9.711"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
