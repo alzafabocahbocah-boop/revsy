@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.58  ══════════════════════════
+-- ══════════════════════════  HACT  v35.59  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -5644,6 +5644,10 @@ end
 -- (dulu pet Koi lama yg diganti masih kehitung -> "kepilih 10 padahal 8" -> waitTeam nunggu 10 -> hatch gagal).
 -- v24.9: dipindah ke ATAS (sebelum automationLoop) — dulu di ~3013, automationLoop (2762) panggil
 -- saat masih nil -> error "attempt to call a nil value" line 2769.
+-- v35.59: grace period — uuid yg hilang baru dihapus kalau 2x cek berturut-turut gak ada
+--         (cegah prune waktu pet lagi transisi equip/unequip -> config tim ilang sementara)
+local _pruneGrace = {}  -- {[tabName.."|"..uuid] = tickPertamaHilang}
+local PRUNE_GRACE = 8   -- detik grace sebelum beneran dihapus
 local function pruneTeamBekasan(tabName)
     local data = teamData[tabName]
     if not data or not data.selected then return 0 end
@@ -5664,12 +5668,23 @@ local function pruneTeamBekasan(tabName)
             end
         end
     end)
+    local now = tick()
     local removed = 0
     for uuid in pairs(data.selected) do
         local uclean = tostring(uuid):gsub("[{}]","")
         if not inBp[uclean] and not inGarden[uclean] then
-            data.selected[uuid] = nil
-            removed = removed + 1
+            local key = tabName.."|"..uclean
+            if not _pruneGrace[key] then
+                _pruneGrace[key] = now  -- catat pertama kali hilang
+            elseif (now - _pruneGrace[key]) >= PRUNE_GRACE then
+                data.selected[uuid] = nil
+                _pruneGrace[key] = nil
+                removed = removed + 1
+            end
+        else
+            -- pet balik lagi (transisi selesai) — reset grace
+            local key = tabName.."|"..uclean
+            _pruneGrace[key] = nil
         end
     end
     if removed > 0 then print("[HactTelur] prune "..removed.." bekasan dari "..tabName) end
