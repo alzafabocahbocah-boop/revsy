@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.64  ══════════════════════════
+-- ══════════════════════════  HACT  v35.70  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -310,7 +310,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v35.57"
+local VERSION = "v35.70"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -9455,11 +9455,70 @@ _G.HactTelurShowMisc = showMiscFn
         end
         akFrame.CanvasSize = UDim2.new(0,0,0, akLay.AbsoluteContentSize.Y + 6)
     end
+    local CACHE_FILE_HT = "zenx_lvlmax_cache_hact_" .. tostring((game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.Name) or "x") .. ".json"
     local function fetchUp38Akun()
-        -- v35.53: dimatiin, tidak perlu fetch /up38akun + /up6kgakun
-        akunInv = {}
-        TRADECFG.targets = {}
-        if tgtBox then tgtBox.Text = "" end
+        -- v35.70: restore fetch /up38akun + /up6kgakun (dimatiin v35.53 tapi ternyata diperlukan)
+        local inv, names = {}, {}
+        local reqf = (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or http_request or request or httprequest
+        local rawAll = ""
+        local sawAny = false
+        for _, entry in ipairs({
+            { url = "https://dry-glitter-63e4.petagee5.workers.dev/up38akun", rev = false },
+            { url = "https://dry-glitter-63e4.petagee5.workers.dev/up6kgakun", rev = true }
+        }) do
+            local resp = ""
+            pcall(function()
+                if reqf then
+                    local r = reqf({ Url = entry.url, Method = "GET" })
+                    resp = r and (r.Body or r.body or "") or ""
+                elseif game.HttpGet then
+                    resp = game:HttpGet(entry.url)
+                end
+            end)
+            resp = tostring(resp)
+            if resp ~= "" then sawAny = true; rawAll = rawAll .. (rawAll ~= "" and "," or "") .. resp end
+            for pair in resp:gmatch("[^,]+") do
+                local nm, tm = pair:match("^%s*(.-)%s*=%s*(.-)%s*$")
+                if nm and nm ~= "" and not inv[nm] then
+                    local a, b = tm:match("^(%d+):(%d+)")
+                    a, b = tonumber(a) or 0, tonumber(b) or 0
+                    local tot, mx
+                    if entry.rev then mx, tot = a, b else tot, mx = a, b end
+                    -- reset total ke 0 tiap sesi (data panel stale), pakai max dari panel
+                    inv[nm] = { total = 0, max = mx }
+                    names[#names+1] = nm
+                end
+            end
+        end
+        if sawAny and next(inv) then
+            pcall(function() if writefile then writefile(CACHE_FILE_HT, rawAll) end end)
+        elseif not next(inv) then
+            -- fetch gagal -> load cache lokal
+            pcall(function()
+                if isfile and isfile(CACHE_FILE_HT) and readfile then
+                    local raw = readfile(CACHE_FILE_HT)
+                    local i = 0
+                    for _, en in ipairs({
+                        { raw = raw:match("^(.-),[^=,]*=[^:]*:[^,]*$") or raw, rev = false },
+                        { raw = raw:match("([^,]*=[^:]*:[^,]*)$") or "", rev = true }
+                    }) do
+                        for pair in en.raw:gmatch("[^,]+") do
+                            local nm2, tm2 = pair:match("^%s*(.-)%s*=%s*(.-)%s*$")
+                            if nm2 and nm2 ~= "" and not inv[nm2] then
+                                local a2, b2 = tm2:match("^(%d+):(%d+)")
+                                a2, b2 = tonumber(a2) or 0, tonumber(b2) or 0
+                                local tot2, mx2
+                                if en.rev then mx2, tot2 = a2, b2 else tot2, mx2 = a2, b2 end
+                                inv[nm2] = { total = 0, max = mx2 }
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+        akunInv = inv
+        TRADECFG.targets = names
+        if tgtBox then tgtBox.Text = table.concat(names, ", ") end
         pcall(renderAkunList)
     end
     pcall(fetchUp38Akun)   -- start/rejoin
