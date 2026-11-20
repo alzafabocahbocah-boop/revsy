@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.232 | picks persist ke _G biar gak reset tiap inject                           ║
+-- ║  UP KG — v2.233 | holdTicket log detail + wait lebih lama                                  ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.232"
+local VERSION = "up38kg-v2.233"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -7258,7 +7258,7 @@ do
         local char = plr.Character
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         local bp   = plr:FindFirstChild("Backpack")
-        if not (char and hum and bp) then return false end
+        if not (char and hum and bp) then o38Log("holdTicket: gak ada char/hum/bp"); return false end
         local function scanCont(cont)
             if not cont then return nil end
             for _, t in ipairs(cont:GetChildren()) do
@@ -7266,10 +7266,19 @@ do
             end
         end
         if scanCont(char) then return true end   -- udah equipped
-        local tk = scanCont(bp); if not tk then return false end
-        pcall(function() hum:UnequipTools() end); task.wait(0.1)
-        pcall(function() hum:EquipTool(tk) end); task.wait(0.15)
-        return scanCont(char) ~= nil
+        local tk = scanCont(bp)
+        if not tk then
+            -- v2.233: log semua tool di backpack biar tau nama aslinya
+            local tools = {}; for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then tools[#tools+1] = t.Name end end
+            o38Log("holdTicket: ticket gak ada di BP. tools=["..table.concat(tools,",").."]")
+            return false
+        end
+        o38Log("holdTicket: equip '"..tk.Name.."'")
+        pcall(function() hum:UnequipTools() end); task.wait(0.15)
+        pcall(function() hum:EquipTool(tk) end); task.wait(0.3)
+        local ok = scanCont(char) ~= nil
+        if not ok then o38Log("holdTicket: equip gagal (masih di BP)") end
+        return ok
     end
 
     -- unfav satu tool (Favorite_Item = toggle, cek dulu)
