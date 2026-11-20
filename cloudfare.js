@@ -279,6 +279,25 @@ export default {
       try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='uplevelgiftpet'").first(); if (row && row.data) data = row.data; } catch {}
       return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
     }
+    // /bahanup3.8kg GET (publik) -> bahan pet keep per akun HACT [{akun, server, totalKeep}]
+    if (jalur === "/bahanup3.8kg" && req.method === "GET") {
+      try {
+        const rows = await env.DB.prepare("SELECT nama, ps_nama, hactstat FROM akun WHERE hactstat IS NOT NULL").all();
+        const result = [];
+        for (const r of (rows.results || [])) {
+          let totalKeep = 0;
+          try {
+            const hs = typeof r.hactstat === "string" ? JSON.parse(r.hactstat) : r.hactstat;
+            if (hs && hs.keep) {
+              for (const k in hs.keep) totalKeep += Number((hs.keep[k] || {}).total) || 0;
+            }
+          } catch {}
+          if (totalKeep > 0) result.push({ akun: r.nama, server: r.ps_nama || "", totalKeep });
+        }
+        result.sort((a, b) => b.totalKeep - a.totalKeep);
+        return json(result);
+      } catch (e) { return json({ ok: false, error: String(e) }); }
+    }
     // /up6kg-bahan GET (publik) -> bahan GLOBAL up6kg "Tipe1,Tipe2,..." (dibaca SEMUA akun up6kg)
     if (jalur === "/up6kg-bahan" && req.method === "GET") {
       let data = "";
