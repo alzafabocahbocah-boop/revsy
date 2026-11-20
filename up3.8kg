@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.252"
+local VERSION = "up38kg-v2.253"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -4159,6 +4159,7 @@ makeSideBtn("MISC", 56)
 makeSideBtn("TRADE", 98)
 makeSideBtn("OPER 3.8KG", 140)
 makeSideBtn("LINK", 182)
+makeSideBtn("HACT", 224)  -- v2.253: tab bahan hact (pet keep per akun)
 -- up3.8kg: tab OPER ELE DIHILANGIN (sc ini gak oper Ele)
 -- makeSideBtn("OPER ELE", 224)
 
@@ -4215,6 +4216,112 @@ local linkScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), Backgrou
     BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
     CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = linkContent })
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = linkScroll })
+
+-- ============ TAB HACT — bahan pet keep per akun (v2.253) ============
+local hactContent = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Visible = false, Parent = main })
+pad(hactContent, 14)
+local hactScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+    BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+    CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = hactContent })
+mk("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = hactScroll })
+
+do
+    local HACT_BAHAN_URL = "https://dry-glitter-63e4.petagee5.workers.dev/bahanup3.8kg"
+    local _hactData = {}   -- [{akun, server, totalKeep}]
+    local _hactLoading = false
+
+    -- header + tombol refresh
+    local hdr = mk("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1,
+        LayoutOrder = 0, Parent = hactScroll })
+    local hdrLbl = lbl(hdr, "BAHAN HACT", 13, C.text)
+    hdrLbl.Position = UDim2.new(0, 0, 0, 0); hdrLbl.Size = UDim2.new(0.65, 0, 1, 0)
+    hdrLbl.Font = FONT_B; hdrLbl.TextXAlignment = Enum.TextXAlignment.Left
+    local refreshBtn = mk("TextButton", {
+        Size = UDim2.new(0.35, 0, 1, 0), Position = UDim2.new(0.65, 0, 0, 0),
+        BackgroundColor3 = C.accent, Text = "⟳ Refresh", TextSize = 11,
+        TextColor3 = Color3.fromRGB(0,0,0), Font = FONT_B,
+        AutoButtonColor = false, Parent = hdr })
+    corner(refreshBtn, 7)
+
+    local statusLbl = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1,
+        Text = "belum di-fetch", TextSize = 10, TextColor3 = C.textDim, Font = FONT,
+        TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 1, Parent = hactScroll })
+
+    -- container rows akun
+    local rowsFrame = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1,
+        AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2, Parent = hactScroll })
+    mk("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = rowsFrame })
+
+    local function renderHact()
+        -- clear rows lama
+        for _, ch in ipairs(rowsFrame:GetChildren()) do
+            if ch:IsA("Frame") or ch:IsA("TextLabel") then ch:Destroy() end
+        end
+        if #_hactData == 0 then
+            local empty = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1,
+                Text = "gak ada data", TextSize = 11, TextColor3 = C.textDim, Font = FONT,
+                TextXAlignment = Enum.TextXAlignment.Center, Parent = rowsFrame })
+            return
+        end
+        for i, d in ipairs(_hactData) do
+            local row = mk("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+                LayoutOrder = i, Parent = rowsFrame })
+            corner(row, 8)
+            -- akun
+            local akunL = lbl(row, d.akun or "?", 11, C.text)
+            akunL.Position = UDim2.new(0, 10, 0, 4); akunL.Size = UDim2.new(0.5, -10, 0, 16)
+            akunL.Font = FONT_B; akunL.TextXAlignment = Enum.TextXAlignment.Left
+            -- server
+            local srvL = lbl(row, d.server or "-", 9, C.textDim)
+            srvL.Position = UDim2.new(0, 10, 0, 20); srvL.Size = UDim2.new(0.65, -10, 0, 13)
+            srvL.TextXAlignment = Enum.TextXAlignment.Left
+            -- total keep (badge kanan)
+            local badge = mk("TextLabel", {
+                Size = UDim2.new(0, 44, 0, 22), Position = UDim2.new(1, -50, 0.5, -11),
+                BackgroundColor3 = C.accent2, Text = tostring(d.totalKeep or 0),
+                TextSize = 12, TextColor3 = Color3.fromRGB(0,0,0),
+                Font = FONT_B, Parent = row })
+            corner(badge, 6)
+        end
+    end
+
+    local function fetchHact()
+        if _hactLoading then return end
+        _hactLoading = true
+        statusLbl.Text = "loading…"
+        task.spawn(function()
+            local ok, raw = pcall(function() return game:HttpGet(HACT_BAHAN_URL) end)
+            if ok and raw and raw ~= "" then
+                local ok2, data = pcall(function()
+                    return game:GetService("HttpService"):JSONDecode(raw)
+                end)
+                if ok2 and type(data) == "table" then
+                    _hactData = data
+                    statusLbl.Text = #data.." akun · tap refresh untuk update"
+                else
+                    statusLbl.Text = "error parse: "..(tostring(data):sub(1,40))
+                end
+            else
+                statusLbl.Text = "fetch gagal"
+            end
+            renderHact()
+            _hactLoading = false
+        end)
+    end
+
+    refreshBtn.MouseButton1Click:Connect(fetchHact)
+
+    -- auto-fetch pertama kali tab dibuka
+    local _hactFetched = false
+    hactContent:GetPropertyChangedSignal("Visible"):Connect(function()
+        if hactContent.Visible and not _hactFetched then
+            _hactFetched = true
+            fetchHact()
+        end
+    end)
+end
 
 do
     local LINK_FILE  = "zenx_link.json"   -- 1 entry: {nama, url}
@@ -4505,6 +4612,7 @@ showSideFn = function(name)
     tradeContent.Visible = (name == "TRADE")
     oper38Content.Visible = (name == "OPER 3.8KG")
     linkContent.Visible  = (name == "LINK")
+    hactContent.Visible  = (name == "HACT")  -- v2.253
     operContent.Visible  = (name == "OPER ELE")
 end
 
