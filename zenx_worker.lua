@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
 -- zenx_worker v9.714 — LVL-PS: langsung open_one (GOSERVER) saat file baru, bukan queue rejoin
 -- zenx_worker v9.713 — LVL-PS: revert v9.711+v9.708 guard; LVL-PS cukup trigger sekali seperti GOSERVER
 -- zenx_worker v9.712 — LVL-PS: zenx_lvlps.txt stale >60s dihapus (tidak dipakai)
@@ -20,7 +21,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.714"
+local VERSION = "9.715"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
