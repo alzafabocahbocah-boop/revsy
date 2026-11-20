@@ -3328,15 +3328,29 @@ do
             if not plr then return end
             local keepMap = {}
             pcall(function()
-                -- v35.65: hanya kirim pet dengan explicit rule.action=="keep" ke panel
+                -- v35.68: kirim pet yang benar-benar di-keep ke panel
+                -- case 1: rule.action=="keep" -> keep semua kg
+                -- case 2: rule.action=="sell" + dispKg >= rule.kg -> sudah cukup kg, di-keep
                 local rules = config and config.sellRules or {}
                 for _, p in ipairs(PetDetect.listBackpackPets(true)) do
                     local nm = p.name or p.base or "?"
                     local rule = rules[nm]
-                    if rule and rule.action == "keep" then
+                    local isKeep = false
+                    local kgThresh = nil
+                    if rule then
+                        if rule.action == "keep" then
+                            isKeep = true
+                            kgThresh = nil  -- keep semua kg
+                        elseif rule.action == "sell" and rule.kg and rule.kg > 0 and rule.kg < 1e8 then
+                            kgThresh = rule.kg
+                            if (p.dispKg or 0) >= rule.kg then
+                                isKeep = true
+                            end
+                        end
+                    end
+                    if isKeep then
                         if not keepMap[nm] then
-                            -- v35.66: sertakan kg threshold dari rule (nil = keep semua kg)
-                            keepMap[nm] = { total = 0, kg = rule.kg or nil }
+                            keepMap[nm] = { total = 0, kg = kgThresh }
                         end
                         keepMap[nm].total = keepMap[nm].total + 1
                     end
