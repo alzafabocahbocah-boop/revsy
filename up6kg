@@ -1,10 +1,10 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v10.352 | fix lag 6kg+/6kg- counter: container 2s→1s, rebuildLvlList 2s→1s     ║
+-- ║  UP KG — v10.353 | fix counter frozen: RC.new tiap call (gak di-cache)                  ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.352"
+local VERSION = "up6kg-v10.353"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1060,23 +1060,18 @@ end
 local _kgContainer = nil
 local _kgContainerDone = false
 local _kgMutableStats = nil   -- tidak dipakai lagi (RC dipakai untuk maxInv), dibiarkan nil
--- v10.268: findMemoryContainer → RC cache (_rcInst), port pattern uplevelnew
--- RC.new dipanggil SEKALI lalu di-cache — tidak hang tiap loop
-local _rcInst = nil
+-- v10.353: findMemoryContainer → RC.new tiap call (gak di-cache)
+-- Dulu _rcInst di-cache sekali → kalau RC stale/broken angka frozen selamanya
+-- Pola sama kayak uplevelnew (line 1102 uplevelnew)
 local function findMemoryContainer()
     local result = nil
-    -- init _rcInst sekali (cache)
-    if not _rcInst then
-        pcall(function()
-            local RS = game:GetService("ReplicatedStorage")
-            local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
-            if mod then _rcInst = require(mod).new("ActivePetsService_Replicator") end
-        end)
-        dbgSet("findMem: init rcInst="..(type(_rcInst)))
-        if not _rcInst then return nil end
-    end
     local ok, err = pcall(function()
-        local data = _rcInst:GetData(player.Name)
+        local RS = game:GetService("ReplicatedStorage")
+        local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
+        if not mod then dbgSet("findMem: mod nil"); return end
+        local inst = require(mod).new("ActivePetsService_Replicator")
+        if not inst then dbgSet("findMem: inst nil"); return end
+        local data = inst:GetData(player.Name)
         if type(data) ~= "table" then dbgSet("data="..type(data)); return end
         dbgSet("findMem: got data, cek Table...")
         local tbl = rawget(data, "Table")
@@ -1256,11 +1251,10 @@ task.spawn(function()
                         if mx > cur then _G.__ZenxMaxPetCache = mx end
                     end
                     _G.__ZenxMaxPetTime = tick()
-                    _G.__ZenxMaxPetSrc = _rcInst and "rc" or (_kgMutableStats and "ms" or "attr")
+                    _G.__ZenxMaxPetSrc = (_kgMutableStats and "ms" or "attr")
                     _G.__ZenxMaxPetTotal = totalAll
                     if not _G.__ZenxMaxPetCache then
-                        print("[up6kg] ⚠ maxInv TIDAK TERDETEKSI — rc=" .. tostring(_rcInst ~= nil)
-                            .. " ms=" .. tostring(_kgMutableStats ~= nil))
+                        print("[up6kg] ⚠ maxInv TIDAK TERDETEKSI — ms=" .. tostring(_kgMutableStats ~= nil))
                     end
                 end
                 -- v10.249: fallback 200 diganti 0 — 200 menyesatkan (akun bisa max 150, 250, dll).
