@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v35.59  ══════════════════════════
+-- ══════════════════════════  HACT  v35.60  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                     ║
 -- ║  v33.9:  Trade Tim — layout ScrollingFrame (gak ketutupan), tambah    ║
 -- ║          pet list (nama, kg, age, uuid) sebelum trade jalan           ║
@@ -5644,50 +5644,65 @@ end
 -- (dulu pet Koi lama yg diganti masih kehitung -> "kepilih 10 padahal 8" -> waitTeam nunggu 10 -> hatch gagal).
 -- v24.9: dipindah ke ATAS (sebelum automationLoop) — dulu di ~3013, automationLoop (2762) panggil
 -- saat masih nil -> error "attempt to call a nil value" line 2769.
--- v35.59: grace period — uuid yg hilang baru dihapus kalau 2x cek berturut-turut gak ada
---         (cegah prune waktu pet lagi transisi equip/unequip -> config tim ilang sementara)
-local _pruneGrace = {}  -- {[tabName.."|"..uuid] = tickPertamaHilang}
-local PRUNE_GRACE = 8   -- detik grace sebelum beneran dihapus
+-- v35.60: pakai RC PetInventory.Data (sama kayak up6kg/up3.8kg) untuk cek UUID di garden
+--         RC berisi semua pet (backpack + equipped/garden) — lebih reliable dari cek workspace model.
+--         Fallback ke cara lama (scan PetsPhysical) kalau RC tidak tersedia.
 local function pruneTeamBekasan(tabName)
     local data = teamData[tabName]
     if not data or not data.selected then return 0 end
-    local inBp = {}
-    for _, p in ipairs(PetDetect.listBackpackPets()) do
-        inBp[tostring(p.uuid):gsub("[{}]","")] = true
-    end
-    local inGarden = {}
+
+    -- coba RC dulu (paling reliable: semua pet backpack + garden)
+    local rcOwned = nil
     pcall(function()
-        for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
-            local f = Workspace:FindFirstChild(nm)
-            if f then
+        if not _rcInst then return end
+        local d = _rcInst:GetData(player.Name)
+        if type(d) ~= "table" then return end
+        local tbl = rawget(d, "Table"); if type(tbl) ~= "table" then return end
+        local ppd = rawget(tbl, "PlayerPetData"); if type(ppd) ~= "table" then return end
+        local pd  = rawget(ppd, player.Name); if type(pd) ~= "table" then return end
+        local pi  = rawget(pd, "PetInventory"); if type(pi) ~= "table" then return end
+        local dat = rawget(pi, "Data"); if type(dat) ~= "table" then return end
+        rcOwned = {}
+        for k in pairs(dat) do
+            rcOwned[tostring(k):gsub("[{}]","")] = true
+        end
+    end)
+
+    local function isOwned(uclean)
+        if rcOwned then return rcOwned[uclean] end
+        -- fallback: backpack
+        for _, p in ipairs(PetDetect.listBackpackPets()) do
+            if tostring(p.uuid):gsub("[{}]","") == uclean then return true end
+        end
+        -- fallback: scan workspace garden
+        local found = false
+        pcall(function()
+            for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
+                local f = Workspace:FindFirstChild(nm); if not f then continue end
                 for _, m in ipairs(f:GetDescendants()) do
-                    if m:IsA("Model") and m.Name:sub(1,1) == "{" then
-                        inGarden[m.Name:gsub("[{}]","")] = true
+                    if m:IsA("Model") then
+                        local attr = m:GetAttribute("PET_UUID")
+                        local mn = attr and tostring(attr):gsub("[{}]","") or m.Name:gsub("[{}]","")
+                        if mn == uclean then found = true; return end
                     end
                 end
             end
-        end
-    end)
-    local now = tick()
+        end)
+        return found
+    end
+
     local removed = 0
     for uuid in pairs(data.selected) do
         local uclean = tostring(uuid):gsub("[{}]","")
-        if not inBp[uclean] and not inGarden[uclean] then
-            local key = tabName.."|"..uclean
-            if not _pruneGrace[key] then
-                _pruneGrace[key] = now  -- catat pertama kali hilang
-            elseif (now - _pruneGrace[key]) >= PRUNE_GRACE then
-                data.selected[uuid] = nil
-                _pruneGrace[key] = nil
-                removed = removed + 1
-            end
-        else
-            -- pet balik lagi (transisi selesai) — reset grace
-            local key = tabName.."|"..uclean
-            _pruneGrace[key] = nil
+        if not isOwned(uclean) then
+            data.selected[uuid] = nil
+            removed = removed + 1
         end
     end
-    if removed > 0 then print("[HactTelur] prune "..removed.." bekasan dari "..tabName) end
+    if removed > 0 then
+        print(("[HactTelur] prune %d bekasan dari %s (src=%s)"):format(
+            removed, tabName, rcOwned and "RC" or "fallback"))
+    end
     return removed
 end
 
