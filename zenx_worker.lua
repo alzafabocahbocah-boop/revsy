@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
 -- zenx_worker v9.714 — LVL-PS: langsung open_one (GOSERVER) saat file baru, bukan queue rejoin
 -- zenx_worker v9.713 — LVL-PS: revert v9.711+v9.708 guard; LVL-PS cukup trigger sekali seperti GOSERVER
@@ -21,7 +22,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.715"
+local VERSION = "9.716"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6951,7 +6952,7 @@ local function run(cfg)
             local _sl704 = (cfg.script_label or ""):upper()
             if (_sl704:find("UP6KG") or _sl704:find("UP6")) and (os.time() - _lvlps_scan_ts) >= 10 then
                 _lvlps_scan_ts = os.time()
-                local _lvlTimBaru, _lvlLinkBaru
+                local _lvlTimBaru, _lvlLinkBaru, _lvlMtime
                 for _, _dd in ipairs(denyut_dirs(cfg)) do
                     if _lvlLinkBaru then break end
                     local fpath = _dd .. "/zenx_lvlps.txt"
@@ -6965,14 +6966,18 @@ local function run(cfg)
                             info("[LVL-PS] zenx_lvlps.txt stale (" .. _umur .. "s) -> dihapus")
                             break
                         end
+                        _lvlMtime = tonumber(_mt)
                     end
                     local fc = sh("su -c 'cat \"" .. fpath .. "\" 2>/dev/null'") or ""
                     fc = fc:match("^%s*(.-)%s*$")
                     local t, l = fc:match("^LVLPS:([^:]+):(.+)$")
                     if t and l and l ~= "" then _lvlTimBaru = t; _lvlLinkBaru = l end
                 end
-                if _lvlLinkBaru and _lvlLinkBaru ~= (cfg._lvlPsApplied or "") then
+                -- v9.715: trigger GOSERVER kalau link baru ATAU file di-update (mtime baru)
+                local _mtimeChanged = _lvlMtime and _lvlMtime ~= (cfg._lvlPsMtime or 0)
+                if _lvlLinkBaru and (_lvlLinkBaru ~= (cfg._lvlPsApplied or "") or _mtimeChanged) then
                     cfg._lvlPsApplied = _lvlLinkBaru
+                    cfg._lvlPsMtime   = _lvlMtime
                     cfg._ps_override  = _lvlLinkBaru
                     _psOverrideSetTs  = os.time()
                     for pkg in pairs(mapLink) do mapLink[pkg] = _lvlLinkBaru end
