@@ -2,6 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.707 — LVL-PS: SERVER_TERAKHIR→custom + trigger rejoin semua pkg saat link baru
 -- zenx_worker v9.706 — log [LVL-PS] file ada tapi link sama (skip)
+-- zenx_worker v9.711 — LVL-PS: restore mapLink setelah refresh_ps reset (cegah assign-ps overwrite lvlps)
 -- zenx_worker v9.710 — LVL-PS skip log: tampilkan file vs applied saat link sama
 -- zenx_worker v9.709 — matiin 3 debug log spam: upkgstat-debug, DBG-SHECK, wm-log
 -- zenx_worker v9.708 — dedup warn freeform: skip kalau task sama udah dipindah <60s
@@ -5174,6 +5175,24 @@ local function run(cfg)
                 if link and link ~= "" then mapLink[pkg] = link end
                 if psn and psn ~= "" then mapPsNama[pkg] = psn end
             end
+        end
+        -- v9.711: kalau LVL-PS aktif, overwrite mapLink balik ke link leveling
+        -- (refresh_ps reset mapLink={}  dulu, jadi hasil assign-ps overwrite LVL-PS)
+        local _lvlAktifRps = (cfg._lvlPsApplied or "") ~= ""
+        if not _lvlAktifRps then
+            local _sl711 = (cfg.script_label or ""):upper()
+            if _sl711:find("UP6KG") or _sl711:find("UP6") then
+                for _, _dd in ipairs(denyut_dirs(cfg)) do
+                    local _fc = sh("su -c 'cat \"" .. _dd .. "/zenx_lvlps.txt\" 2>/dev/null'") or ""
+                    _fc = _fc:match("^%s*(.-)%s*$") or ""
+                    local _t, _l = _fc:match("^LVLPS:([^:]+):(.+)$")
+                    if _t and _l and _l ~= "" then cfg._lvlPsApplied = _l; _lvlAktifRps = true; break end
+                end
+            end
+        end
+        if _lvlAktifRps and (cfg._lvlPsApplied or "") ~= "" then
+            for pkg in pairs(mapLink) do mapLink[pkg] = cfg._lvlPsApplied end
+            info("[LVL-PS] refresh_ps: restore mapLink ke lvlps link (cegah assign-ps overwrite)")
         end
     end
     refresh_ps()
