@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.712 — LVL-PS: zenx_lvlps.txt stale >60s dihapus (tidak dipakai)
 -- zenx_worker v9.711 — LVL-PS: restore mapLink setelah refresh_ps reset (cegah assign-ps overwrite lvlps)
 -- zenx_worker v9.710 — LVL-PS skip log: tampilkan file vs applied saat link sama
 -- zenx_worker v9.709 — matiin 3 debug log spam: upkgstat-debug, DBG-SHECK, wm-log
@@ -17,7 +18,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.711"
+local VERSION = "9.712"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6986,6 +6987,17 @@ local function run(cfg)
                 for _, _dd in ipairs(denyut_dirs(cfg)) do
                     if _lvlLinkBaru then break end
                     local fpath = _dd .. "/zenx_lvlps.txt"
+                    -- v9.712: cek mtime file, kalau > 60s hapus dan skip (file stale)
+                    local _mt = sh("su -c 'stat -c %Y \"" .. fpath .. "\" 2>/dev/null'") or ""
+                    _mt = _mt:match("^%s*(%d+)%s*$")
+                    if _mt then
+                        local _umur = os.time() - tonumber(_mt)
+                        if _umur > 60 then
+                            sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
+                            info("[LVL-PS] zenx_lvlps.txt stale (" .. _umur .. "s) -> dihapus")
+                            break
+                        end
+                    end
                     local fc = sh("su -c 'cat \"" .. fpath .. "\" 2>/dev/null'") or ""
                     fc = fc:match("^%s*(.-)%s*$")
                     local t, l = fc:match("^LVLPS:([^:]+):(.+)$")
