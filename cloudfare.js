@@ -279,20 +279,27 @@ export default {
       try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='uplevelgiftpet'").first(); if (row && row.data) data = row.data; } catch {}
       return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
     }
-    // /bahanup3.8kg GET (publik) -> bahan pet keep per akun HACT [{akun, server, totalKeep}]
+    // /bahanup3.8kg GET (publik) -> bahan pet keep per akun HACT [{akun, server, totalKeep, keepDetail:{pet:N}}]
+    // keepDetail = breakdown per jenis pet (untuk fitur prioritas di tab HACT up3.8kg)
     if (jalur === "/bahanup3.8kg" && req.method === "GET") {
       try {
         const rows = await env.DB.prepare("SELECT nama, ps_nama, hactstat FROM akun WHERE hactstat IS NOT NULL").all();
         const result = [];
         for (const r of (rows.results || [])) {
           let totalKeep = 0;
+          let keepDetail = {};
           try {
             const hs = typeof r.hactstat === "string" ? JSON.parse(r.hactstat) : r.hactstat;
             if (hs && hs.keep) {
-              for (const k in hs.keep) totalKeep += Number((hs.keep[k] || {}).total) || 0;
+              for (const k in hs.keep) {
+                const n = Number((hs.keep[k] || {}).total) || 0;
+                totalKeep += n;
+                if (n > 0) keepDetail[k] = n;
+              }
             }
           } catch {}
-          if (totalKeep > 0) result.push({ akun: r.nama, server: r.ps_nama || "", totalKeep });
+          // include semua akun (totalKeep=0 juga) agar tab bisa tampil status kosong
+          result.push({ akun: r.nama, server: r.ps_nama || "", totalKeep, keepDetail });
         }
         result.sort((a, b) => b.totalKeep - a.totalKeep);
         return json(result);

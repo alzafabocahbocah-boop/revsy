@@ -4228,7 +4228,8 @@ local linkScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), Backgrou
     CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = linkContent })
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = linkScroll })
 
--- ============ TAB HACT — bahan pet keep per akun (v2.253) ============
+-- ============ TAB HACT — bahan pet keep per akun (v2.255) ============
+-- v2.255: keepDetail per jenis pet + picker 3 prioritas + urut by prioritas
 local hactContent = mk("Frame", {
     Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
     BackgroundTransparency = 1, Visible = false, Parent = main })
@@ -4240,29 +4241,72 @@ mk("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.Layout
 
 do
     local HACT_BAHAN_URL = "https://dry-glitter-63e4.petagee5.workers.dev/bahanup3.8kg"
-    local _hactData = {}   -- [{akun, server, totalKeep}]
+    local _hactData = {}   -- [{akun, server, totalKeep, keepDetail:{pet:N}}]
     local _hactLoading = false
+    local _prio = {"", "", ""}   -- 3 slot prioritas pet (nama jenis)
+    local PRIO_FILE = "zenx_hact_prio.json"
+
+    -- load prioritas dari file
+    pcall(function()
+        if not readfile then return end
+        local ok, t = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(PRIO_FILE)) end)
+        if ok and type(t) == "table" then
+            for i = 1, 3 do _prio[i] = tostring(t[i] or "") end
+        end
+    end)
+    local function savePrio()
+        pcall(function()
+            if not writefile then return end
+            writefile(PRIO_FILE, game:GetService("HttpService"):JSONEncode(_prio))
+        end)
+    end
 
     -- header + tombol refresh
     local hdr = mk("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1,
         LayoutOrder = 0, Parent = hactScroll })
     local hdrLbl = lbl(hdr, "BAHAN HACT", 13, C.text)
-    hdrLbl.Position = UDim2.new(0, 0, 0, 0); hdrLbl.Size = UDim2.new(0.65, 0, 1, 0)
+    hdrLbl.Position = UDim2.new(0, 0, 0, 0); hdrLbl.Size = UDim2.new(0.6, 0, 1, 0)
     hdrLbl.Font = FONT_B; hdrLbl.TextXAlignment = Enum.TextXAlignment.Left
     local refreshBtn = mk("TextButton", {
-        Size = UDim2.new(0.35, 0, 1, 0), Position = UDim2.new(0.65, 0, 0, 0),
+        Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.new(0.6, 0, 0, 0),
         BackgroundColor3 = C.accent, Text = "⟳ Refresh", TextSize = 11,
         TextColor3 = Color3.fromRGB(0,0,0), Font = FONT_B,
         AutoButtonColor = false, Parent = hdr })
     corner(refreshBtn, 7)
 
-    local statusLbl = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1,
+    -- v2.255: picker 3 prioritas pet
+    local prioFrame = mk("Frame", { Size = UDim2.new(1, 0, 0, 72), BackgroundColor3 = C.card,
+        LayoutOrder = 1, Parent = hactScroll })
+    corner(prioFrame, 8)
+    pad(prioFrame, 8)
+    local prioTitle = lbl(prioFrame, "Prioritas pet (urut akun):", 10, C.textDim)
+    prioTitle.Size = UDim2.new(1, 0, 0, 14); prioTitle.Position = UDim2.new(0, 0, 0, 0)
+    prioTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+    local prioBoxes = {}
+    for i = 1, 3 do
+        local box = mk("TextBox", {
+            Size = UDim2.new(0.3, -4, 0, 26),
+            Position = UDim2.new((i-1)*0.333, (i==1 and 0 or 2), 0, 18),
+            BackgroundColor3 = C.bg, Text = _prio[i],
+            PlaceholderText = "Prio "..i, TextSize = 10,
+            TextColor3 = C.text, PlaceholderColor3 = C.textDim,
+            Font = FONT, ClearTextOnFocus = false, Parent = prioFrame })
+        corner(box, 6)
+        prioBoxes[i] = box
+        box.FocusLost:Connect(function()
+            _prio[i] = box.Text:match("^%s*(.-)%s*$") or ""
+            savePrio()
+        end)
+    end
+
+    local statusLbl = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1,
         Text = "belum di-fetch", TextSize = 10, TextColor3 = C.textDim, Font = FONT,
-        TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 1, Parent = hactScroll })
+        TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2, Parent = hactScroll })
 
     -- container rows akun
     local rowsFrame = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1,
-        AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2, Parent = hactScroll })
+        AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 3, Parent = hactScroll })
     mk("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = rowsFrame })
 
     local function renderHact()
@@ -4271,30 +4315,87 @@ do
             if ch:IsA("Frame") or ch:IsA("TextLabel") then ch:Destroy() end
         end
         if #_hactData == 0 then
-            local empty = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1,
+            mk("TextLabel", { Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1,
                 Text = "gak ada data", TextSize = 11, TextColor3 = C.textDim, Font = FONT,
                 TextXAlignment = Enum.TextXAlignment.Center, Parent = rowsFrame })
             return
         end
-        for i, d in ipairs(_hactData) do
-            local row = mk("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+
+        -- hitung skor prioritas tiap akun (3 poin per prio1, 2 per prio2, 1 per prio3)
+        local scored = {}
+        for _, d in ipairs(_hactData) do
+            local score = 0
+            local kd = type(d.keepDetail) == "table" and d.keepDetail or {}
+            for pi, pnm in ipairs(_prio) do
+                if pnm ~= "" and kd[pnm] and kd[pnm] > 0 then
+                    score = score + (4 - pi)   -- prio1=3, prio2=2, prio3=1
+                end
+            end
+            scored[#scored+1] = { d=d, score=score }
+        end
+        table.sort(scored, function(a, b)
+            if a.score ~= b.score then return a.score > b.score end
+            return (a.d.totalKeep or 0) > (b.d.totalKeep or 0)
+        end)
+
+        for i, s in ipairs(scored) do
+            local d = s.d
+            local kd = type(d.keepDetail) == "table" and d.keepDetail or {}
+            -- tinggi row: 36 base + 14 per baris pet detail (max 3 baris)
+            local petParts = {}
+            -- tampilkan prio yang ada duluan, lalu sisanya
+            local shown = {}
+            for _, pnm in ipairs(_prio) do
+                if pnm ~= "" and kd[pnm] and not shown[pnm] then
+                    petParts[#petParts+1] = pnm.."×"..kd[pnm]
+                    shown[pnm] = true
+                end
+            end
+            for pnm, n in pairs(kd) do
+                if not shown[pnm] then
+                    petParts[#petParts+1] = pnm.."×"..n
+                    shown[pnm] = true
+                end
+            end
+            local detailStr = #petParts > 0 and table.concat(petParts, "  ") or "kosong"
+            local rowH = d.totalKeep > 0 and 50 or 36
+            local row = mk("Frame", { Size = UDim2.new(1, 0, 0, rowH),
+                BackgroundColor3 = s.score > 0 and Color3.fromRGB(240,255,245) or C.card,
                 LayoutOrder = i, Parent = rowsFrame })
             corner(row, 8)
             -- akun
             local akunL = lbl(row, d.akun or "?", 11, C.text)
-            akunL.Position = UDim2.new(0, 10, 0, 4); akunL.Size = UDim2.new(0.5, -10, 0, 16)
+            akunL.Position = UDim2.new(0, 10, 0, 4); akunL.Size = UDim2.new(0.6, -10, 0, 16)
             akunL.Font = FONT_B; akunL.TextXAlignment = Enum.TextXAlignment.Left
             -- server
             local srvL = lbl(row, d.server or "-", 9, C.textDim)
-            srvL.Position = UDim2.new(0, 10, 0, 20); srvL.Size = UDim2.new(0.65, -10, 0, 13)
+            srvL.Position = UDim2.new(0, 10, 0, 20); srvL.Size = UDim2.new(0.65, -10, 0, 12)
             srvL.TextXAlignment = Enum.TextXAlignment.Left
+            -- detail pet (baris bawah)
+            if d.totalKeep > 0 then
+                local petLbl = lbl(row, detailStr, 9, Color3.fromRGB(22,163,74))
+                petLbl.Position = UDim2.new(0, 10, 0, 34); petLbl.Size = UDim2.new(1, -60, 0, 13)
+                petLbl.TextXAlignment = Enum.TextXAlignment.Left
+                petLbl.TextTruncate = Enum.TextTruncate.AtEnd
+            end
             -- total keep (badge kanan)
+            local badgeCol = s.score > 0 and Color3.fromRGB(34,197,94) or C.accent2
             local badge = mk("TextLabel", {
-                Size = UDim2.new(0, 44, 0, 22), Position = UDim2.new(1, -50, 0.5, -11),
-                BackgroundColor3 = C.accent2, Text = tostring(d.totalKeep or 0),
-                TextSize = 12, TextColor3 = Color3.fromRGB(0,0,0),
+                Size = UDim2.new(0, 40, 0, 20), Position = UDim2.new(1, -46, 0, 4),
+                BackgroundColor3 = badgeCol,
+                Text = tostring(d.totalKeep or 0),
+                TextSize = 12, TextColor3 = Color3.fromRGB(255,255,255),
                 Font = FONT_B, Parent = row })
             corner(badge, 6)
+            -- skor badge (kalau ada prioritas)
+            if s.score > 0 then
+                local sBadge = mk("TextLabel", {
+                    Size = UDim2.new(0, 24, 0, 14), Position = UDim2.new(1, -46, 0, 26),
+                    BackgroundColor3 = Color3.fromRGB(234,179,8),
+                    Text = "★"..s.score, TextSize = 9,
+                    TextColor3 = Color3.fromRGB(0,0,0), Font = FONT_B, Parent = row })
+                corner(sBadge, 4)
+            end
         end
     end
 
@@ -4310,7 +4411,9 @@ do
                 end)
                 if ok2 and type(data) == "table" then
                     _hactData = data
-                    statusLbl.Text = #data.." akun · tap refresh untuk update"
+                    local nKeep = 0
+                    for _, d in ipairs(data) do if (d.totalKeep or 0) > 0 then nKeep = nKeep + 1 end end
+                    statusLbl.Text = #data.." akun · "..nKeep.." ada keep · tap refresh update"
                 else
                     statusLbl.Text = "error parse: "..(tostring(data):sub(1,40))
                 end
