@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.253"
+local VERSION = "up38kg-v2.254"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -1268,20 +1268,17 @@ local function _rcGetMaxInv()
     return mx
 end
 
--- v1.54: findMemoryContainer → RC langsung, port dari up6kg v10.265
--- ZERO getgc — format return sama: {uuid -> {PetData={...}, PetType="..."}}
+-- v2.254: findMemoryContainer → RC.new tiap call (gak di-cache)
+-- Dulu _rcInst di-cache sekali → kalau RC stale/broken, container frozen selamanya (fix sama kayak up6kg v10.353)
 local function findMemoryContainer()
     local result = nil
     local ok, err = pcall(function()
-        -- v2.223: debug per-step biar ketahuan gagal dimana
-        if not _rcInst then
-            local RS = game:GetService("ReplicatedStorage")
-            local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
-            if not mod then print("[up38kg] findMC: ReplicationClass mod NIL"); return end
-            _rcInst = require(mod).new("ActivePetsService_Replicator")
-        end
-        if not _rcInst then print("[up38kg] findMC: _rcInst NIL"); return end
-        local data = _rcInst:GetData(player.Name)
+        local RS = game:GetService("ReplicatedStorage")
+        local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
+        if not mod then print("[up38kg] findMC: ReplicationClass mod NIL"); return end
+        local inst = require(mod).new("ActivePetsService_Replicator")
+        if not inst then print("[up38kg] findMC: inst NIL"); return end
+        local data = inst:GetData(player.Name)
         if type(data) ~= "table" then print("[up38kg] findMC: data bukan table, type="..type(data)); return end
         local tbl = rawget(data, "Table")
         if type(tbl) ~= "table" then print("[up38kg] findMC: Table NIL"); return end
@@ -1671,7 +1668,7 @@ task.spawn(function()
                         if mx > cur then _G.__ZenxMaxPetCache = mx end
                     end
                     _G.__ZenxMaxPetTime = tick()
-                    _G.__ZenxMaxPetSrc = _rcInst and "rc" or (_kgMutableStats and "ms" or "attr")
+                    _G.__ZenxMaxPetSrc = (_kgMutableStats and "ms" or "attr")
                     _G.__ZenxMaxPetTotal = totalAll
                 end
                 local maxInv = _G.__ZenxMaxPetCache or 200
