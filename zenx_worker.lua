@@ -1,5 +1,6 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
+-- zenx_worker v9.713 — LVL-PS: revert v9.711+v9.708 guard; LVL-PS cukup trigger sekali seperti GOSERVER
 -- zenx_worker v9.712 — LVL-PS: zenx_lvlps.txt stale >60s dihapus (tidak dipakai)
 -- zenx_worker v9.711 — LVL-PS: restore mapLink setelah refresh_ps reset (cegah assign-ps overwrite lvlps)
 -- zenx_worker v9.710 — LVL-PS skip log: tampilkan file vs applied saat link sama
@@ -18,7 +19,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.712"
+local VERSION = "9.713"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5177,24 +5178,6 @@ local function run(cfg)
                 if psn and psn ~= "" then mapPsNama[pkg] = psn end
             end
         end
-        -- v9.711: kalau LVL-PS aktif, overwrite mapLink balik ke link leveling
-        -- (refresh_ps reset mapLink={}  dulu, jadi hasil assign-ps overwrite LVL-PS)
-        local _lvlAktifRps = (cfg._lvlPsApplied or "") ~= ""
-        if not _lvlAktifRps then
-            local _sl711 = (cfg.script_label or ""):upper()
-            if _sl711:find("UP6KG") or _sl711:find("UP6") then
-                for _, _dd in ipairs(denyut_dirs(cfg)) do
-                    local _fc = sh("su -c 'cat \"" .. _dd .. "/zenx_lvlps.txt\" 2>/dev/null'") or ""
-                    _fc = _fc:match("^%s*(.-)%s*$") or ""
-                    local _t, _l = _fc:match("^LVLPS:([^:]+):(.+)$")
-                    if _t and _l and _l ~= "" then cfg._lvlPsApplied = _l; _lvlAktifRps = true; break end
-                end
-            end
-        end
-        if _lvlAktifRps and (cfg._lvlPsApplied or "") ~= "" then
-            for pkg in pairs(mapLink) do mapLink[pkg] = cfg._lvlPsApplied end
-            info("[LVL-PS] refresh_ps: restore mapLink ke lvlps link (cegah assign-ps overwrite)")
-        end
     end
     refresh_ps()
     -- v9.701: up3.8kgv2 (sc=UP6KG url=up3.8kg) -> semua akun di device WAJIB ikut PS yang di-assign
@@ -6956,26 +6939,9 @@ local function run(cfg)
                 local link = ambil_str(rps, "link") or ""
                 if link ~= cfg._ps_last then
                     cfg._ps_last = link
-                    -- v9.708: kalau LVL-PS aktif (cfg atau file), jangan overwrite _ps_override dari assign-ps
-                    -- cek file langsung biar guard tetap aktif setelah worker restart
-                    local _lvlAktif = (cfg._lvlPsApplied or "") ~= ""
-                    if not _lvlAktif then
-                        local _sl708 = (cfg.script_label or ""):upper()
-                        if _sl708:find("UP6KG") or _sl708:find("UP6") then
-                            for _, _dd in ipairs(denyut_dirs(cfg)) do
-                                local _fc = sh("su -c 'cat \"" .. _dd .. "/zenx_lvlps.txt\" 2>/dev/null'") or ""
-                                _fc = _fc:match("^%s*(.-)%s*$") or ""
-                                if _fc:match("^LVLPS:[^:]+:.+$") then _lvlAktif = true; break end
-                            end
-                        end
-                    end
-                    if _lvlAktif then
-                        info("PS dari panel: " .. (link ~= "" and link or "(public)") .. " | SKIP overwrite _ps_override (LVL-PS aktif)")
-                    else
-                        cfg._ps_override = link
-                        _psOverrideSetTs = (link ~= "") and os.time() or 0  -- v9.689: catat kapan mulai di PS
-                        info("PS dari panel: " .. (link ~= "" and link or "(public)"))
-                    end
+                    cfg._ps_override = link
+                    _psOverrideSetTs = (link ~= "") and os.time() or 0
+                    info("PS dari panel: " .. (link ~= "" and link or "(public)"))
                 end
             end
             -- v9.704: UP6KG — baca file zenx_lvlps.txt (ditulis up6kg kalau pet 6kg+ > 100)
