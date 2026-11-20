@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.251"
+local VERSION = "up38kg-v2.252"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -7566,37 +7566,36 @@ do
 
     -- AUTO TRADE + REFRESH tiap 3s
     task.spawn(function()
-        local _lastTgtLog = -60  -- v2.251: log langsung di detik pertama, lalu throttle 60s
+        local _lastTgtLog = 0  -- v2.252: throttle log target OP38
         while true do
             task.wait(3)
-            pcall(function()
+            -- v2.252: log target OP38 ke console di luar pcall (throttle 60s)
+            local now = os.time()
+            if now - _lastTgtLog >= 60 then
+                local np = nPicks()
+                local onl = getOnlinePicks()
+                if #onl == 0 then
+                    _lastTgtLog = now
+                    local msg = np > 0 and ("target OP38: "..np.." dipilih, 0 online di server") or "target OP38: belum ada target dipilih"
+                    o38Log(msg); print("[up38kg] "..msg)
+                end
+            end
+            local ok38, err38 = pcall(function()
                 pcall(refresh38)  -- v2.225: selalu refresh (bukan hanya saat Visible) agar counter update walau tab tertutup
                 if OP38.busy then return end
                 local online = getOnlinePicks()
-                -- v2.249: log status target OP38 ke console (throttle 60s)
-                if #online == 0 then
-                    local now = os.time()
-                    if now - _lastTgtLog >= 60 then
-                        _lastTgtLog = now
-                        if nPicks() > 0 then
-                            local msg = "target OP38: "..nPicks().." dipilih, 0 online di server"
-                            o38Log(msg); print("[up38kg] "..msg)
-                        else
-                            local msg = "target OP38: belum ada target dipilih"
-                            o38Log(msg); print("[up38kg] "..msg)
-                        end
-                    end
-                    return
-                end
+                if #online == 0 then return end
                 -- v2.239: threshold pakai #getPet38() (sudah skip semua UUID support/pool)
+                local pets = getPet38()  -- ambilContainer sudah dipanggil di refresh38() di atas
                 local statUdah = #pets
                 if statUdah < MIN_PET_TRADE then return end
-                local pets = getPet38()  -- ambilContainer sudah dipanggil di refresh38() di atas
                 if #pets == 0 then return end  -- gak ada pet yang bisa di-trade (semua masih dipakai upkg)
                 local pick = online[math.random(1, #online)]
                 o38Log("auto-trade trigger: stat="..statUdah.." pets="..#pets.." >= "..MIN_PET_TRADE.." -> "..pick.Name)
                 doTrade38(pick, pets)
             end)
+            -- v2.252: log error OP38 auto-loop ke console
+            if not ok38 then print("[up38kg] OP38 loop error: "..tostring(err38)) end
         end
     end)
 end
