@@ -2,7 +2,7 @@
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.707 — LVL-PS: SERVER_TERAKHIR→custom + trigger rejoin semua pkg saat link baru
 -- zenx_worker v9.706 — log [LVL-PS] file ada tapi link sama (skip)
--- zenx_worker v9.710 — LVL-PS skip log: tampilkan applied+override saat link sama
+-- zenx_worker v9.710 — LVL-PS skip log: tampilkan file vs applied saat link sama
 -- zenx_worker v9.709 — matiin 3 debug log spam: upkgstat-debug, DBG-SHECK, wm-log
 -- zenx_worker v9.708 — dedup warn freeform: skip kalau task sama udah dipindah <60s
 -- zenx_worker v9.705 — log windowingMode Roblox client tiap 60s
@@ -6986,7 +6986,7 @@ local function run(cfg)
                     info("[LVL-PS] apply dari file → tim=" .. tostring(_lvlTimBaru) .. " link=" .. _lvlLinkBaru:sub(1,40) .. " | SERVER_TERAKHIR→custom | trigger rejoin " .. _nPkg .. " pkg")
                 elseif _lvlLinkBaru and _lvlLinkBaru == (cfg._lvlPsApplied or "") then
                     -- v9.706: file ada tapi sama, tidak perlu apply ulang
-                    info("[LVL-PS] link sama skip | applied=" .. (cfg._lvlPsApplied or ""):sub(1,50) .. " | override=" .. (cfg._ps_override or "(nil)"):sub(1,50))
+                    info("[LVL-PS] link sama skip | file=" .. _lvlLinkBaru:sub(1,50) .. " | applied=" .. (cfg._lvlPsApplied or ""):sub(1,50))
                 elseif not _lvlLinkBaru and (cfg._lvlPsApplied or "") ~= "" then
                     cfg._lvlPsApplied = ""
                     info("[LVL-PS] file kosong/hilang → refresh_ps")
