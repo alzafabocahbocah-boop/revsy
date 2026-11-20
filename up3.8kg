@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v2.222"
+local VERSION = "up38kg-v2.223"
 
 -- ============ v2.114: GLOBAL ERROR CATCHER — ScriptContext + LogService (task readonly, tidak bisa di-wrap) ============
 do
@@ -1268,39 +1268,44 @@ end
 local function findMemoryContainer()
     local result = nil
     local ok, err = pcall(function()
-        -- v2.222: pakai _rcInst cache, inisialisasi pakai FindFirstChild (sama kayak _rcGetMaxInv)
+        -- v2.223: debug per-step biar ketahuan gagal dimana
         if not _rcInst then
             local RS = game:GetService("ReplicatedStorage")
             local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
-            if mod then _rcInst = require(mod).new("ActivePetsService_Replicator") end
+            if not mod then print("[up38kg] findMC: ReplicationClass mod NIL"); return end
+            _rcInst = require(mod).new("ActivePetsService_Replicator")
         end
-        if not _rcInst then return end
+        if not _rcInst then print("[up38kg] findMC: _rcInst NIL"); return end
         local data = _rcInst:GetData(player.Name)
-        if type(data) ~= "table" then return end
+        if type(data) ~= "table" then print("[up38kg] findMC: data bukan table, type="..type(data)); return end
         local tbl = rawget(data, "Table")
-        if type(tbl) ~= "table" then return end
+        if type(tbl) ~= "table" then print("[up38kg] findMC: Table NIL"); return end
         local ppd = rawget(tbl, "PlayerPetData")
-        if type(ppd) ~= "table" then return end
+        if type(ppd) ~= "table" then print("[up38kg] findMC: PlayerPetData NIL"); return end
         local pd = rawget(ppd, player.Name)
-        if type(pd) ~= "table" then return end
-        -- cache pointer MutableStats untuk maxInv
+        if type(pd) ~= "table" then print("[up38kg] findMC: pd["..player.Name.."] NIL"); return end
         pcall(function()
             local ms = rawget(pd, "MutableStats")
             if type(ms) == "table" then _kgMutableStats = ms end
         end)
         local pi = rawget(pd, "PetInventory")
-        if type(pi) ~= "table" then return end
+        if type(pi) ~= "table" then print("[up38kg] findMC: PetInventory NIL"); return end
         local dat = rawget(pi, "Data")
-        if type(dat) ~= "table" then return end
+        if type(dat) ~= "table" then print("[up38kg] findMC: Data NIL"); return end
         local out = {}
         for uuid, entry in pairs(dat) do
             if type(entry) == "table" then
                 out[tostring(uuid)] = entry
             end
         end
-        if next(out) then result = out end
+        if next(out) then
+            result = out
+        else
+            print("[up38kg] findMC: dat ada tapi kosong (0 entry)")
+        end
     end)
     if not ok then print("[up38kg] findMemoryContainer ERR:", tostring(err):sub(1,80)) end
+    if result then print("[up38kg] findMC: OK, "..tostring(#{[1]=1} and "?" or "?").." entries") end
     return result
 end
 local function ambilContainer()
