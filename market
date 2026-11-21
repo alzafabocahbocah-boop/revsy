@@ -1,4 +1,4 @@
--- ZENX MARKET v8.577 — refreshBackpackStats ChildAdded/Removed dimatiin, periodic 5s cukup
+-- ZENX MARKET v8.578 — getgc maxInv: cache permanen (gak expire 60s), scan sekali aja
 -- ZENX MARKET v8.568 — COUNT-DIAG: dedup by ruleType+range (fix spam tiap loop saat src berubah/rules re-apply)
 -- ZENX MARKET v8.567 — getAge+getBaseKg: TradeWorld TBIC path via getloadedmodules (RC nil di TW → pakai PetData.Level+BaseWeight dari TradeBoothInventoryController upvalue)
 -- ZENX MARKET v8.566 — countMyPetsForRule: dedup warn+log per rule (fix spam warn tiap 5s refreshBackpackStats)
@@ -1046,9 +1046,11 @@ task.spawn(function()
                     local mxNew = nil
                     -- layer 0a: UI scan dimatiin — rekursif PlayerGui tiap 5s bikin lag (v8.574)
                     -- layer 0b getgc + layer 1 Hact + layer 2 Attr sudah cukup detect maxInv
-                    -- layer 0b: getgc scan (cache 60s — sedikit berat)
+                    -- layer 0b: getgc scan — v8.578: cuma jalan SEKALI sampai dapet nilai, abis itu pakai cache permanen
                     if not mxNew then pcall(function()
-                        if getgc and (not _G.__ZenxMaxPetCacheTime or (tick() - _G.__ZenxMaxPetCacheTime) > 60) then
+                        if _G.__ZenxMaxPetCache and _G.__ZenxMaxPetCache > 0 then
+                            mxNew = _G.__ZenxMaxPetCache  -- udah punya nilai, pakai langsung
+                        elseif getgc then
                             local mx = nil
                             for _, obj in ipairs(getgc(true)) do
                                 if type(obj) == "table" then
@@ -1056,12 +1058,8 @@ task.spawn(function()
                                     if type(mp) == "number" and mp > 0 and (not mx or mp > mx) then mx = mp end
                                 end
                             end
-                            _G.__ZenxMaxPetCacheTime = tick()
-                            if mx then mxNew = mx end
-                        elseif _G.__ZenxMaxPetCache and _G.__ZenxMaxPetCache > 0 then
-                            mxNew = _G.__ZenxMaxPetCache
+                            if mx then mxNew = mx; _G.__ZenxMaxPetCache = mx end  -- simpan permanen
                         end
-                        if mxNew then _G.__ZenxMaxPetCache = mxNew end
                     end) end
                     -- layer 2: HactTelurGetMaxPets
                     if not mxNew then pcall(function()
