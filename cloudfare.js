@@ -283,12 +283,10 @@ export default {
     // keepDetail = breakdown per jenis pet (untuk fitur prioritas di tab HACT up3.8kg)
     if (jalur === "/bahanup3.8kg" && req.method === "GET") {
       try {
-        // filter: scAssign='hact' (di-set via /sc-set) + ts laporan < 7 menit (420s) = akun hact yang lagi on
-        const HIDUP_MAX = 420;
-        const batasTs = skrg - HIDUP_MAX;
+        // filter: scAssign='hact' + hactstat ada (gak perlu cek online, cukup totalKeep >= 100)
         const rows = await env.DB.prepare(
-          "SELECT nama, tim, ps_nama, hactstat FROM akun WHERE scAssign='hact' AND ts >= ?1 AND hactstat IS NOT NULL"
-        ).bind(batasTs).all();
+          "SELECT nama, tim, ps_nama, hactstat FROM akun WHERE scAssign='hact' AND hactstat IS NOT NULL"
+        ).all();
         const result = [];
         for (const r of (rows.results || [])) {
           let totalKeep = 0;
@@ -303,7 +301,8 @@ export default {
               }
             }
           } catch {}
-          // server: tim (nama device/grup) lebih relevan dari ps_nama untuk akun hact
+          // hanya akun dengan totalKeep >= 100
+          if (totalKeep < 100) continue;
           const server = r.tim || r.ps_nama || "";
           result.push({ akun: r.nama, server, totalKeep, keepDetail });
         }
