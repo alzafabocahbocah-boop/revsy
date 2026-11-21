@@ -307,7 +307,14 @@ export default {
           // hanya akun dengan totalKeep >= 100
           if (totalKeep < 100) continue;
           const server = r.tim || r.ps_nama || "";
-          const psLink = r.ps_link || "";
+          // psLink: dari cookies.ps_link (getps), fallback ke hactstat.psLink (zenx_link.json via hact)
+          let psLink = r.ps_link || "";
+          if (!psLink) {
+            try {
+              const hs2 = typeof r.hactstat === "string" ? JSON.parse(r.hactstat) : r.hactstat;
+              if (hs2 && hs2.psLink) psLink = hs2.psLink;
+            } catch {}
+          }
           result.push({ akun: r.nama, server, totalKeep, keepDetail, psLink });
         }
         result.sort((a, b) => b.totalKeep - a.totalKeep);
