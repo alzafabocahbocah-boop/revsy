@@ -7003,22 +7003,29 @@ local function run(cfg)
                     pcall(refresh_ps)
                 end
             end
-            -- v9.717: UP3.8KG — baca file zenx_hact_server.txt (ditulis up3.8kg kalau bahan <50)
+            -- v9.717: UP3.8KG — baca file zenx_hact_server_<akun>.txt (ditulis up3.8kg kalau bahan <50)
+            -- v9.718: scan wildcard zenx_hact_server_*.txt (per-akun, biar 2 client 1 workspace gak bentrok)
             -- format: HACTSERVER:<psLink> → pindah ke server akun hact terbaik
             local _sl717 = (cfg.script_label or ""):upper()
             if _sl717:find("UP3", 1, true) and (os.time() - _lvlps_scan_ts) >= 10 then
                 local _hactLinkBaru, _hactMtime
                 for _, _dd in ipairs(denyut_dirs(cfg)) do
                     if _hactLinkBaru then break end
-                    local fpath = _dd .. "/zenx_hact_server.txt"
+                    -- scan semua zenx_hact_server_*.txt (per-akun) + fallback zenx_hact_server.txt (lama)
+                    local _flist = {}
+                    local _scan = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_hact_server_*.txt zenx_hact_server.txt; do [ -f \"$f\" ] && echo \"$f\"; done' 2>/dev/null") or ""
+                    for fn in _scan:gmatch("[^\n]+") do _flist[#_flist+1] = fn end
+                    local fpath = _dd .. "/" .. (_flist[1] or "zenx_hact_server.txt")
+                    if #_flist == 0 then goto continue_hact end
+                    do
                     local _mt = sh("su -c 'stat -c %Y \"" .. fpath .. "\" 2>/dev/null'") or ""
                     _mt = _mt:match("^%s*(%d+)%s*$")
                     if _mt then
                         local _umur = os.time() - tonumber(_mt)
                         if _umur > 60 then
-                            sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
-                            info("[HACT-SERVER] zenx_hact_server.txt stale (" .. _umur .. "s) -> dihapus")
-                            break
+                            for _, fn in ipairs(_flist) do sh_silent("su -c 'rm -f \"" .. _dd .. "/" .. fn .. "\"'") end
+                            info("[HACT-SERVER] zenx_hact_server stale (" .. _umur .. "s) -> dihapus")
+                            goto continue_hact
                         end
                         _hactMtime = tonumber(_mt)
                     end
@@ -7026,6 +7033,8 @@ local function run(cfg)
                     fc = fc:match("^%s*(.-)%s*$")
                     local l = fc:match("^HACTSERVER:(.+)$")
                     if l and l ~= "" then _hactLinkBaru = l end
+                    end -- do
+                    ::continue_hact::
                 end
                 local _hactMtimeChanged = _hactMtime and _hactMtime ~= (cfg._hactServerMtime or 0)
                 if _hactLinkBaru and (_hactLinkBaru ~= (cfg._hactServerApplied or "") or _hactMtimeChanged) then
