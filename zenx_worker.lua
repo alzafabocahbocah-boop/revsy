@@ -22,7 +22,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.723"
+local VERSION = "9.724"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -7012,7 +7012,9 @@ local function run(cfg)
             -- v9.718: scan wildcard zenx_hact_server_*.txt (per-akun, biar 2 client 1 workspace gak bentrok)
             -- format: HACTSERVER:<psLink> → pindah ke server akun hact terbaik
             local _sl717 = (cfg.script_label or ""):upper()
-            if _sl717:find("UP3", 1, true) and (os.time() - _hact_scan_ts) >= 10 then
+            local _su717 = (cfg.script_url  or ""):lower()
+            -- v9.724: cek script_url juga, karena UP3.8KG kadang label-nya "UP6KG T6" (bukan "UP3...")
+            if (_sl717:find("UP3", 1, true) or _su717:find("up3", 1, true)) and (os.time() - _hact_scan_ts) >= 10 then
                 _hact_scan_ts = os.time()   -- v9.722: pakai timer sendiri, gak bentrok sama UP6KG
                 local _hactLinkBaru, _hactMtime
                 for _, _dd in ipairs(denyut_dirs(cfg)) do
