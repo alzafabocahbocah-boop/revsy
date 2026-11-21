@@ -1,4 +1,4 @@
--- zenx_worker v9.719 — fix GOSERVER utamakan share link (https) bukan accessCode
+-- zenx_worker v9.720 — accessCode DILARANG untuk tembak, semua path harus share/privateServerLink
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
@@ -1934,8 +1934,8 @@ local function build_url(cfg, link_client, paksa_link_client)
         local code = lc:match("privateServerLinkCode=([^&%s]+)")
         return code and ("roblox://placeId="..cfg.place_id.."&linkCode="..code) or lc
     elseif lc:find("accessCode=") then
-        local code = lc:match("accessCode=([%w%-]+)")
-        return code and ("roblox://placeId=" .. cfg.place_id .. "&accessCode=" .. code) or lc
+        -- v9.720: accessCode JANGAN dipakai untuk tembak — cepat expired, return nil biar caller skip
+        return nil
     elseif lc:find("privateServerLinkCode=") then
         local code = lc:match("privateServerLinkCode=([^&]+)")
         return code and ("https://www.roblox.com/games/"..cfg.place_id.."/x?privateServerLinkCode="..code) or lc
@@ -2180,14 +2180,12 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
                 url_web = url:sub(1,4) == "http" and url
                     or ("https://www.roblox.com/games/"..pid_w.."/x?"..url:match("(privateServerLinkCode=[%w]+)"))
             else
-                local kode_w = (url:match("accessCode=([%w%-]+)")
-                    or url:match("linkCode=([%w%-]+)")
-                    or url:match("code=([%w%-]+)"))
-                if kode_w then
-                    url_web = "https://www.roblox.com/games/start?placeId="..pid_w.."&accessCode="..kode_w
-                else
-                    url_web = "https://www.roblox.com/games/start?placeId="..pid_w
-                end
+                -- v9.720: accessCode JANGAN dipakai — skip tembak, tunggu share link
+                url_web = nil
+            end
+            if not url_web then
+                info("   [join] SKIP tembak — gak ada share/privateServerLink (accessCode dilarang)")
+                return
             end
             inner = "am start -a android.intent.action.VIEW -d '"..url_web.."'"
                 .. " -p "..pkg
@@ -2375,19 +2373,21 @@ local function tunggu_jalan(pkg, batas, cek_batal, cfg, link)
                     pkg:gsub("com%%.roblox%%.",""), g/1024, cobaMasuk))
                 if cfg and link and link ~= "" then
                     local pid_w = cfg.place_id or "129343810645058"
-                    local kode_w = (link:match("accessCode=([%w%-]+)")
-                        or link:match("linkCode=([%w%-]+)")
-                        or link:match("privateServerLinkCode=([%w%-]+)")
-                        or link:match("code=([%w%-]+)"))
                     local url_web
-                    if link:find("share%?code=") or link:find("/share%?") then
+                    -- v9.720: share=http DULU, share?code, privateServerLinkCode — accessCode DILARANG
+                    if link:find("share=http") then
+                        url_web = link:match("share=(https?://[^|%s]+)")
+                    elseif link:find("share%?code=") or link:find("/share%?") then
                         url_web = link
-                    elseif kode_w then
-                        url_web = "https://www.roblox.com/games/start?placeId="..pid_w.."&accessCode="..kode_w
-                    else
-                        url_web = "https://www.roblox.com/games/start?placeId="..pid_w
+                    elseif link:find("privateServerLinkCode=") then
+                        local kode_w = link:match("privateServerLinkCode=([%w%-]+)")
+                        url_web = kode_w and ("https://www.roblox.com/games/"..pid_w.."/x?privateServerLinkCode="..kode_w)
                     end
+                    if not url_web then
+                        info("   [re-tembak] SKIP — gak ada share/privateServerLink (accessCode dilarang)")
+                    else
                     sh_silent("su -c \"am start -a android.intent.action.VIEW -d '"..url_web.."' -p "..pkg.." -f 0x14000000\"")
+                    end
                 else
                     sh_silent("su -c 'am start -a android.intent.action.VIEW -p " .. pkg .. " 2>/dev/null'")
                 end
