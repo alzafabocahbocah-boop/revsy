@@ -1,4 +1,4 @@
-#!/usr/bin/env lua
+-- zenx_worker v9.717 — UP3.8KG: baca zenx_hact_server.txt, GOSERVER ke server hact saat bahan kritis
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
@@ -7000,6 +7000,56 @@ local function run(cfg)
                 elseif not _lvlLinkBaru and (cfg._lvlPsApplied or "") ~= "" then
                     cfg._lvlPsApplied = ""
                     info("[LVL-PS] file kosong/hilang → refresh_ps")
+                    pcall(refresh_ps)
+                end
+            end
+            -- v9.717: UP3.8KG — baca file zenx_hact_server.txt (ditulis up3.8kg kalau bahan <50)
+            -- format: HACTSERVER:<psLink> → pindah ke server akun hact terbaik
+            local _sl717 = (cfg.script_label or ""):upper()
+            if _sl717:find("UP3", 1, true) and (os.time() - _lvlps_scan_ts) >= 10 then
+                local _hactLinkBaru, _hactMtime
+                for _, _dd in ipairs(denyut_dirs(cfg)) do
+                    if _hactLinkBaru then break end
+                    local fpath = _dd .. "/zenx_hact_server.txt"
+                    local _mt = sh("su -c 'stat -c %Y \"" .. fpath .. "\" 2>/dev/null'") or ""
+                    _mt = _mt:match("^%s*(%d+)%s*$")
+                    if _mt then
+                        local _umur = os.time() - tonumber(_mt)
+                        if _umur > 60 then
+                            sh_silent("su -c 'rm -f \"" .. fpath .. "\"'")
+                            info("[HACT-SERVER] zenx_hact_server.txt stale (" .. _umur .. "s) -> dihapus")
+                            break
+                        end
+                        _hactMtime = tonumber(_mt)
+                    end
+                    local fc = sh("su -c 'cat \"" .. fpath .. "\" 2>/dev/null'") or ""
+                    fc = fc:match("^%s*(.-)%s*$")
+                    local l = fc:match("^HACTSERVER:(.+)$")
+                    if l and l ~= "" then _hactLinkBaru = l end
+                end
+                local _hactMtimeChanged = _hactMtime and _hactMtime ~= (cfg._hactServerMtime or 0)
+                if _hactLinkBaru and (_hactLinkBaru ~= (cfg._hactServerApplied or "") or _hactMtimeChanged) then
+                    cfg._hactServerApplied = _hactLinkBaru
+                    cfg._hactServerMtime   = _hactMtime
+                    cfg._ps_override       = _hactLinkBaru
+                    _psOverrideSetTs       = os.time()
+                    for pkg in pairs(mapLink) do mapLink[pkg] = _hactLinkBaru end
+                    SERVER_TERAKHIR = "custom"
+                    local _nPkg = 0
+                    for pkg, ak in pairs(mapAkun) do
+                        KICK_DIURUS["move_link_ts:" .. pkg] = nil
+                        KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
+                        DENYUT_UMUR[ak] = nil
+                        open_one(cfg, pkg, _hactLinkBaru, "hact-server-goserver", true)
+                        TERAKHIR_BUKA[pkg] = os.time()
+                        _nPkg = _nPkg + 1
+                    end
+                    info("[HACT-SERVER] bahan kritis → GOSERVER ke server hact | link=" .. _hactLinkBaru:sub(1,50) .. " | " .. _nPkg .. " pkg")
+                elseif _hactLinkBaru and _hactLinkBaru == (cfg._hactServerApplied or "") then
+                    info("[HACT-SERVER] link sama skip | " .. _hactLinkBaru:sub(1,50))
+                elseif not _hactLinkBaru and (cfg._hactServerApplied or "") ~= "" then
+                    cfg._hactServerApplied = ""
+                    info("[HACT-SERVER] file kosong/hilang → refresh_ps")
                     pcall(refresh_ps)
                 end
             end
