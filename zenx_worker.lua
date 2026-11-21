@@ -1,4 +1,4 @@
--- zenx_worker v9.724 — windowingMode non-delta: 0 → 1 (fullscreen, bukan undefined)
+-- zenx_worker v9.725 — windowingMode semua mode paksa 1 (fullscreen), delta juga
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
@@ -2147,8 +2147,8 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         info(("   [join] %s -> %s | url=%s"):format(
             pkg:gsub("com%.roblox%.",""), jenisJoin, url))
     end
-    -- v9.600: delta_split -> paksa windowingMode 5 (freeform RF); selain itu paksa 1 (fullscreen)
-    local wm = (cfg.delta_split == true) and 5 or 1
+    -- v9.600: semua mode paksa windowingMode 1 (fullscreen)
+    local wm = 1
 
     if false then
     do
