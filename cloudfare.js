@@ -283,14 +283,13 @@ export default {
     // keepDetail = breakdown per jenis pet (untuk fitur prioritas di tab HACT up3.8kg)
     if (jalur === "/bahanup3.8kg" && req.method === "GET") {
       try {
-        // filter: scAssign='hact' + hactstat ada + online (ts < 5 menit)
+        // filter: scAssign='hact' + hactstat ada
         // JOIN cookies untuk dapat ps_link (URL server Roblox per akun)
-        const _now = Math.floor(Date.now() / 1000);
         const rows = await env.DB.prepare(
           `SELECT a.nama, a.tim, a.ps_nama, a.hactstat, c.ps_link
            FROM akun a LEFT JOIN cookies c ON c.akun = a.nama
-           WHERE a.scAssign='hact' AND a.hactstat IS NOT NULL AND a.ts >= ?1`
-        ).bind(_now - 300).all();
+           WHERE a.scAssign='hact' AND a.hactstat IS NOT NULL`
+        ).all();
         const result = [];
         for (const r of (rows.results || [])) {
           let totalKeep = 0;
@@ -305,8 +304,8 @@ export default {
               }
             }
           } catch {}
-          // skip akun tanpa keep sama sekali
-          if (totalKeep === 0) continue;
+          // hanya akun dengan totalKeep >= 100
+          if (totalKeep < 100) continue;
           const server = r.tim || r.ps_nama || "";
           // psLink: dari cookies.ps_link (getps), fallback ke hactstat.psLink (zenx_link.json via hact)
           let psLink = r.ps_link || "";
