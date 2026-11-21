@@ -4525,40 +4525,71 @@ do
         end
     end
 
-    local function fetchHact()
+    local _totalKecil = 999   -- stok pet <3.8kg dari semua akun up3.8kg
+    local BAHAN_MIN = 50      -- threshold auto-fetch
+    local _lastAutoFetch = 0
+
+    local function fetchHact(silent)
         if _hactLoading then return end
         _hactLoading = true
-        statusLbl.Text = "loading…"
+        if not silent then statusLbl.Text = "loading…" end
         task.spawn(function()
             local ok, raw = pcall(function() return game:HttpGet(HACT_BAHAN_URL) end)
             if ok and raw and raw ~= "" then
-                local ok2, data = pcall(function()
+                local ok2, resp = pcall(function()
                     return game:GetService("HttpService"):JSONDecode(raw)
                 end)
-                if ok2 and type(data) == "table" then
-                    _hactData = data
+                if ok2 and type(resp) == "table" then
+                    -- v2.257: response sekarang {list=[...], totalKecil=N}
+                    local list = type(resp.list) == "table" and resp.list or resp
+                    _hactData = list
+                    _totalKecil = tonumber(resp.totalKecil) or 999
                     local nKeep = 0
-                    for _, d in ipairs(data) do if (d.totalKeep or 0) > 0 then nKeep = nKeep + 1 end end
-                    statusLbl.Text = #data.." akun · "..nKeep.." ada keep · tap refresh update"
+                    for _, d in ipairs(list) do if (d.totalKeep or 0) > 0 then nKeep = nKeep + 1 end end
+                    local kecilInfo = _totalKecil < 999 and (" · bahan <3.8kg: ".._totalKecil) or ""
+                    statusLbl.Text = #list.." akun · "..nKeep.." ada keep"..kecilInfo
+                    -- alert kalau stok bahan kritis
+                    if _totalKecil < BAHAN_MIN then
+                        statusLbl.TextColor3 = Color3.fromRGB(220,60,60)
+                        statusLbl.Text = statusLbl.Text.." ⚠ KRITIS!"
+                    else
+                        statusLbl.TextColor3 = C.textDim
+                    end
                 else
-                    statusLbl.Text = "error parse: "..(tostring(data):sub(1,40))
+                    statusLbl.Text = "error parse: "..(tostring(resp):sub(1,40))
+                    statusLbl.TextColor3 = C.textDim
                 end
             else
-                statusLbl.Text = "fetch gagal"
+                if not silent then statusLbl.Text = "fetch gagal" end
             end
             renderHact()
             _hactLoading = false
         end)
     end
 
-    refreshBtn.MouseButton1Click:Connect(fetchHact)
+    refreshBtn.MouseButton1Click:Connect(function() fetchHact(false) end)
+
+    -- auto-fetch tiap 60s, trigger lebih cepat (30s) kalau bahan kritis
+    task.spawn(function()
+        while hactContent.Parent do
+            task.wait(5)
+            if not hactContent.Visible then continue end
+            local now = tick()
+            local interval = _totalKecil < BAHAN_MIN and 30 or 60
+            if now - _lastAutoFetch >= interval then
+                _lastAutoFetch = now
+                fetchHact(true)
+            end
+        end
+    end)
 
     -- auto-fetch pertama kali tab dibuka
     local _hactFetched = false
     hactContent:GetPropertyChangedSignal("Visible"):Connect(function()
         if hactContent.Visible and not _hactFetched then
             _hactFetched = true
-            fetchHact()
+            _lastAutoFetch = tick()
+            fetchHact(false)
         end
     end)
 end
