@@ -4,7 +4,7 @@
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.373"
+local VERSION = "up6kg-v10.374"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1106,14 +1106,12 @@ local function findMemoryContainer()
     return result
 end
 local function ambilContainer()
-    -- v10.373: task.spawn — findMemoryContainer bisa yield, pcall tidak tahan yield
-    task.spawn(function()
-        local fresh = findMemoryContainer()
-        if fresh then
-            _G.__ZenxKgContainer = fresh
-            _kgContainerDone = true
-        end
-    end)
+    -- langsung (tanpa pcall/task.spawn) — caller harus task.spawn coroutine agar yield aman
+    local fresh = findMemoryContainer()
+    if fresh then
+        _G.__ZenxKgContainer = fresh
+        _kgContainerDone = true
+    end
     return _G.__ZenxKgContainer
 end
 -- age-1 KG = BaseWeight × 1.1 (dari kg.lua)
@@ -1137,20 +1135,10 @@ task.spawn(function()
     task.wait(3) -- tunggu _dbgLabel siap (task.spawn label asinkron)
     dbgSet("loop start gen="..tostring(statGen))
     while _G.__ZenxKgStatGen == statGen do
-        dbgSet("coba ambilContainer...")
-        -- v10.373: task.spawn terpisah — findMemoryContainer bisa yield, harus di coroutine baru
-        -- pcall tidak tahan yield → coroutine mati diam-diam → loop berhenti. task.spawn aman.
-        task.spawn(function()
-            local r = findMemoryContainer()
-            if r then
-                _G.__ZenxKgContainer = r
-                _kgContainerDone = true
-            end
-        end)
-        task.wait(2)    -- v10.373: 2s — beri waktu task.spawn selesai sebelum iterasi berikut
-        if _G.__ZenxKgContainer ~= nil then
-            dbgSet("container=ADA\ntotal="..((_G.ZenxKgStat and _G.ZenxKgStat.total) or 0).." belum="..((_G.ZenxKgStat and _G.ZenxKgStat.belum) or 0).." udah="..((_G.ZenxKgStat and _G.ZenxKgStat.udah) or 0))
-        end
+        -- v10.374: port persis up3.8kg — pcall(ambilContainer) di dalam task.spawn coroutine
+        -- yield aman karena sudah di coroutine task.spawn, pcall hanya catch error biasa
+        pcall(function() ambilContainer() end)
+        task.wait(2)
     end
 end)
 
