@@ -4,7 +4,7 @@
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.358"
+local VERSION = "up6kg-v10.359"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1066,58 +1066,47 @@ local _kgMutableStats = nil   -- tidak dipakai lagi (RC dipakai untuk maxInv), d
 local function findMemoryContainer()
     local result = nil
     print("[UpKg] findMem: START")
-    local ok, err = pcall(function()
+    -- Step 1: get RC instance
+    local inst
+    local ok1, err1 = pcall(function()
         local RS = game:GetService("ReplicatedStorage")
         local mod = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("ReplicationClass")
         if not mod then
-            local info = "findMem: mod nil (Modules=" .. tostring(RS:FindFirstChild("Modules")) .. ")"
-            dbgSet(info); print("[UpKg] ⚠ container: " .. info); return
+            print("[UpKg] ⚠ container: findMem: mod nil"); return
         end
         print("[UpKg] findMem: mod OK, RC.new...")
-        local inst = require(mod).new("ActivePetsService_Replicator")
-        if not inst then
-            local info = "findMem: inst nil (RC.new gagal)"
-            dbgSet(info); print("[UpKg] ⚠ container: " .. info); return
-        end
+        inst = require(mod).new("ActivePetsService_Replicator")
+    end)
+    if not ok1 then print("[UpKg] ⚠ container: findMem step1 ERR: " .. tostring(err1):sub(1,100)); return nil end
+    if not inst then print("[UpKg] ⚠ container: findMem: inst nil"); return nil end
+    -- Step 2: GetData (mungkin yield, pcall terpisah)
+    local data
+    local ok2, err2 = pcall(function()
         print("[UpKg] findMem: inst OK, GetData...")
-        local data = inst:GetData(player.Name)
+        data = inst:GetData(player.Name)
         print("[UpKg] findMem: GetData done, type=" .. type(data))
-        if type(data) ~= "table" then
-            local info = "findMem: data=" .. type(data)
-            dbgSet(info); print("[UpKg] ⚠ container: " .. info); return
-        end
-        dbgSet("findMem: got data, cek Table...")
-        print("[UpKg] findMem: cek data.Table...")
-        local tbl = data.Table
-        if type(tbl) ~= "table" then
-            local info = "findMem: Table=" .. type(tbl)
-            dbgSet(info); print("[UpKg] ⚠ container: " .. info); return
-        end
-        print("[UpKg] findMem: Table OK, cek PlayerPetData...")
-        local ppd = tbl.PlayerPetData
-        if type(ppd) ~= "table" then
-            local info = "findMem: PlayerPetData=" .. type(ppd)
-            dbgSet(info); print("[UpKg] ⚠ container: " .. info); return
-        end
-        print("[UpKg] findMem: PlayerPetData OK, cek pd[" .. player.Name .. "]...")
-        local pd = ppd[player.Name]
-        if type(pd) ~= "table" then
-            local info = "findMem: pd[" .. player.Name .. "]=" .. type(pd)
-            dbgSet(info); print("[UpKg] ⚠ container: " .. info); return
-        end
-        print("[UpKg] findMem: pd OK, cek PetInventory...")
-        local pi = pd.PetInventory
-        if type(pi) ~= "table" then
-            local info = "findMem: PetInventory=" .. type(pi)
-            dbgSet(info); print("[UpKg] ⚠ container: " .. info); return
-        end
-        print("[UpKg] findMem: PetInventory OK, cek Data...")
-        local dat = pi.Data
-        if type(dat) ~= "table" then
-            local info = "findMem: Data=" .. type(dat)
-            dbgSet(info); print("[UpKg] ⚠ container: " .. info); return
-        end
-        print("[UpKg] findMem: Data OK, mulai loop...")
+    end)
+    if not ok2 then print("[UpKg] ⚠ container: findMem step2 ERR: " .. tostring(err2):sub(1,100)); return nil end
+    if type(data) ~= "table" then print("[UpKg] ⚠ container: findMem: data=" .. type(data)); return nil end
+    -- Step 3: traverse path (dot access, pcall terpisah per step)
+    local tbl, ppd, pd, pi, dat
+    local ok3, err3 = pcall(function() tbl = data.Table end)
+    print("[UpKg] findMem: data.Table ok=" .. tostring(ok3) .. " type=" .. type(tbl))
+    if not ok3 or type(tbl) ~= "table" then print("[UpKg] ⚠ container: findMem: Table err=" .. tostring(err3)); return nil end
+    local ok4, err4 = pcall(function() ppd = tbl.PlayerPetData end)
+    print("[UpKg] findMem: PlayerPetData ok=" .. tostring(ok4) .. " type=" .. type(ppd))
+    if not ok4 or type(ppd) ~= "table" then print("[UpKg] ⚠ container: findMem: PPD err=" .. tostring(err4)); return nil end
+    local ok5, err5 = pcall(function() pd = ppd[player.Name] end)
+    print("[UpKg] findMem: pd ok=" .. tostring(ok5) .. " type=" .. type(pd))
+    if not ok5 or type(pd) ~= "table" then print("[UpKg] ⚠ container: findMem: pd err=" .. tostring(err5)); return nil end
+    local ok6, err6 = pcall(function() pi = pd.PetInventory end)
+    print("[UpKg] findMem: PetInventory ok=" .. tostring(ok6) .. " type=" .. type(pi))
+    if not ok6 or type(pi) ~= "table" then print("[UpKg] ⚠ container: findMem: PI err=" .. tostring(err6)); return nil end
+    local ok7, err7 = pcall(function() dat = pi.Data end)
+    print("[UpKg] findMem: Data ok=" .. tostring(ok7) .. " type=" .. type(dat))
+    if not ok7 or type(dat) ~= "table" then print("[UpKg] ⚠ container: findMem: Data err=" .. tostring(err7)); return nil end
+    -- Step 4: loop entries
+    local ok, err = pcall(function()
         local out = {}
         local nTotal = 0
         local nTable = 0
