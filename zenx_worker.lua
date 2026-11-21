@@ -1,4 +1,4 @@
--- zenx_worker v9.725 — windowingMode semua mode paksa 1 (fullscreen), delta juga
+-- zenx_worker v9.726 — windowingMode semua lokasi paksa 1 (fullscreen)
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
@@ -5031,7 +5031,7 @@ local function run(cfg)
     info("Panel : "..cfg.url)
     info("Pemicu: "..cfg.targets.." | poll "..cfg.poll_sec.."s")
 
-    local wm = 0   -- v9.319: --windowingMode DIPAKSA OFF
+    local wm = 1   -- v9.726: paksa fullscreen
     -- v9.566: freeform dibiarkan hidup; Roblox dipaksa ke stack 4 lewat loop tiap 10s
     info("Window: Roblox dipaksa stack 4 (freeform tetap hidup buat app lain)")
 
