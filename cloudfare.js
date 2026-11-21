@@ -284,8 +284,11 @@ export default {
     if (jalur === "/bahanup3.8kg" && req.method === "GET") {
       try {
         // filter: scAssign='hact' + hactstat ada (gak perlu cek online, cukup totalKeep >= 100)
+        // JOIN cookies untuk dapat ps_link (URL server Roblox per akun)
         const rows = await env.DB.prepare(
-          "SELECT nama, tim, ps_nama, hactstat FROM akun WHERE scAssign='hact' AND hactstat IS NOT NULL"
+          `SELECT a.nama, a.tim, a.ps_nama, a.hactstat, c.ps_link
+           FROM akun a LEFT JOIN cookies c ON c.akun = a.nama
+           WHERE a.scAssign='hact' AND a.hactstat IS NOT NULL`
         ).all();
         const result = [];
         for (const r of (rows.results || [])) {
@@ -304,7 +307,8 @@ export default {
           // hanya akun dengan totalKeep >= 100
           if (totalKeep < 100) continue;
           const server = r.tim || r.ps_nama || "";
-          result.push({ akun: r.nama, server, totalKeep, keepDetail });
+          const psLink = r.ps_link || "";
+          result.push({ akun: r.nama, server, totalKeep, keepDetail, psLink });
         }
         result.sort((a, b) => b.totalKeep - a.totalKeep);
         return json(result);

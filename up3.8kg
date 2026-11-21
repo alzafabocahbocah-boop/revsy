@@ -4255,7 +4255,8 @@ mk("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.Layout
 
 do
     local HACT_BAHAN_URL = "https://dry-glitter-63e4.petagee5.workers.dev/bahanup3.8kg"
-    local _hactData = {}   -- [{akun, server, totalKeep, keepDetail:{pet:N}}]
+    local _hactData = {}   -- [{akun, server, totalKeep, keepDetail:{pet:N}, psLink:string}]
+    local _hactGoserverLastT = -300   -- cooldown GOSERVER dari tab BAHAN HACT (5 menit)
     local _hactLoading = false
     local _prio = {"", "", ""}   -- 3 slot prioritas pet (nama jenis)
     local PRIO_FILE = "zenx_hact_prio.json"
@@ -4559,6 +4560,7 @@ do
 
     -- v2.257: auto-fetch saat pet <3.8kg tersisa < 50 (pantau ZenxKgStat.belum)
     -- interval normal 60s, kalau bahan kritis percepat ke 20s
+    -- v2.258: kalau bahan kritis + akun hact ada psLink → auto GOSERVER ke server hact terbaik
     task.spawn(function()
         while hactContent.Parent do
             task.wait(5)
@@ -4574,6 +4576,15 @@ do
                 if kritis then
                     statusLbl.TextColor3 = Color3.fromRGB(220,60,60)
                     statusLbl.Text = statusLbl.Text .. " · ⚠ bahan kritis ("..belum..")"
+                end
+            end
+            -- v2.258: tulis zenx_hact_server.txt = "true" kalau bahan kritis, hapus kalau cukup
+            if writefile and isfile then
+                local hactSignalFile = "zenx_hact_server.txt"
+                if kritis then
+                    pcall(function() writefile(hactSignalFile, "true") end)
+                else
+                    pcall(function() if isfile(hactSignalFile) then delfile(hactSignalFile) end end)
                 end
             end
         end
