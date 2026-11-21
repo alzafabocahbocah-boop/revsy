@@ -2587,7 +2587,7 @@ do
         busy[uuid] = true
         busySince[uuid] = tick()
         task.spawn(function()
-            pcall(function()   -- kalau error di tengah, busy TETEP ke-clear di bawah (anti nyangkut)
+            local _swapOk, _swapErr = pcall(function()   -- kalau error di tengah, busy TETEP ke-clear di bawah (anti nyangkut)
                 local pos = CLUSTER
                 if not pos then local m = modelByUuid[uuid]; if m then local ok,p = pcall(function() return m:GetPivot().Position end); if ok then pos = p end end end
                 if not pos then pos = lastPos[uuid] end
@@ -2602,6 +2602,7 @@ do
                     if i % 4 == 0 then equipPet(uuid, lastPos[uuid]) end   -- re-equip tiap ~0.4s (gak spam)
                 end
             end)
+            if not _swapOk then warn("[UpKg swapPet ERR] "..tostring(uuid):sub(1,8).." "..tostring(_swapErr)) end
             busy[uuid] = nil   -- SELALU clear (walau error) -> pet gak nyangkut
         end)
     end
@@ -3188,7 +3189,10 @@ do
                 task.wait(10)
                 if KG.aktif and not KG.reset and _G.__ZenxKgResetGen == resetGen then
                     local salah = placementSalah(KG.sesi)
-                    if salah then pcall(function() bersihGakCocok(KG.sesi) end) end
+                    if salah then
+                        local _bOk, _bErr = pcall(bersihGakCocok, KG.sesi)
+                        if not _bOk then warn("[UpKg bersihGakCocok ERR] "..tostring(_bErr)) end
+                    end
                     -- up6kg: cek support KURANG -> isi dari pool LOCKED (uuid tetap, gak re-pick).
                     -- Cuma equip uuid yg emang ke-kunci tapi belum ke-equip (bukan pilih pet baru).
                     pcall(function()
@@ -3251,7 +3255,11 @@ do
                 end
             end
             tlog("pasangSesi mulai")
-            pasangSesi(KG.sesi, true)
+            local _psOk, _psErr = pcall(pasangSesi, KG.sesi, true)
+            if not _psOk then
+                warn("[UpKg pasangSesi ERR] "..tostring(_psErr))
+                kgLog("\u{26A0} pasangSesi ERROR: "..tostring(_psErr))
+            end
             tlog("pasangSesi selesai -> loop KG mulai")
             while KG.aktif do
                 task.wait(2)
@@ -3273,7 +3281,8 @@ do
                 if target ~= KG.sesi then
                     kgLog("GANTI ke SESI "..target.." (muda="..mudaB.." age50="..a50B..")")
                     KG.sesi = target
-                    pasangSesi(target, true)
+                    local _ps2Ok, _ps2Err = pcall(pasangSesi, target, true)
+                    if not _ps2Ok then warn("[UpKg pasangSesi(ganti) ERR] "..tostring(_ps2Err)) end
                 else
                     -- rotate bahan
                     if KG.sesi == 1 then
@@ -3341,7 +3350,12 @@ do
                     end
                 end
                 end)   -- v10.46: tutup pcall body loop
-                if not _ok then kgLog("\u{26A0} LOOP SESI ERROR (retry 2s): "..tostring(_err):sub(1,90)) end   -- v10.47: log akar masalah transisi
+                if not _ok then
+                    -- v2.256: jabarkan FULL error (bukan cuma 90 char) ke console
+                    local errFull = tostring(_err)
+                    kgLog("\u{26A0} LOOP SESI ERROR (retry 2s):\n"..errFull)
+                    warn("[UpKg UP6KG ERROR] "..errFull)
+                end   -- v10.47: log akar masalah transisi
                 if _selesai then break end
             end
             -- v2.229: setelah loop SELESAI, clear KG.aktif + supportKunci biar getPet38 bisa lihat semua pet 3.8kg
