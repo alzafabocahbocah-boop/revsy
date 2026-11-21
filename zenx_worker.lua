@@ -1,4 +1,4 @@
--- zenx_worker v9.723 — HACT stale threshold 60s -> 120s (up3.8kg nulis tiap 60s)
+-- zenx_worker v9.723 — revert stale HACT ke 60s (up3.8kg nulis tiap 30s)
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
@@ -7028,7 +7028,7 @@ local function run(cfg)
                     _mt = _mt:match("^%s*(%d+)%s*$")
                     if _mt then
                         local _umur = os.time() - tonumber(_mt)
-                        if _umur > 120 then   -- v9.723: up3.8kg nulis tiap 60s, stale harus > 120s
+                        if _umur > 60 then
                             for _, fn in ipairs(_flist) do sh_silent("su -c 'rm -f \"" .. _dd .. "/" .. fn .. "\"'") end
                             info("[HACT-SERVER] zenx_hact_server stale (" .. _umur .. "s) -> dihapus")
                             goto continue_hact
