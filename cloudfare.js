@@ -283,7 +283,7 @@ export default {
     // keepDetail = breakdown per jenis pet (untuk fitur prioritas di tab HACT up3.8kg)
     if (jalur === "/bahanup3.8kg" && req.method === "GET") {
       try {
-        // filter: scAssign='hact' + hactstat ada
+        // filter: scAssign='hact' + hactstat ada (gak perlu cek online, cukup totalKeep >= 100)
         // JOIN cookies untuk dapat ps_link (URL server Roblox per akun)
         const rows = await env.DB.prepare(
           `SELECT a.nama, a.tim, a.ps_nama, a.hactstat, c.ps_link
@@ -304,7 +304,8 @@ export default {
               }
             }
           } catch {}
-          // semua akun hact (tidak ada filter minimum keep)
+          // hanya akun dengan totalKeep >= 100
+          if (totalKeep < 100) continue;
           const server = r.tim || r.ps_nama || "";
           const psLink = r.ps_link || "";
           result.push({ akun: r.nama, server, totalKeep, keepDetail, psLink });
