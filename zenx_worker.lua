@@ -22,7 +22,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.724"
+local VERSION = "9.725"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -7016,7 +7016,7 @@ local function run(cfg)
             -- v9.724: cek script_url juga, karena UP3.8KG kadang label-nya "UP6KG T6" (bukan "UP3...")
             if (_sl717:find("UP3", 1, true) or _su717:find("up3", 1, true)) and (os.time() - _hact_scan_ts) >= 10 then
                 _hact_scan_ts = os.time()   -- v9.722: pakai timer sendiri, gak bentrok sama UP6KG
-                local _hactLinkBaru, _hactMtime
+                local _hactLinkBaru, _hactMtime, _hactAkun
                 for _, _dd in ipairs(denyut_dirs(cfg)) do
                     if _hactLinkBaru then break end
                     -- scan semua zenx_hact_server_*.txt (per-akun) + fallback zenx_hact_server.txt (lama)
@@ -7025,6 +7025,8 @@ local function run(cfg)
                     for fn in _scan:gmatch("[^\n]+") do _flist[#_flist+1] = fn end
                     local fpath = _dd .. "/" .. (_flist[1] or "zenx_hact_server.txt")
                     if #_flist == 0 then goto continue_hact end
+                    -- v9.725: extract nama akun dari filename zenx_hact_server_<akun>.txt
+                    _hactAkun = (_flist[1] or ""):match("^zenx_hact_server_(.+)%.txt$")
                     do
                     local _mt = sh("su -c 'stat -c %Y \"" .. fpath .. "\" 2>/dev/null'") or ""
                     _mt = _mt:match("^%s*(%d+)%s*$")
@@ -7054,14 +7056,22 @@ local function run(cfg)
                     SERVER_TERAKHIR = "custom"
                     local _nPkg = 0
                     for pkg, ak in pairs(mapAkun) do
-                        KICK_DIURUS["move_link_ts:" .. pkg] = nil
-                        KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
-                        DENYUT_UMUR[ak] = nil
-                        open_one(cfg, pkg, _hactLinkBaru, "hact-server-goserver", true)
-                        TERAKHIR_BUKA[pkg] = os.time()
-                        _nPkg = _nPkg + 1
+                        -- v9.725: hanya tembak akun yang nulis file (nama akun dari filename)
+                        -- kalau filename lama (zenx_hact_server.txt tanpa nama akun), tembak semua
+                        local _akLower = (ak or ""):lower()
+                        local _hactAkunLower = (_hactAkun or ""):lower()
+                        if _hactAkun and _hactAkun ~= "" and _akLower ~= _hactAkunLower then
+                            -- bukan akun yang kritis, skip
+                        else
+                            KICK_DIURUS["move_link_ts:" .. pkg] = nil
+                            KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
+                            DENYUT_UMUR[ak] = nil
+                            open_one(cfg, pkg, _hactLinkBaru, "hact-server-goserver", true)
+                            TERAKHIR_BUKA[pkg] = os.time()
+                            _nPkg = _nPkg + 1
+                        end
                     end
-                    info("[HACT-SERVER] bahan kritis → GOSERVER ke server hact | link=" .. _hactLinkBaru:sub(1,50) .. " | " .. _nPkg .. " pkg")
+                    info("[HACT-SERVER] bahan kritis → GOSERVER ke server hact | link=" .. _hactLinkBaru:sub(1,50) .. " | " .. _nPkg .. " pkg" .. (_hactAkun and (" (akun=" .. _hactAkun .. ")") or ""))
                 elseif _hactLinkBaru and _hactLinkBaru == (cfg._hactServerApplied or "") then
                     info("[HACT-SERVER] link sama skip | " .. _hactLinkBaru:sub(1,50))
                 elseif not _hactLinkBaru and (cfg._hactServerApplied or "") ~= "" then
