@@ -4578,28 +4578,48 @@ do
                     statusLbl.Text = statusLbl.Text .. " · ⚠ bahan kritis ("..belum..")"
                 end
             end
-            -- v2.258: tulis zenx_hact_server.txt = "HACTSERVER:<psLink>" kalau bahan kritis, hapus kalau cukup
-            -- (mirip zenx_lvlps.txt di up6kg tab LEVELING — worker baca, pindah ke server hact)
+            -- v2.258: tulis zenx_hact_server.txt = "HACTSERVER:<psLink>" kalau bahan kritis
+            -- kalau sudah se-server dengan akun hact → hapus file + set __ZenxHactSameServer = true
+            -- (mirip zenx_lvlps.txt di up6kg tab LEVELING)
             if writefile and isfile then
                 local hactSignalFile = "zenx_hact_server.txt"
                 if kritis then
-                    -- cari akun hact dengan psLink + totalKeep terbesar
-                    local bestLink, bestKeep = "", 0
+                    -- cek apakah sudah se-server dengan akun hact manapun
+                    local Players = game:GetService("Players")
+                    local sudahSameServer = false
                     for _, d in ipairs(_hactData) do
-                        local lnk = tostring(d.psLink or "")
-                        if lnk ~= "" and (d.totalKeep or 0) > bestKeep then
-                            bestKeep = d.totalKeep
-                            bestLink = lnk
+                        if Players:FindFirstChild(tostring(d.akun or "")) then
+                            sudahSameServer = true; break
                         end
                     end
-                    if bestLink ~= "" then
-                        pcall(function() writefile(hactSignalFile, "HACTSERVER:" .. bestLink) end)
+                    if sudahSameServer then
+                        -- sudah se-server: hapus file, set flag aktif
+                        pcall(function() if isfile(hactSignalFile) then delfile(hactSignalFile) end end)
+                        _G.__ZenxHactSameServer = true
+                        statusLbl.TextColor3 = Color3.fromRGB(80,200,120)
+                        statusLbl.Text = "✓ sudah se-server hact · bahan kritis ("..belum..")"
+                        kgLog("✓ sudah se-server dgn akun hact — zenx_hact_server.txt dihapus")
                     else
-                        -- psLink kosong: tulis "true" sebagai fallback sinyal
-                        pcall(function() writefile(hactSignalFile, "true") end)
+                        -- belum se-server: cari akun hact dengan psLink + totalKeep terbesar
+                        _G.__ZenxHactSameServer = false
+                        local bestLink, bestKeep = "", 0
+                        for _, d in ipairs(_hactData) do
+                            local lnk = tostring(d.psLink or "")
+                            if lnk ~= "" and (d.totalKeep or 0) > bestKeep then
+                                bestKeep = d.totalKeep
+                                bestLink = lnk
+                            end
+                        end
+                        if bestLink ~= "" then
+                            pcall(function() writefile(hactSignalFile, "HACTSERVER:" .. bestLink) end)
+                        else
+                            pcall(function() writefile(hactSignalFile, "true") end)
+                        end
                     end
                 else
+                    -- bahan cukup: hapus file, reset flag
                     pcall(function() if isfile(hactSignalFile) then delfile(hactSignalFile) end end)
+                    _G.__ZenxHactSameServer = false
                 end
             end
         end
