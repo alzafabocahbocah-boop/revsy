@@ -1,4 +1,4 @@
--- zenx_worker v9.717 — UP3.8KG: baca zenx_hact_server.txt, GOSERVER ke server hact saat bahan kritis
+-- zenx_worker v9.719 — fix GOSERVER utamakan share link (https) bukan accessCode
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
@@ -1918,15 +1918,12 @@ local function build_url(cfg, link_client, paksa_link_client)
     if cfg._ps_override and cfg._ps_override:find("privateServerLinkCode") then
         lc = cfg._ps_override
     end
-    -- v9.697: share link DULU (accessCode cepat expired, share lebih stabil)
+    -- v9.719: share link DULU (accessCode cepat expired, share lebih stabil)
     -- Berlaku untuk semua: auto-rejoin maupun GOSERVER dari panel
+    -- Cek share=https:// DULU sebelum accessCode (format link: "accessCode=xxx|share=https://...")
     if lc:find("share=http") then
         local shareUrl = lc:match("share=(https?://[^|%s]+)")
         if shareUrl then return shareUrl end
-    end
-    if lc:find("accessCode=") then
-        local code = lc:match("accessCode=([%w%-]+)")
-        if code then return "roblox://placeId=" .. cfg.place_id .. "&accessCode=" .. code end
     end
     if lc:find("share%?code=") or lc:find("/share%?") then
         local code = lc:match("share%?code=([%w%-]+)")
