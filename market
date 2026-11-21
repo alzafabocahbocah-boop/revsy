@@ -1,4 +1,4 @@
--- ZENX MARKET v8.578 — getgc maxInv: cache permanen (gak expire 60s), scan sekali aja
+-- ZENX MARKET v8.579 — floating GUI: getgc last run time + maxInv value
 -- ZENX MARKET v8.568 — COUNT-DIAG: dedup by ruleType+range (fix spam tiap loop saat src berubah/rules re-apply)
 -- ZENX MARKET v8.567 — getAge+getBaseKg: TradeWorld TBIC path via getloadedmodules (RC nil di TW → pakai PetData.Level+BaseWeight dari TradeBoothInventoryController upvalue)
 -- ZENX MARKET v8.566 — countMyPetsForRule: dedup warn+log per rule (fix spam warn tiap 5s refreshBackpackStats)
@@ -1058,7 +1058,7 @@ task.spawn(function()
                                     if type(mp) == "number" and mp > 0 and (not mx or mp > mx) then mx = mp end
                                 end
                             end
-                            if mx then mxNew = mx; _G.__ZenxMaxPetCache = mx end  -- simpan permanen
+                            if mx then mxNew = mx; _G.__ZenxMaxPetCache = mx; _G.__ZenxGetgcLastTime = os.time() end  -- simpan permanen + catat waktu
                         end
                     end) end
                     -- layer 2: HactTelurGetMaxPets
@@ -2791,6 +2791,66 @@ end
 local CoreGui = game:GetService("CoreGui")
 pcall(function() CoreGui:FindFirstChild("ZenxV8"):Destroy() end)
 local gui = Instance.new("ScreenGui") gui.Name = "ZenxV8" gui.Parent = CoreGui gui.ResetOnSpawn = false
+
+-- v8.579: floating info label — getgc last run + maxInv
+do
+    local floatBg = Instance.new("Frame")
+    floatBg.Name = "ZenxGetgcInfo"
+    floatBg.Size = UDim2.new(0, 220, 0, 28)
+    floatBg.Position = UDim2.new(1, -228, 0, 6)  -- pojok kanan atas
+    floatBg.AnchorPoint = Vector2.new(0, 0)
+    floatBg.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+    floatBg.BackgroundTransparency = 0.3
+    floatBg.BorderSizePixel = 0
+    floatBg.Parent = gui
+    floatBg.ZIndex = 50
+    local corner = Instance.new("UICorner", floatBg)
+    corner.CornerRadius = UDim.new(0, 6)
+    local stroke = Instance.new("UIStroke", floatBg)
+    stroke.Color = Color3.fromRGB(80, 80, 80)
+    stroke.Thickness = 1
+
+    local floatLbl = Instance.new("TextLabel")
+    floatLbl.Size = UDim2.new(1, -8, 1, 0)
+    floatLbl.Position = UDim2.new(0, 4, 0, 0)
+    floatLbl.BackgroundTransparency = 1
+    floatLbl.TextColor3 = Color3.fromRGB(180, 180, 180)
+    floatLbl.TextSize = 11
+    floatLbl.Font = Enum.Font.GothamMedium
+    floatLbl.TextXAlignment = Enum.TextXAlignment.Left
+    floatLbl.Text = "getgc: -  |  maxInv: -"
+    floatLbl.ZIndex = 51
+    floatLbl.Parent = floatBg
+
+    task.spawn(function()
+        while floatBg.Parent do
+            pcall(function()
+                local mx = _G.__ZenxMaxPetCache or 0
+                local t = _G.__ZenxGetgcLastTime
+                local timeStr
+                if t then
+                    local dt = os.time() - t
+                    if dt < 60 then
+                        timeStr = dt .. "s ago"
+                    elseif dt < 3600 then
+                        timeStr = math.floor(dt/60) .. "m ago"
+                    else
+                        timeStr = math.floor(dt/3600) .. "h ago"
+                    end
+                else
+                    timeStr = "belum"
+                end
+                local mxStr = (mx > 0) and tostring(mx) or "-"
+                floatLbl.Text = "getgc: " .. timeStr .. "  |  maxInv: " .. mxStr
+                -- warna hijau kalau udah dapet nilai, abu kalau belum
+                floatLbl.TextColor3 = (mx > 0)
+                    and Color3.fromRGB(130, 210, 160)
+                    or Color3.fromRGB(140, 140, 140)
+            end)
+            task.wait(5)
+        end
+    end)
+end
 
 -- ===== STYLE =====
 local C = {
