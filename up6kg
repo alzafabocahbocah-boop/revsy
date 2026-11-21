@@ -4,7 +4,7 @@
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.369"
+local VERSION = "up6kg-v10.370"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1125,10 +1125,8 @@ local function getAgeOneKg(container, uuid)
     if not container or not uuid then return 0 end
     local key = tostring(uuid); if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
     local entry = container[key]
-    if type(entry) == "table" then
-        local bw = 0
-        pcall(function() bw = tonumber(rawget(entry.PetData or {}, "BaseWeight")) or 0 end)
-        return bw * 1.1
+    if type(entry) == "table" and entry.PetType and type(entry.PetData) == "table" then
+        return (tonumber(entry.PetData.BaseWeight) or 0) * 1.1
     end
     return 0
 end
@@ -1195,26 +1193,22 @@ task.spawn(function()
                             print("[UpKg] ⚠ entry-struct: entry bukan table, type=" .. type(entry))
                         end
                     end
-                    -- v10.367: container entry = RC proxy entry langsung (live ref, auto-sync)
-                    -- Baca PetData.BaseWeight via rawget (tidak yield) untuk data numerik
-                    if type(entry) == "table" and rawget(entry, "PetType") then
-                        local _pd = rawget(entry, "PetData")
-                        local _bwRaw = type(_pd) == "table" and rawget(_pd, "BaseWeight") or nil
-                        local _bwNum = tonumber(_bwRaw) or 0
-                        local _pt = rawget(entry, "PetType")
+                    -- v10.370: port persis up3.8kg — dot access (RC proxy via __index), pcall outer wrap
+                    if type(entry) == "table" and entry.PetType and type(entry.PetData) == "table" then
                         totalAll = totalAll + 1   -- v0.87: hitung SEMUA pet (semua jenis)
-                        ageM = ageM + 1   -- v10.120: semua dianggap age<500 (Level tidak di-cache)
-                        if not hasEle and tostring(_pt):lower():find("rainbow elephant", 1, true) then hasEle = true end
-                        local ptype = stripMutation(tostring(_pt))
+                        if (tonumber(entry.PetData.Level) or 0) >= 500 then ageP = ageP + 1 else ageM = ageM + 1 end
+                        if not hasEle and tostring(entry.PetType):lower():find("rainbow elephant", 1, true) then hasEle = true end
+                        local ptype = stripMutation(tostring(entry.PetType))
                         tipe[ptype] = (tipe[ptype] or 0) + 1   -- SEMUA tipe buat picker
                         do   -- v10.121: catat ke petAgePlus/petAgeMinus per base-weight bucket 1-12
-                            local _bkt = math.max(1, math.min(12, math.floor(_bwNum*1.1 + 0.5)))
-                            petAgeMinus[ptype] = petAgeMinus[ptype] or {}; petAgeMinus[ptype][_bkt] = (petAgeMinus[ptype][_bkt] or 0) + 1
+                            local _bkt = math.max(1, math.min(12, math.floor((tonumber(entry.PetData.BaseWeight) or 0)*1.1 + 0.5)))
+                            local _t = ((tonumber(entry.PetData.Level) or 0) >= 500) and petAgePlus or petAgeMinus
+                            _t[ptype] = _t[ptype] or {}; _t[ptype][_bkt] = (_t[ptype][_bkt] or 0) + 1
                         end
                         local _kfav = favUuids[tostring(cuuid)]   -- v10.68: pet di-fav -> skip hitungan 6kg+
                         if (not _kfav) and ((not hasTarget) or target[ptype]) then
-                            local bw = _bwNum
-                            local lv = 0  -- Level tidak di-cache di container
+                            local bw = tonumber(entry.PetData.BaseWeight) or 0
+                            local lv = tonumber(entry.PetData.Level) or 0
                             local age = lv
                             local kg = bw * 1.1   -- AGE-1 KG (base, gak berubah walau age naik)
                             total = total + 1
@@ -1224,7 +1218,7 @@ task.spawn(function()
                             else
                                 belum = belum + 1
                                 tipeBelum[ptype] = (tipeBelum[ptype] or 0) + 1
-                                if age >= 40 then age40Belum = age40Belum + 1 else mudaBelum = mudaBelum + 1 end   -- up6kg: threshold age 40
+                                if age >= 40 then age40Belum = age40Belum + 1 else mudaBelum = mudaBelum + 1 end
                             end
                         end
                     end
@@ -1701,16 +1695,11 @@ do
     end
     -- v10.54: kg CURRENT pet = BaseWeight × (Level+10)/10
     -- v10.365: Level tidak di-cache → gunakan age-1 formula (×1.1) sebagai aproksimasi
-    local function getRCBw(e)
-        -- v10.367: baca BaseWeight dari RC proxy entry via rawget (tidak yield)
-        local pd = rawget(e, "PetData")
-        return tonumber(type(pd)=="table" and rawget(pd, "BaseWeight") or nil) or 0
-    end
     local function getKgNow(uuid)
         local c = _G.__ZenxKgContainer; if not c then return nil end
         local e = c[fmtUUID(uuid)]
-        if type(e) == "table" and rawget(e, "PetType") then
-            return getRCBw(e) * 1.1
+        if type(e) == "table" and e.PetType and type(e.PetData) == "table" then
+            return (tonumber(e.PetData.BaseWeight) or 0) * 1.1
         end
         return nil
     end
@@ -1718,8 +1707,8 @@ do
     local function getKgBase(uuid)
         local c = _G.__ZenxKgContainer; if not c then return nil end
         local e = c[fmtUUID(uuid)]
-        if type(e) == "table" and rawget(e, "PetType") then
-            return getRCBw(e) * 1.1
+        if type(e) == "table" and e.PetType and type(e.PetData) == "table" then
+            return (tonumber(e.PetData.BaseWeight) or 0) * 1.1
         end
         return nil
     end
@@ -1737,12 +1726,10 @@ do
                     local age, kg, kgBase = 0, 0, 0
                     if c then
                         local e = c[fmtUUID(uuid)]
-                        -- v10.367: RC proxy entry langsung
-                        if type(e) == "table" and rawget(e, "PetType") then
-                            local bw = getRCBw(e)
-                            age = 0     -- Level tidak di-cache
-                            kg = bw * 1.1
-                            kgBase = bw * 1.1
+                        if type(e) == "table" and e.PetType and type(e.PetData) == "table" then
+                            local bw = tonumber(e.PetData.BaseWeight) or 0
+                            local lv = tonumber(e.PetData.Level) or 0
+                            age = lv; kg = bw * 1.1; kgBase = bw * 1.1
                         end
                     end
                     out[#out+1] = { uuid = fmtUUID(uuid), tipe = tipe, age = age, kg = kg, kgBase = kgBase }
@@ -1758,12 +1745,12 @@ do
         local out = {}
         local c = _G.__ZenxKgContainer
         if not c then return listPetsEngine() end
-        -- v10.367: RC proxy entry langsung
         for uuid, e in pairs(c) do
-            if type(e) == "table" and rawget(e, "PetType") then
-                local tipe = stripMutation(tostring(rawget(e, "PetType")))
-                local bw = getRCBw(e)
-                out[#out+1] = { uuid = fmtUUID(uuid), tipe = tipe, age = 0, kg = bw * 1.1, kgBase = bw * 1.1 }
+            if type(e) == "table" and e.PetType and type(e.PetData) == "table" then
+                local tipe = stripMutation(tostring(e.PetType))
+                local bw = tonumber(e.PetData.BaseWeight) or 0
+                local lv = tonumber(e.PetData.Level) or 0
+                out[#out+1] = { uuid = fmtUUID(uuid), tipe = tipe, age = lv, kg = bw * 1.1, kgBase = bw * 1.1 }
             end
         end
         if #out == 0 then return listPetsEngine() end
@@ -1783,7 +1770,7 @@ do
                 if type(c) == "table" then
     for uuid, e in pairs(c) do
                         if type(e) == "table" then
-                            local pt = rawget(e, "PetType")  -- v10.367: RC proxy entry langsung
+                            local pt = e.PetType  -- v10.370: dot access (RC proxy via __index)
                             if pt then
                                 nAll = nAll + 1
                                 local ptl = tostring(pt):lower()
@@ -2204,7 +2191,7 @@ do
         local c = _G.__ZenxKgContainer
         if not c then return nil end
         local e = c[fmtUUID(uuid)]
-        if type(e) == "table" and rawget(e, "PetType") then return stripMutation(tostring(rawget(e, "PetType"))) end
+        if type(e) == "table" and e.PetType then return stripMutation(tostring(e.PetType)) end
         return nil
     end
     local function placementSalah(sesi)
@@ -5666,8 +5653,8 @@ do
         if c then
             pcall(function()
                 for _, entry in pairs(c) do
-                    if type(entry)=="table" and rawget(entry, "PetType") then  -- v10.367: RC proxy entry langsung
-                        local ty = stripMutation(tostring(rawget(entry, "PetType")))
+                    if type(entry)=="table" and entry.PetType then  -- v10.370: dot access
+                        local ty = stripMutation(tostring(entry.PetType))
                         if ty~="" then counts[ty]=(counts[ty] or 0)+1; if not seen[ty] then seen[ty]=true; types[#types+1]=ty end end
                     end
                 end
