@@ -1,4 +1,4 @@
--- zenx_worker v9.722 — fix HACT scan pakai timer sendiri, gak share sama UP6KG _lvlps_scan_ts
+-- zenx_worker v9.723 — HACT stale threshold 60s -> 120s (up3.8kg nulis tiap 60s)
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
@@ -22,7 +22,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.722"
+local VERSION = "9.723"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -7028,7 +7028,7 @@ local function run(cfg)
                     _mt = _mt:match("^%s*(%d+)%s*$")
                     if _mt then
                         local _umur = os.time() - tonumber(_mt)
-                        if _umur > 60 then
+                        if _umur > 120 then   -- v9.723: up3.8kg nulis tiap 60s, stale harus > 120s
                             for _, fn in ipairs(_flist) do sh_silent("su -c 'rm -f \"" .. _dd .. "/" .. fn .. "\"'") end
                             info("[HACT-SERVER] zenx_hact_server stale (" .. _umur .. "s) -> dihapus")
                             goto continue_hact
