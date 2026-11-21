@@ -1,4 +1,4 @@
--- zenx_worker v9.720 — accessCode DILARANG untuk tembak, semua path harus share/privateServerLink
+-- zenx_worker v9.721 — fix crash nil url saat accessCode dilarang (cek nil sebelum url:find)
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
@@ -2131,12 +2131,19 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- jangan biarkan build_url override dengan cfg._ps_override (serverMode="custom")
     local url = build_url(cfg, link_client, pakai_S and link_client and link_client ~= "")
     SERVER_MOVE_TEMBAK = _smtSave
+    -- v9.721: build_url return nil kalau link cuma punya accessCode (dilarang) → skip tembak
+    if not url then
+        info(("   [join] %s SKIP — gak ada share/privateServerLink (accessCode dilarang, tunggu link valid)"):format(
+            pkg:gsub("com%.roblox%.","") ))
+        return
+    end
     do
         local jenisJoin = url:find("privateServerLinkCode") and "PS-fall"
             or (url:find("linkCode") and "PS-linkcode")
             or (url:find("accessCode") and "PS-access")
             or (url:find("share%?code=") and "PS-share")   -- v9.410: share?code= itu share link PS
-            or "PUBLIC"                                     -- private (dari getps). Dulu ke-label PUBLIC = nyasar.
+            or (url:find("share=http") and "PS-share-emb") -- v9.721: share=https:// embedded
+            or "PUBLIC"
         info(("   [join] %s -> %s | url=%s"):format(
             pkg:gsub("com%.roblox%.",""), jenisJoin, url))
     end
