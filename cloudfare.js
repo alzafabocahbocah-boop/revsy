@@ -284,17 +284,9 @@ export default {
     if (jalur === "/bahanup3.8kg" && req.method === "GET") {
       try {
         // filter: scAssign='hact' + hactstat ada (gak perlu cek online, cukup totalKeep >= 100)
-        // kecil = jumlah pet <3.8kg di akun up3.8kg (dari /stat). JOIN buat dapetin stok bahan.
         const rows = await env.DB.prepare(
           "SELECT nama, tim, ps_nama, hactstat FROM akun WHERE scAssign='hact' AND hactstat IS NOT NULL"
         ).all();
-        // ambil kolom kecil (pet <3.8kg) per akun up3.8kg (sc='up38' atau scAssign='up38')
-        const kecilRows = await env.DB.prepare(
-          "SELECT nama, kecil FROM akun WHERE kecil IS NOT NULL AND kecil > 0"
-        ).all();
-        // total stok bahan <3.8kg (jumlah dari semua akun up3.8kg)
-        let totalKecil = 0;
-        for (const r of (kecilRows.results || [])) totalKecil += Number(r.kecil) || 0;
         const result = [];
         for (const r of (rows.results || [])) {
           let totalKeep = 0;
@@ -315,8 +307,7 @@ export default {
           result.push({ akun: r.nama, server, totalKeep, keepDetail });
         }
         result.sort((a, b) => b.totalKeep - a.totalKeep);
-        // totalKecil = total stok pet <3.8kg di semua akun up3.8kg (trigger auto-fetch di tab hact)
-        return json({ list: result, totalKecil });
+        return json(result);
       } catch (e) { return json({ ok: false, error: String(e) }); }
     }
     // /up6kg-bahan GET (publik) -> bahan GLOBAL up6kg "Tipe1,Tipe2,..." (dibaca SEMUA akun up6kg)
