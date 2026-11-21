@@ -4274,31 +4274,143 @@ do
         AutoButtonColor = false, Parent = hdr })
     corner(refreshBtn, 7)
 
-    -- v2.255: picker 3 prioritas pet
-    local prioFrame = mk("Frame", { Size = UDim2.new(1, 0, 0, 72), BackgroundColor3 = C.card,
+    -- v2.256: picker 3 prioritas pet (tombol -> popup single-select)
+    local prioFrame = mk("Frame", { Size = UDim2.new(1, 0, 0, 90), BackgroundColor3 = C.card,
         LayoutOrder = 1, Parent = hactScroll })
     corner(prioFrame, 8)
     pad(prioFrame, 8)
-    local prioTitle = lbl(prioFrame, "Prioritas pet (urut akun):", 10, C.textDim)
+    local prioTitle = lbl(prioFrame, "Prioritas pet (urut akun berdasarkan keep):", 10, C.textDim)
     prioTitle.Size = UDim2.new(1, 0, 0, 14); prioTitle.Position = UDim2.new(0, 0, 0, 0)
     prioTitle.TextXAlignment = Enum.TextXAlignment.Left
 
-    local prioBoxes = {}
+    local prioBtns = {}
+    local PRIO_COLORS = { Color3.fromRGB(234,179,8), Color3.fromRGB(148,163,184), Color3.fromRGB(180,100,50) }
+    local PRIO_LABEL = { "★ Prio 1", "★ Prio 2", "★ Prio 3" }
     for i = 1, 3 do
-        local box = mk("TextBox", {
-            Size = UDim2.new(0.3, -4, 0, 26),
-            Position = UDim2.new((i-1)*0.333, (i==1 and 0 or 2), 0, 18),
-            BackgroundColor3 = C.bg, Text = _prio[i],
-            PlaceholderText = "Prio "..i, TextSize = 10,
-            TextColor3 = C.text, PlaceholderColor3 = C.textDim,
-            Font = FONT, ClearTextOnFocus = false, Parent = prioFrame })
-        corner(box, 6)
-        prioBoxes[i] = box
-        box.FocusLost:Connect(function()
-            _prio[i] = box.Text:match("^%s*(.-)%s*$") or ""
-            savePrio()
+        local bx = UDim2.new((i-1)*0.333, (i==1 and 0 or 3), 0, 18)
+        local btn = mk("TextButton", {
+            Size = UDim2.new(0.333, (i==3 and 0 or -3), 0, 30),
+            Position = bx,
+            BackgroundColor3 = C.bg,
+            Text = _prio[i] ~= "" and (_prio[i]:sub(1,16)) or PRIO_LABEL[i],
+            TextSize = 10, TextColor3 = _prio[i] ~= "" and PRIO_COLORS[i] or C.textDim,
+            Font = _prio[i] ~= "" and FONT_B or FONT,
+            AutoButtonColor = false, Parent = prioFrame })
+        corner(btn, 6)
+        prioBtns[i] = btn
+    end
+
+    -- popup overlay untuk picker prioritas (single-select)
+    local prioOverlay = mk("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(0,0,0),
+        BackgroundTransparency = 0.4, Visible = false, ZIndex = 300, Parent = gui })
+    local prioPanel = mk("Frame", { Size = UDim2.new(0, 280, 0, 360),
+        Position = UDim2.new(0.5, -140, 0.5, -180),
+        BackgroundColor3 = C.panel, ZIndex = 301, Parent = prioOverlay }); corner(prioPanel, 10)
+    local prioPanelTitle = lbl(prioPanel, "Pilih Prio 1", 13, C.text)
+    prioPanelTitle.Font = FONT_B; prioPanelTitle.Position = UDim2.new(0, 12, 0, 10); prioPanelTitle.Size = UDim2.new(1, -44, 0, 24); prioPanelTitle.ZIndex = 302
+    local prioX = mk("TextButton", { Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -34, 0, 8),
+        BackgroundColor3 = Color3.fromRGB(150,60,60), Text = "✕", Font = FONT_B, TextSize = 14,
+        TextColor3 = Color3.fromRGB(255,255,255), ZIndex = 302, Parent = prioPanel }); corner(prioX, 6)
+    local prioSearch = mk("TextBox", { Size = UDim2.new(1, -20, 0, 26), Position = UDim2.new(0, 10, 0, 44),
+        BackgroundColor3 = C.bg, TextColor3 = C.text, PlaceholderText = "cari jenis pet...", Text = "",
+        Font = FONT, TextSize = 11, ClearTextOnFocus = false, ZIndex = 302, Parent = prioPanel }); corner(prioSearch, 6)
+    local prioList = mk("ScrollingFrame", { Size = UDim2.new(1, -20, 1, -118), Position = UDim2.new(0, 10, 0, 76),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+        CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 302, Parent = prioPanel })
+    mk("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder, Parent = prioList })
+    local prioNoneBtn = mk("TextButton", { Size = UDim2.new(1, -20, 0, 26), Position = UDim2.new(0, 10, 1, -34),
+        BackgroundColor3 = C.card, Text = "✕  Kosongkan slot ini", Font = FONT, TextSize = 10,
+        TextColor3 = C.textDim, ZIndex = 302, Parent = prioPanel }); corner(prioNoneBtn, 6)
+
+    local _prioSlotBuka = 1
+    local function updatePrioBtn(i)
+        local nm = _prio[i]
+        prioBtns[i].Text = nm ~= "" and nm:sub(1,16) or PRIO_LABEL[i]
+        prioBtns[i].TextColor3 = nm ~= "" and PRIO_COLORS[i] or C.textDim
+        prioBtns[i].Font = nm ~= "" and FONT_B or FONT
+    end
+
+    local function buildPrioList(filter)
+        for _, c in ipairs(prioList:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
+        -- kumpulkan nama pet dari stat + registry
+        local tipe = (_G.ZenxKgStat and _G.ZenxKgStat.tipe) or {}
+        local seen, names = {}, {}
+        for t in pairs(tipe) do if not seen[t] then seen[t]=true; names[#names+1]=t end end
+        pcall(function()
+            local reg = _G.ZenxReg and _G.ZenxReg.pets
+            if type(reg)=="table" then
+                for nm in pairs(reg) do
+                    local ty = tostring(nm)
+                    if ty~="" and not seen[ty] then seen[ty]=true; names[#names+1]=ty end
+                end
+            end
+        end)
+        -- tambah nama dari keepDetail semua akun (paling relevan)
+        for _, d in ipairs(_hactData) do
+            local kd = type(d.keepDetail) == "table" and d.keepDetail or {}
+            for pnm in pairs(kd) do
+                if not seen[pnm] then seen[pnm]=true; names[#names+1]=pnm end
+            end
+        end
+        table.sort(names, function(a, b)
+            local ca, cb = tonumber(tipe[a]) or 0, tonumber(tipe[b]) or 0
+            if ca ~= cb then return ca > cb end
+            return a < b
+        end)
+        filter = (filter or ""):lower()
+        local idx = _prioSlotBuka
+        local shown = 0
+        for _, t in ipairs(names) do
+            if filter=="" or t:lower():find(filter,1,true) then
+                shown = shown + 1
+                if shown <= 200 then
+                    local sel = (_prio[idx] == t)
+                    local cnt = tonumber(tipe[t]) or 0
+                    local b = mk("TextButton", {
+                        Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = sel and PRIO_COLORS[idx] or C.card,
+                        Text = "", ZIndex = 303, LayoutOrder = shown, Parent = prioList }); corner(b, 5)
+                    local chk = lbl(b, sel and "✓" or "", 12, Color3.fromRGB(0,0,0)); chk.Position=UDim2.new(0,6,0,0); chk.Size=UDim2.new(0,18,1,0); chk.ZIndex=304
+                    local nm = lbl(b, t..(cnt>0 and "  ×"..cnt or ""), 11, sel and Color3.fromRGB(0,0,0) or (cnt>0 and C.text or C.textDim))
+                    nm.Position=UDim2.new(0,24,0,0); nm.Size=UDim2.new(1,-28,1,0); nm.ZIndex=304; nm.TextXAlignment=Enum.TextXAlignment.Left
+                    b.MouseButton1Click:Connect(function()
+                        _prio[idx] = t; savePrio()
+                        updatePrioBtn(idx)
+                        prioOverlay.Visible = false
+                        renderHact()
+                    end)
+                end
+            end
+        end
+        if shown == 0 then
+            local e = lbl(prioList, "(gak ada hasil)", 10, C.textDim, Enum.TextXAlignment.Center)
+            e.Size=UDim2.new(1,0,0,28); e.ZIndex=303
+        end
+    end
+
+    for i = 1, 3 do
+        prioBtns[i].MouseButton1Click:Connect(function()
+            _prioSlotBuka = i
+            prioPanelTitle.Text = "Pilih Prio "..i
+            prioPanelTitle.TextColor3 = PRIO_COLORS[i]
+            prioSearch.Text = ""
+            buildPrioList("")
+            prioOverlay.Visible = true
         end)
     end
+    prioSearch:GetPropertyChangedSignal("Text"):Connect(function() buildPrioList(prioSearch.Text) end)
+    prioX.MouseButton1Click:Connect(function() prioOverlay.Visible = false end)
+    prioNoneBtn.MouseButton1Click:Connect(function()
+        _prio[_prioSlotBuka] = ""; savePrio()
+        updatePrioBtn(_prioSlotBuka)
+        prioOverlay.Visible = false
+        renderHact()
+    end)
+    prioOverlay.InputBegan:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
+            local m=inp.Position; local ap,sz=prioPanel.AbsolutePosition,prioPanel.AbsoluteSize
+            if m.X<ap.X or m.X>ap.X+sz.X or m.Y<ap.Y or m.Y>ap.Y+sz.Y then prioOverlay.Visible=false end
+        end
+    end)
 
     local statusLbl = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1,
         Text = "belum di-fetch", TextSize = 10, TextColor3 = C.textDim, Font = FONT,
