@@ -1,4 +1,4 @@
--- zenx_worker v9.721 — fix crash nil url saat accessCode dilarang (cek nil sebelum url:find)
+-- zenx_worker v9.722 — fix HACT scan pakai timer sendiri, gak share sama UP6KG _lvlps_scan_ts
 -- ============ ZENX WORKER ============
 -- zenx_worker v9.716 — LVL-PS: trigger GOSERVER tiap file fresh (mtime berubah), bukan hanya link baru
 -- zenx_worker v9.715 — LVL-PS: scan zenx_lvlps.txt tiap 10s (dari 60s)
@@ -22,7 +22,7 @@
 -- zenx_worker v9.685 — fix Lua 5.4 "too many local variables" (cmd_game/home/set/uji/ukur/cari/pantau/rekam)
 -- zenx_worker v9.615 — pkg_running_semua+task_id_semua dimatiin dumpsys activity, semua dari denyut
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.721"
+local VERSION = "9.722"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5504,6 +5504,7 @@ local function run(cfg)
     local MODE_JALAN = false
     local _goserver_scan_ts = 0   -- v9.703: timer scan zenx_goserver_*.txt (tiap 15s)
     local _lvlps_scan_ts    = 0   -- v9.714: timer scan zenx_lvlps.txt (tiap 10s)
+    local _hact_scan_ts     = 0   -- v9.722: timer scan zenx_hact_server.txt (tiap 10s, terpisah dari lvlps)
 
     do
         local ok2, n, place, gk = pulih_aktif(cfg)
@@ -7011,7 +7012,8 @@ local function run(cfg)
             -- v9.718: scan wildcard zenx_hact_server_*.txt (per-akun, biar 2 client 1 workspace gak bentrok)
             -- format: HACTSERVER:<psLink> → pindah ke server akun hact terbaik
             local _sl717 = (cfg.script_label or ""):upper()
-            if _sl717:find("UP3", 1, true) and (os.time() - _lvlps_scan_ts) >= 10 then
+            if _sl717:find("UP3", 1, true) and (os.time() - _hact_scan_ts) >= 10 then
+                _hact_scan_ts = os.time()   -- v9.722: pakai timer sendiri, gak bentrok sama UP6KG
                 local _hactLinkBaru, _hactMtime
                 for _, _dd in ipairs(denyut_dirs(cfg)) do
                     if _hactLinkBaru then break end
