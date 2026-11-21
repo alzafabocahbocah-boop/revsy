@@ -280,11 +280,16 @@ export default {
       return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
     }
     // /bahanup3.8kg GET (publik) -> bahan pet keep per akun HACT [{akun, server, totalKeep, keepDetail:{pet:N}}]
-    // keepDetail = breakdown per jenis pet (untuk fitur prioritas di tab HACT up3.8kg)
+    // v709: baca dari cfg scope 'bahanup38kg' (panel push tiap 60s via pushHactBahan)
     if (jalur === "/bahanup3.8kg" && req.method === "GET") {
       try {
-        // filter: scAssign='hact' (hactstat boleh null — akun baru belum kirim hactstat)
-        // JOIN cookies untuk dapat ps_link (URL server Roblox per akun)
+        const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='bahanup38kg'").first();
+        if (row && row.data) {
+          let parsed;
+          try { parsed = JSON.parse(row.data); } catch {}
+          if (Array.isArray(parsed) && parsed.length > 0) return json(parsed);
+        }
+        // fallback: query DB scAssign='hact' (akun lama yang ada di DB)
         const rows = await env.DB.prepare(
           `SELECT a.nama, a.tim, a.ps_nama, a.hactstat, c.ps_link
            FROM akun a LEFT JOIN cookies c ON c.akun = a.nama
@@ -292,30 +297,16 @@ export default {
         ).all();
         const result = [];
         for (const r of (rows.results || [])) {
-          let totalKeep = 0;
-          let keepDetail = {};
+          let totalKeep = 0, keepDetail = {};
           try {
             const hs = typeof r.hactstat === "string" ? JSON.parse(r.hactstat) : r.hactstat;
-            if (hs && hs.keep) {
-              for (const k in hs.keep) {
-                const n = Number((hs.keep[k] || {}).total) || 0;
-                totalKeep += n;
-                if (n > 0) keepDetail[k] = n;
-              }
-            }
+            if (hs && hs.keep) { for (const k in hs.keep) { const n = Number((hs.keep[k]||{}).total)||0; totalKeep+=n; if(n>0) keepDetail[k]=n; } }
           } catch {}
-          const server = r.tim || r.ps_nama || "";
-          // psLink: dari cookies.ps_link (getps), fallback ke hactstat.psLink (zenx_link.json via hact)
           let psLink = r.ps_link || "";
-          if (!psLink) {
-            try {
-              const hs2 = typeof r.hactstat === "string" ? JSON.parse(r.hactstat) : r.hactstat;
-              if (hs2 && hs2.psLink) psLink = hs2.psLink;
-            } catch {}
-          }
-          result.push({ akun: r.nama, server, totalKeep, keepDetail, psLink });
+          if (!psLink) { try { const h2 = typeof r.hactstat==="string"?JSON.parse(r.hactstat):r.hactstat; if(h2&&h2.psLink) psLink=h2.psLink; } catch {} }
+          result.push({ akun: r.nama, server: r.tim||r.ps_nama||"", totalKeep, keepDetail, psLink });
         }
-        result.sort((a, b) => b.totalKeep - a.totalKeep);
+        result.sort((a,b)=>b.totalKeep-a.totalKeep);
         return json(result);
       } catch (e) { return json({ ok: false, error: String(e) }); }
     }
@@ -1033,6 +1024,18 @@ export default {
            ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
         ).bind(skrg, data).run();
         return json({ ok: true, ts: skrg });
+      }
+
+      // v709: panel push bahan hact lengkap [{akun,server,totalKeep,keepDetail,psLink}] -> cfg scope 'bahanup38kg'
+      if (jalur === "/bahanup3.8kg" && req.method === "PUT") {
+        const b = await req.json();
+        const arr = Array.isArray(b.data) ? b.data : [];
+        const data = JSON.stringify(arr);
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('bahanup38kg', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, data).run();
+        return json({ ok: true, count: arr.length, ts: skrg });
       }
 
       if (jalur === "/levelakun" && req.method === "PUT") {

@@ -5248,7 +5248,34 @@ async function pushLevelAkun(){
     if(str) await api("/levelakun","PUT",{data:str});
   }catch(e){}
 }
-try{ setInterval(pushLvlMax, 60000); setInterval(pushLvlMaxTim, 60000); setInterval(pushMarketAkun, 60000); setInterval(pushUp38Akun, 60000); setInterval(pushUp6kgAkun, 60000); setInterval(pushHactAkun, 60000); setInterval(pushLevelAkun, 60000); pushLvlMax(); pushLvlMaxTim(); pushMarketAkun(); pushUp38Akun(); pushUp6kgAkun(); pushHactAkun(); pushLevelAkun(); }catch(e){}
+// v709: push bahan hact lengkap [{akun,server,totalKeep,keepDetail,psLink}] -> /bahanup3.8kg
+async function pushHactBahan(){
+  try{
+    const tims=(typeof STAT_TIM!=="undefined"?STAT_TIM:[]).filter(t=>{ const sc=(t.sc||"").toUpperCase(); return sc.includes("HACT")||sc.includes("CAMPUR"); });
+    // ambil psLink per akun dari /ps-list
+    let pslink={};
+    try{ const r=await api("/ps-list"); if(r&&Array.isArray(r.ps)) r.ps.forEach(x=>{ if(x&&x.akun&&x.ps_link) pslink[x.akun]=x.ps_link; }); }catch(e){}
+    const result=[];
+    const seen={};
+    tims.forEach(t=>{
+      (t.clients||[]).forEach(c=>{
+        const nm=c.akun||c.nm; if(!nm||seen[nm]) return;
+        seen[nm]=true;
+        const a=_akunFresh(nm)||{};
+        let hs=a.hactstat||c.hactstat;
+        try{ if(typeof hs==="string") hs=JSON.parse(hs); }catch(e){ hs=null; }
+        let totalKeep=0, keepDetail={};
+        if(hs&&hs.keep){ for(const k in hs.keep){ const n=Number((hs.keep[k]||{}).total)||0; totalKeep+=n; if(n>0) keepDetail[k]=n; } }
+        const server=a.ps_nama||c.ps||t.sc||"";
+        const link=pslink[nm]||(hs&&hs.psLink)||"";
+        result.push({akun:nm, server, totalKeep, keepDetail, psLink:link});
+      });
+    });
+    result.sort((a,b)=>b.totalKeep-a.totalKeep);
+    if(result.length) await api("/bahanup3.8kg","PUT",{data:result});
+  }catch(e){}
+}
+try{ setInterval(pushLvlMax, 60000); setInterval(pushLvlMaxTim, 60000); setInterval(pushMarketAkun, 60000); setInterval(pushUp38Akun, 60000); setInterval(pushUp6kgAkun, 60000); setInterval(pushHactAkun, 60000); setInterval(pushLevelAkun, 60000); setInterval(pushHactBahan, 60000); pushLvlMax(); pushLvlMaxTim(); pushMarketAkun(); pushUp38Akun(); pushUp6kgAkun(); pushHactAkun(); pushLevelAkun(); pushHactBahan(); }catch(e){}
 
 // v573: PICKER pet types buat gift uplevel (1 list global) -> /uplevel-giftpet
 async function bukaGiftPetUplevel(){
