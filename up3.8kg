@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v2.244 | fix loop hact skip kalau tab gak visible (cek kritis tetap jalan)        ║
+-- ║  UP KG — v2.245 | throttle tulis zenx_hact_server.txt 60s, nulis kalau link berubah        ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -4556,6 +4556,7 @@ do
     local _hactKritisState = false  -- hysteresis: true kalau sedang kritis, false kalau cukup
     local _hactAppliedLink = ""    -- link akun hact yang sedang aktif di zenx_hact_server.txt
     local _lastAutoFetch = 0
+    local _lastHactWrite  = 0      -- v2.245: throttle tulis zenx_hact_server.txt (tiap 60s)
 
     local function fetchHact(silent)
         if _hactLoading then return end
@@ -4615,6 +4616,9 @@ do
             -- v2.258: tulis zenx_hact_server.txt = "HACTSERVER:<psLink>" kalau bahan kritis
             -- kalau sudah se-server dengan akun hact → hapus file + set __ZenxHactSameServer = true
             -- (mirip zenx_lvlps.txt di up6kg tab LEVELING)
+            -- v2.245: throttle tulis file 60s, kecuali kondisi berubah (link baru / tidak kritis lagi)
+            local _nowTick = tick()
+            local _bolehTulis = (_nowTick - _lastHactWrite) >= 60
             if writefile and isfile then
                 local hactSignalFile = (_plrName ~= "") and ("zenx_hact_server_" .. _plrName .. ".txt") or "zenx_hact_server.txt"
                 -- v2.259: kalau akun hact aktif keep-nya turun < 20 → langsung ganti ke akun lain
@@ -4704,7 +4708,11 @@ do
                             bestLink = kandidat[math.random(1, #kandidat)]
                         end
                         if bestLink ~= "" then
-                            pcall(function() writefile(hactSignalFile, "HACTSERVER:" .. bestLink) end)
+                            -- v2.245: nulis tiap 60s atau kalau link berubah
+                            if _bolehTulis or bestLink ~= _hactAppliedLink then
+                                pcall(function() writefile(hactSignalFile, "HACTSERVER:" .. bestLink) end)
+                                _lastHactWrite = _nowTick
+                            end
                             _hactAppliedLink = bestLink
                         else
                             -- tidak ada kandidat → hapus file lama (jangan nulis "true" yg bikin worker confused)
